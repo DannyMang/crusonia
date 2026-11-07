@@ -1,0 +1,6 @@
+# Front-facing code needs the owner's sign-off (design approved in Paper first).
+# Merging the PR is the approval: main requires a PR but no approving review (solo owner).
+src/web/**  @DannyMang
+public/**   @DannyMang
+**/*.tsx    @DannyMang
+design/**   @DannyMang

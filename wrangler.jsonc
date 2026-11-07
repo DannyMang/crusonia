@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "crusonia",
+  "main": "src/index.ts",
+  // Matches the workerd bundled with wrangler 4.158 so `wrangler dev` runs the same runtime as prod.
+  "compatibility_date": "2026-11-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "triggers": {
+    // Every minute: the scheduled handler will drive due work (expired approvals, stalled sessions).
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    // Public base URL of this Worker. Webhooks and the MCP endpoint are registered under it.
+    "PUBLIC_URL": "https://crusonia.veri-web.workers.dev"
+  }
+  // Secrets (DATABASE_URL, provider keys, ...) are not declared here: see .dev.vars.example.
+  // We deliberately do not use `secrets.required`, because it makes `wrangler deploy` fail until
+  // every secret is uploaded, and we deploy the health endpoint before keys exist.
+}
