@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { AgentMailClient, draftLabel } from "../src/providers/agentmail.ts";
 import { ProviderError, type FetchFn } from "../src/providers/http.ts";
-import { NaiveClient } from "../src/providers/naive.ts";
+import { NAIVE_POST_ATTEMPTS, NaiveClient } from "../src/providers/naive.ts";
 
 type Call = { url: string; init: RequestInit };
 
@@ -79,9 +79,9 @@ describe("NaiveClient", () => {
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ agent_id: "agt_1", message: "hi", metadata: { lead_id: "lead_1" } });
   });
 
-  test("each POST gets its own key; an ambiguous failure is retried once with the same key", async () => {
+  test("each POST gets its own key; an ambiguous failure is retried with the same key", async () => {
     const { fn, calls } = mockFetch(new Response("", { status: 502 }), json({}, 202), json({}, 202));
-    const client = new NaiveClient("k", fn);
+    const client = new NaiveClient("k", fn, undefined, 0);
     await client.confirmTool("ses_1", { tool_call_id: "call_1", decision: "allow", scope: "call" });
     await client.answer("ses_1", { tool_call_id: "call_2", answers: { mailbox: "hi@acme.com" } });
     expect(calls.map((c) => c.url)).toEqual([
@@ -93,6 +93,20 @@ describe("NaiveClient", () => {
     expect(keys[0]).toBe(keys[1]!);
     expect(keys[2]).not.toBe(keys[0]!);
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ tool_call_id: "call_1", decision: "allow", scope: "call" });
+  });
+
+  test("a 429 (Naive at capacity) is retried with the same key, at most NAIVE_POST_ATTEMPTS times", async () => {
+    const busy = () => json({ error: { type: "rate_limit", code: "rate_limited" } }, 429);
+    const once = mockFetch(busy(), json({ id: "ses_1", status: "running" }, 201));
+    const session = await new NaiveClient("k", once.fn, undefined, 0).createSession({ agent_id: "agt_1", message: "hi" });
+    expect(session.id).toBe("ses_1");
+    expect(once.calls).toHaveLength(2);
+    expect(headers(once.calls[0]!).get("idempotency-key")).toBe(headers(once.calls[1]!).get("idempotency-key")!);
+
+    const always = mockFetch(busy(), busy(), busy(), busy());
+    const err = await new NaiveClient("k", always.fn, undefined, 0).createSession({ agent_id: "agt_1", message: "hi" }).catch((e) => e);
+    expect(err.status).toBe(429);
+    expect(always.calls).toHaveLength(NAIVE_POST_ATTEMPTS);
   });
 
   test("a 4xx is not retried", async () => {
