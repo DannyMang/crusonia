@@ -19,12 +19,24 @@ import { LEAD_STAGES, normalizeDomain, type LeadStage } from "./leads.ts";
 
 export const CRM_TARGETS = ["hubspot", "notion"] as const;
 export type CrmTarget = (typeof CRM_TARGETS)[number];
-export type SyncScope = "qualified" | "all";
+export type SyncScope = "qualified" | "all" | "replied";
 
 /** Stages where a conversation is under way (or was ended by the lead): always worth mirroring. */
 export const ENGAGED_STAGES = ["awaiting_approval", "sent", "replied", "interested", "not_interested", "meeting_booked", "unsubscribed"] as const;
 
-export const syncScope = (raw: string | undefined): SyncScope => (raw?.trim().toLowerCase() === "all" ? "all" : "qualified");
+/** Stages after a real inbound reply (scope "replied"). */
+export const REPLIED_SYNC_STAGES = ["replied", "interested", "not_interested", "meeting_booked"] as const;
+
+export const syncScope = (raw: string | undefined): SyncScope => {
+  const v = raw?.trim().toLowerCase();
+  return v === "all" ? "all" : v === "replied" ? "replied" : "qualified";
+};
+
+/** HUBSPOT_SYNC_COHORTS: a comma list of cohorts (leads.cohort) to sync; unset = every cohort. */
+export const syncCohorts = (raw: string | undefined): string[] | null => {
+  const list = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return list.length ? list : null;
+};
 export const flagOn = (raw: string | undefined) => /^(1|true|yes|on)$/i.test(raw?.trim() ?? "");
 
 /** What we last wrote to fields shared with HubSpot users, stored in leads.hubspot_state. */
@@ -45,12 +57,15 @@ export type SyncLead = Pick<
   evidence_count: number;
   /** The first evidence claim: usually the buying signal that surfaced the lead. */
   signal: string | null;
+  /** The batch the lead came in with (leads.cohort): HUBSPOT_SYNC_COHORTS limits the sync to some. */
+  cohort?: string | null;
 };
 
 /**
  * Which leads a target receives. "qualified" (the default): opted-in contacts, leads scored as qualified,
  * leads in the send flow, and (HubSpot only) records that came from HubSpot once Crusonia has scored them.
- * Agent-found leads that were never qualified stay out of the CRM. "all": every lead.
+ * Agent-found leads that were never qualified stay out of the CRM. "all": every lead. "replied": only leads that
+ * answered (a real inbound reply moved them to replied, interested, not_interested or meeting_booked).
  * Keep in sync with scopeSql in ./crm-queue.ts.
  */
 export function inScope(
@@ -60,6 +75,7 @@ export function inScope(
 ): boolean {
   if (!lead.email && !lead.domain) return false;
   if (scope === "all") return true;
+  if (scope === "replied") return (REPLIED_SYNC_STAGES as readonly string[]).includes(lead.stage);
   if (lead.consent_at || lead.qualified === true || (ENGAGED_STAGES as readonly string[]).includes(lead.stage)) return true;
   return target === "hubspot" && Boolean(lead.hubspot_id || lead.hubspot_company_id) && lead.score !== null;
 }
