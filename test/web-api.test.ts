@@ -1,6 +1,7 @@
 // Pure logic behind the web app endpoints: summary pipeline, experiment stats, run steps and workflow
 // status, profile normalization. No database or network.
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import type { NaiveEvent } from "../src/providers/naive.ts";
 import { dailySeries, foldVariantStats, stopRule, type StatsRow } from "../src/services/experiments.ts";
 import { normalizeProfile, profileInputSchema, profileUpdateSchema } from "../src/services/profile.ts";
@@ -226,6 +227,15 @@ describe("onboarding and find-leads prompts", () => {
     expect(msg.match(/"""/g)).toHaveLength(2); // the description cannot close the fence
     expect(findLeadsMessage(25)).toContain("Find up to 25 new leads");
     expect(findLeadsMessage(25)).toContain("add_leads");
+  });
+
+  test("the messages start with the phrases the agent's playbook routes on", () => {
+    const playbook = readFileSync(new URL("../playbooks/research.md", import.meta.url), "utf8").replace(/\s+/g, " ");
+    expect(playbook).toContain('starts with "Propose the go-to-market profile"');
+    expect(playbook).toContain('starts with "Find up to"');
+    expect(onboardingMessage({ description: "x" })).toStartWith("Propose the go-to-market profile");
+    expect(findLeadsMessage(3)).toStartWith("Find up to 3");
+    for (const field of ["icp_description", "segments", "signals", "sources", "save_profile", "add_leads"]) expect(playbook).toContain(field);
   });
 });
 
