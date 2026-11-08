@@ -3,6 +3,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireCredits } from "../billing/accounts.ts";
+import { apifyMeter } from "../billing/usage.ts";
 import { actorOf, authorOf, parseJson, parseQuery, sqlFor, wsOf, type AppEnv } from "../lib/context.ts";
 import { ApiError } from "../lib/errors.ts";
 import {
@@ -105,16 +106,21 @@ export const onboarding = new Hono<AppEnv>();
 const ReadWebsiteBody = z.object({
   url: z.string().trim().min(3).max(2048),
   max_pages: z.number().int().min(1).max(10).default(5),
+  // Render JavaScript from the start. Not needed in general: a read that finds no text is retried with rendering.
+  render_js: z.boolean().default(false),
 });
 
-// Synchronous. Uses Apify's crawler when APIFY_TOKEN is set (a few cents), else a plain fetch (free).
+// Synchronous. Uses Apify's crawler when APIFY_TOKEN is set (a few cents, metered into the caller's credits), else a
+// plain fetch (free). Crusonia's own site is answered from its landing copy.
 onboarding.post("/read-website", async (c) => {
   const body = await parseJson(c, ReadWebsiteBody);
   if (c.env.APIFY_TOKEN && c.env.DATABASE_URL) await requireWebCall(sqlFor(c.env), c.env, wsOf(c), "read_website");
-  const result = await readWebsite(c.env, { url: body.url, max_pages: body.max_pages, render_js: false });
+  const meter = c.env.APIFY_TOKEN && c.env.DATABASE_URL ? apifyMeter(sqlFor(c.env), { workspaceId: wsOf(c), via: "api" }) : undefined;
+  const result = await readWebsite(c.env, { url: body.url, max_pages: body.max_pages, render_js: body.render_js }, { meter });
   return c.json({
     pages: result.pages.map((p) => ({ url: p.url, title: p.title, text: p.text, description: p.description, truncated: p.truncated })),
     mode: result.mode,
+    ...(result.rendered ? { rendered: true } : {}),
     ...(result.note ? { note: result.note } : {}),
   });
 });

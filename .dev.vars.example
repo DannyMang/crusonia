@@ -103,8 +103,9 @@ NOTION_LEADS_DATABASE_ID=
 # Optional, setup only: AgentMail username for the inbox (default "crusonia" -> crusonia@agentmail.to).
 # AGENTMAIL_USERNAME=
 # Optional, setup only: the Naive agent's model and spend limits (micro-USD: 1000000 = $1). Defaults shown.
-# The harness (Naive's default when unset) is fixed when the agent is created.
-# NAIVE_AGENT_MODEL=vetta/auto
+# The model is pinned (vetta/auto switched models mid-session, and each switch re-wrote the prompt cache); any id from
+# GET /v1/models works. The harness (Naive's default when unset) is fixed when the agent is created.
+# NAIVE_AGENT_MODEL=openai/gpt-6.1-terra
 # NAIVE_AGENT_BUDGET_PERIOD=day
 # NAIVE_AGENT_BUDGET_CAP_MICRO_USD=5000000
 # NAIVE_AGENT_MAX_TASK_MICRO_USD=1000000
@@ -136,13 +137,19 @@ STRIPE_WEBHOOK_SECRET=
 
 # Naive tool calls that run without asking the owner: comma list, `*` suffix wildcards, `none` to ask for everything.
 # Anything else becomes a 'tool' approval. Never auto-allowed while paused.
-# AUTO_CONFIRM_TOOLS=crusonia.*,apify.*,web_search,web_fetch
+# Apify is limited to the single-page reader and the read-only get-* tools: Actor runs reach the owner as approvals.
+# AUTO_CONFIRM_TOOLS=crusonia.*,apify.apify--rag-web-browser,apify.get-*,web_search,web_fetch
+# Hard cap in USD on every Apify Actor run Crusonia starts (maxTotalChargeUsd; search_web, read_website). Runs are
+# metered into credits at the usage markup either way.
+# APIFY_MAX_CHARGE_USD=0.25
+# Days to keep each agent session's full event trace (GET /api/workflows/runs/:id/trace).
+# TRACE_RETENTION_DAYS=180
 # Hours before a send approval (an email draft, from the MCP create_draft tool or the REST API) expires: 7 days.
 # SEND_APPROVAL_TTL_HOURS=168
 # Minutes before an agent tool or ask_operator question approval expires. The Naive session waits meanwhile; an
 # expired tool call is denied to the agent.
 # TOOL_APPROVAL_TTL_MINUTES=60
-# Weekly Naive spend budget in USD, shown next to the week's spend on the dashboard (display only, nothing is blocked).
+# Weekly budget in USD, shown next to the week's spend (credits charged) on the dashboard (display only, nothing is blocked).
 # WEEKLY_BUDGET_USD=
 
 # ---------------------------------------------------------------------------

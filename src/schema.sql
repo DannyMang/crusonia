@@ -74,7 +74,8 @@ alter table leads add column if not exists domain       text;
 alter table leads add column if not exists title        text;
 alter table leads add column if not exists linkedin_url text;
 alter table leads add column if not exists source_url   text;
--- (The unique index on domain + name is per workspace: leads_ws_no_email_uq in the Workspaces section.)
+-- (A company, a lead without an email, is unique per workspace on its domain: leads_ws_company_uq in the Workspaces
+-- section.)
 create index if not exists leads_stage_idx on leads (stage, updated_at desc);
 
 create table if not exists evidence (
@@ -312,6 +313,7 @@ create table if not exists billing_accounts (
 --   invoice:<invoice id>    monthly plan credits for a paid subscription invoice
 --   usage:<naive session>   hosted agent spend x markup when the session finishes (+ `:<micro-usd>` top-ups if
 --                           the session resumes and spends more)
+--   apify:<run id>:<total credits>   an Apify Actor run's usage x markup (a later row tops up if usage grew)
 --   refund:<charge>:<cumulative amount refunded>   claw-back of the purchase in `purchase_source`
 --   expire:<grant source>   the unused rest of an expired plan grant (`purchase_source`)
 --   adjustment:<anything>   manual correction (insert by hand)
@@ -475,6 +477,92 @@ create index if not exists imessage_outbox_due_idx on imessage_outbox (created_a
 create unique index if not exists imessage_outbox_message_uq on imessage_outbox (message_id) where message_id is not null;
 
 -- ---------------------------------------------------------------------------
+-- Agent loop v2: outreach channels and the manual task queue, batched research, Apify metering.
+-- Additive and idempotent. Scoped by workspace in the Workspaces section below (apify_runs, lead_notes).
+-- ---------------------------------------------------------------------------
+
+-- A draft's channel. 'email' goes out through AgentMail only after a send approval, and only to opted-in leads
+-- (unchanged). Every other channel is a manual task the owner sends personally and then marks sent or skipped:
+-- 'email_manual' (from the owner's own mailbox), 'linkedin', 'x', 'intro' (a forwardable blurb for a warm
+-- introduction). Manual drafts never get an approval and nothing ever sends them. Their status is
+-- open -> sent | skipped | superseded. One open draft per lead across channels: a new version of any channel
+-- supersedes the older open one. `target_url` is the profile the owner opens to send it (LinkedIn or X).
+-- `citations` links factual phrases in the body to the lead's saved evidence: [{text, source_url}].
+alter table drafts add column if not exists channel text not null default 'email';
+alter table drafts drop constraint if exists drafts_channel_check;
+alter table drafts add constraint drafts_channel_check check (channel in ('email', 'email_manual', 'linkedin', 'x', 'intro'));
+alter table drafts add column if not exists target_url text;
+alter table drafts add column if not exists citations jsonb not null default '[]';
+alter table drafts add column if not exists closed_at timestamptz;
+create index if not exists drafts_tasks_idx on drafts (status, created_at desc) where channel <> 'email';
+
+-- Outbound messages the owner sent by hand (a marked-sent task) carry their channel; email rows are 'email'.
+alter table messages add column if not exists channel text not null default 'email';
+
+-- The agent's suggested next step after research (save_research), e.g. "LinkedIn note to the CEO about the
+-- SDR job post".
+alter table leads add column if not exists next_step text;
+
+-- Every Apify Actor run Crusonia starts (search_web, read_website). `usage_micro_usd` is the run's
+-- usageTotalUsd in micro-USD; Apify finalizes it shortly after the run ends, so the cron re-reads it once
+-- (`usage_final`). The billing owner is debited usage x the markup in src/billing/plans.ts, like Naive spend:
+-- ledger rows `apify:<run id>:<total credits>`, `debited_credits` is what was debited so far (top-ups only).
+create table if not exists apify_runs (
+  run_id           text primary key,
+  actor            text not null,
+  status           text not null,
+  usage_micro_usd  bigint,
+  usage_final      boolean not null default false,
+  max_charge_usd   numeric,
+  billing_owner_id text,
+  session_id       text,
+  via              text,
+  debited_credits  bigint not null default 0,
+  created_at       timestamptz not null default now(),
+  finished_at      timestamptz,
+  updated_at       timestamptz not null default now()
+);
+create index if not exists apify_runs_open_idx on apify_runs (updated_at) where usage_final = false;
+
+-- One lead per company. Agent-found leads without an email are keyed by the company's normalized domain
+-- (src/services/domains.ts): add_leads merges into the existing row instead of adding a second one.
+-- `contacts`: named people at the company, only from public pages the agent read:
+-- [{name, title, linkedin_url, x_url, github_url, source_url, found_at}], merged by name (name/title/linkedin_url
+-- stay the first-seen person). `links`: the company's links [{kind: website|linkedin|github|x|other, url, source_url,
+-- found_at}], merged by URL. No other enrichment (funding, headcount...) is stored unless a cited evidence item says it.
+-- `why_summary`: the agent's 2-4 sentence "why we picked this", citing the lead's evidence by number (oldest first).
+-- `excluded_at`: the owner excluded the company; like a disqualified lead it is remembered and skipped by future
+-- runs until the owner un-excludes it. Per workspace, a company is unique on its normalized domain (leads_ws_company_uq
+-- in the Workspaces section).
+alter table leads add column if not exists contacts jsonb not null default '[]';
+alter table leads add column if not exists links jsonb not null default '[]';
+alter table leads add column if not exists why_summary text;
+alter table leads add column if not exists excluded_at timestamptz;
+alter table leads add column if not exists excluded_reason text;
+create index if not exists leads_domain_idx on leads (domain) where domain is not null;
+
+-- Notes on a lead, from the owner (`user:<id>`) or an agent (`agent:<session id>`, or `agent:mcp`). kind
+-- 'thumbs_down' / 'thumbs_up' is the owner's rating of a pick, with the reason as the body. Agents read a lead's notes
+-- (get_lead) and the owner's recent notes across leads (get_profile) before finding or researching. Authors edit and
+-- delete only their own notes.
+create table if not exists lead_notes (
+  id         bigserial primary key,
+  lead_id    text not null references leads(id) on delete cascade,
+  author     text not null,
+  kind       text not null default 'note' check (kind in ('note', 'thumbs_down', 'thumbs_up')),
+  body       text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists lead_notes_lead_idx on lead_notes (lead_id, id desc);
+create index if not exists lead_notes_author_idx on lead_notes (id desc) where author like 'user:%';
+
+-- Pause on missing evidence: evidence items name the qualification workflow requirement they satisfy (settings key
+-- 'qualification_workflow:<workspace id>', src/services/qualification.ts). A lead missing required evidence is never scored: it
+-- goes to needs_review with `review_question` (a column that predates this).
+alter table evidence add column if not exists requirement text;
+
+-- ---------------------------------------------------------------------------
 -- Workspaces (multi-tenancy). Additive and idempotent. See "Workspaces" in README.md.
 -- Every tenant table gets a NOT NULL workspace_id; rows that existed before workspaces belong to 'ws_owner'.
 -- Uniqueness that used to be global is per workspace now (lead dedupe, suppressions, one billing account).
@@ -489,7 +577,8 @@ declare
 begin
   foreach t in array array[
     'leads', 'evidence', 'lookalikes', 'drafts', 'approvals', 'messages', 'naive_sessions', 'naive_session_events',
-    'events', 'suppressions', 'api_keys', 'billing_accounts', 'credit_ledger', 'crm_sync_queue', 'imessage_outbox'
+    'events', 'suppressions', 'api_keys', 'billing_accounts', 'credit_ledger', 'crm_sync_queue', 'imessage_outbox',
+    'apify_runs', 'lead_notes'
   ] loop
     execute format('alter table %I add column if not exists workspace_id text references workspaces(id)', t);
     execute format('update %I set workspace_id = %L where workspace_id is null', t, 'ws_owner');
@@ -553,10 +642,10 @@ drop trigger if exists leads_normalize_domain on leads;
 create trigger leads_normalize_domain before insert or update of domain on leads
   for each row execute function leads_normalize_domain();
 
--- Backfill: email-less leads that become duplicates once their domain is normalized (the same company, or the same
--- person at the same company, in one workspace) are merged into the oldest: their evidence, approvals, messages,
--- sessions and events move over, blank fields are filled from them, a 'lead_merged' event records it, and the
--- duplicate is deleted. Then every domain is normalized.
+-- Backfill: a lead without an email is the company (one per normalized domain per workspace; named people at it are
+-- its `contacts`). Email-less leads that share a normalized domain in one workspace are merged into the oldest: their
+-- evidence, approvals, messages, sessions, notes and events move over, a named person becomes a contact, blank fields
+-- are filled, a 'lead_merged' event records it, and the duplicate is deleted. Then every domain is normalized.
 do $$
 declare
   d record;
@@ -564,7 +653,7 @@ begin
   for d in
     select id, keeper from (
       select id, first_value(id) over (
-               partition by workspace_id, coalesce(crusonia_registrable_domain(domain), domain), coalesce(lower(name), '')
+               partition by workspace_id, coalesce(crusonia_registrable_domain(domain), domain)
                order by created_at, id) as keeper
       from leads where email is null and domain is not null
     ) r
@@ -579,7 +668,14 @@ begin
            version = version + (select coalesce(max(version), 0) from drafts where lead_id = d.keeper)
     where lead_id = d.id;
     update events set lead_id = d.keeper where lead_id = d.id;
+    update lead_notes set lead_id = d.keeper where lead_id = d.id;
     delete from crm_sync_queue where lead_id = d.id;
+    update leads k set contacts = k.contacts || jsonb_build_array(jsonb_build_object(
+      'name', x.name, 'title', x.title, 'linkedin_url', x.linkedin_url, 'x_url', null, 'github_url', null,
+      'source_url', coalesce(x.source_url, x.website, ''), 'found_at', to_char(x.created_at, 'YYYY-MM-DD')))
+    from leads x
+    where k.id = d.keeper and x.id = d.id and coalesce(x.name, '') <> '' and lower(x.name) <> lower(coalesce(k.name, ''))
+      and not exists (select 1 from jsonb_array_elements(k.contacts) c where lower(c->>'name') = lower(x.name));
     update leads k set
       title = coalesce(k.title, x.title), company = coalesce(k.company, x.company), website = coalesce(k.website, x.website),
       linkedin_url = coalesce(k.linkedin_url, x.linkedin_url), score = coalesce(k.score, x.score),
@@ -597,13 +693,14 @@ $$;
 update leads set domain = crusonia_registrable_domain(domain)
 where crusonia_registrable_domain(domain) is not null and domain is distinct from crusonia_registrable_domain(domain);
 
--- Lead dedupe per workspace: by email, else by normalized company domain + lowercased name. A company (no email, no
--- name) is therefore unique on (workspace_id, domain); people at a company repeat only with different names.
+-- Lead dedupe per workspace: a person by email; a company (a lead without an email) by its normalized domain, so the
+-- same company is never logged twice in a workspace. People at a company repeat freely (with their emails, or as the
+-- company's contacts).
 alter table leads drop constraint if exists leads_email_key;
 drop index if exists leads_no_email_uq;
+drop index if exists leads_ws_no_email_uq;
 create unique index if not exists leads_ws_email_uq on leads (workspace_id, email);
-create unique index if not exists leads_ws_no_email_uq
-  on leads (workspace_id, domain, (coalesce(lower(name), ''))) where email is null;
+create unique index if not exists leads_ws_company_uq on leads (workspace_id, domain) where email is null;
 create index if not exists leads_ws_created_idx on leads (workspace_id, created_at desc, id desc);
 create index if not exists leads_ws_stage_idx on leads (workspace_id, stage, updated_at desc);
 
@@ -614,6 +711,11 @@ create index if not exists leads_ws_stage_idx on leads (workspace_id, stage, upd
 -- version they ran (playbook and agent version), and a draft written in a run records that run and its version.
 alter table leads add column if not exists cohort text;
 update leads set cohort = source || ':' || to_char(created_at at time zone 'UTC', 'YYYY-MM-DD') where cohort is null;
+-- The qualification workflow is per workspace (settings key 'qualification_workflow:<workspace id>'); the owner keeps
+-- the one saved before workspaces.
+insert into settings (key, value)
+select 'qualification_workflow:ws_owner', value from settings where key = 'qualification_workflow'
+on conflict (key) do nothing;
 create index if not exists leads_ws_cohort_idx on leads (workspace_id, cohort);
 alter table naive_sessions add column if not exists workflow_version text;
 alter table drafts add column if not exists workflow_version text;
@@ -631,6 +733,8 @@ create index if not exists naive_sessions_ws_idx on naive_sessions (workspace_id
 create index if not exists events_ws_idx on events (workspace_id, id desc);
 create index if not exists events_ws_kind_idx on events (workspace_id, kind, created_at);
 create index if not exists credit_ledger_ws_idx on credit_ledger (workspace_id, id desc);
+create index if not exists lead_notes_ws_idx on lead_notes (workspace_id, id desc);
+create index if not exists drafts_ws_tasks_idx on drafts (workspace_id, status, created_at desc) where channel <> 'email';
 
 -- API keys: 'user' keys are made in "Connect your agent"; an 'agent' key is the one a workspace's Naive agent
 -- uses (held only in the Naive vault, see src/services/naive-agents.ts). Both act only on their workspace.

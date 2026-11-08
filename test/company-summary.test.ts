@@ -10,7 +10,7 @@ import {
   SUMMARY_TEMPLATE,
   summaryForMessage,
 } from "../src/services/company-summary.ts";
-import { registrableDomain } from "../src/services/domains.ts";
+import { hostOf, registrableDomain } from "../src/services/domains.ts";
 import { normalizeProfile } from "../src/services/profile.ts";
 
 const doc = `# Acme
@@ -139,6 +139,7 @@ describe("company domains", () => {
       ["", null],
       ["not a domain", null],
     ];
-    for (const [input, out] of cases) expect({ input, out: registrableDomain(input) }).toEqual({ input, out });
+    const norm = (v: string) => { const h = hostOf(v); return h ? registrableDomain(h) : null; };
+    for (const [input, out] of cases) expect({ input, out: norm(input) }).toEqual({ input, out });
   });
 });

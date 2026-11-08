@@ -49,6 +49,15 @@ export type Lead = {
   notion_page_id?: string | null;
   notion_hash?: string | null;
   notion_synced_at?: Date | null;
+  // Named people and links found on public pages the agent read (src/services/leads.ts Contact, Link).
+  contacts?: { name: string; title: string | null; linkedin_url: string | null; x_url: string | null; github_url: string | null; source_url: string; found_at: string }[];
+  links?: { kind: string; url: string; source_url: string; found_at: string }[];
+  // The agent's "why we picked this" (2-4 sentences citing evidence by number) and suggested next step.
+  why_summary?: string | null;
+  next_step?: string | null;
+  // The owner excluded the company: future runs skip it until un-excluded.
+  excluded_at?: Date | null;
+  excluded_reason?: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -67,6 +76,14 @@ export type Draft = {
   // The agent run that wrote it and that run's workflow version (null for drafts written by a person).
   session_id?: string | null;
   workflow_version?: string | null;
+  // email (AgentMail, approval) | email_manual | linkedin | x | intro (manual tasks; see src/services/channels.ts).
+  channel?: string;
+  // Manual tasks: the profile the owner opens to send it.
+  target_url?: string | null;
+  // Factual phrases in the body and the saved evidence behind them: [{ text, source_url }].
+  citations?: { text: string; source_url: string }[];
+  // Manual tasks: when the owner marked it sent or skipped.
+  closed_at?: Date | null;
   created_at: Date;
 };
 

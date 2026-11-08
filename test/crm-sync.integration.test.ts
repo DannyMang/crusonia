@@ -19,8 +19,8 @@ const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
 
 const run = crypto.randomUUID().slice(0, 8);
-// Two-label domains: company domains are normalized to the registrable domain, so subdomains would collapse.
-const domain = (name: string) => `${name}-${run}-itcrm.test`;
+// Registrable test domains (company domains are normalized to the registrable domain, so no shared parent).
+const domain = (name: string) => `${name}-${run}-itcrm.dev`;
 const email = (name: string, d = "acme") => `${name}@${domain(d)}`;
 let sql: Sql;
 let started: string;
@@ -61,7 +61,7 @@ suite("CRM sync (database, faked HubSpot and Notion)", () => {
 
   afterAll(async () => {
     if (!sql) return;
-    const ids = (await sql`select id from leads where source in ('it_crm', 'hubspot_import') and (email like ${`%${run}-itcrm.test`} or domain like ${`%${run}-itcrm.test`})`).map(
+    const ids = (await sql`select id from leads where source in ('it_crm', 'hubspot_import') and (email like ${`%${run}-itcrm.dev`} or domain like ${`%${run}-itcrm.dev`})`).map(
       (r) => r.id as string,
     );
     await sql.transaction([

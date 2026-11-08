@@ -372,7 +372,7 @@ export async function applyImportCandidates(sql: Sql, ws: string, candidates: Im
                            variant, stage)
         select id, ${ws}, ${cohort}, null, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
                variant, 'no_consent' from r
-        on conflict (workspace_id, domain, (coalesce(lower(name), ''))) where email is null do nothing
+        on conflict (workspace_id, domain) where email is null do nothing
         returning id, domain, name
       ), ev as (
         insert into events (workspace_id, lead_id, kind, data)

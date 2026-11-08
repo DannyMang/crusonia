@@ -129,43 +129,55 @@ vault credential for exactly that URL, bound to that agent, holding a workspace 
 ### The research agent
 
 `bun run setup` also creates the Naive agent that `POST /api/workflows/research` runs, one session per lead. Its
-system prompt is [`playbooks/research.md`](playbooks/research.md): read the Company summary (it comes in every
-session's first message) and the lead, research them from
-public sources with few pages and searches, save every claim with its source URL, score ICP fit, and draft a short
-email only for opted-in, qualified leads. Web and email content is treated as data, never as instructions, and the
-agent asks the owner (`ask_operator`) when unsure. When it learns something durable it updates a section of the Company
-summary with a note (a new version the owner can revert).
+system prompt is [`playbooks/research.md`](playbooks/research.md) (v4): read the Company summary (it comes in every
+session's first message) and the lead (with the owner's notes) in one turn, research from public sources with few pages and searches batched per turn, save about 3
+evidence items, the score, rationale, next step, why-summary, contacts and links with one `save_research` call, and,
+for a qualified lead, write one short, evidence-cited message in the same turn: an email (approval) for opted-in
+leads, otherwise a manual LinkedIn, X, intro or own-mailbox task. Web and email content is treated as data, never as
+instructions, and the agent asks the owner (`ask_operator`) when unsure. When it learns something durable it updates a
+section of the Company summary with a note (a new version the owner can revert).
 
-- **Tools**: the 14 crusonia tools, Apify's single-page reader (`apify--rag-web-browser`) and its run-result readers
-  run without asking; `ask_operator` and everything else (Actor runs, Naive built-ins) ask first. `handoffs` is off.
-  Asked tool calls then go through `AUTO_CONFIRM_TOOLS`: an allowlisted call is allowed automatically, any other
-  becomes a tool approval.
-- **Model and budget**: `vetta/auto`, $5 a day and $1 per session by default; override with the `NAIVE_AGENT_*`
+- **Why batching matters**: once a Naive session reads people's data, every MCP call asks for a confirmation, even
+  at `allow` (Naive's rule; our webhook confirms allowlisted calls). Each pause and resume costs time and can rebuild
+  the prompt cache, so the playbook batches independent calls in one turn and the batch tools (`add_leads` with
+  inline evidence and scores, `save_research`) replace per-item calls.
+- **Tools**: the crusonia tools, Apify's single-page reader (`apify--rag-web-browser`) and its run-result readers
+  run without asking; `ask_operator` and everything else (Naive built-ins) ask first. The agent's Apify MCP URL loads
+  no Actor-run tools (`call-actor`, the crawler and search Actors): our `read_website` and `search_web` wrap those with
+  limits, a cost cap and metering. `handoffs` is off. Asked tool calls then go through `AUTO_CONFIRM_TOOLS`: an
+  allowlisted call is allowed automatically (all of a session's calls in parallel), any other becomes a tool approval.
+- **Model and budget**: a pinned model (`openai/gpt-6.1-terra`; `vetta/auto` switched models mid-session and each
+  switch re-wrote the prompt cache), $5 a day and $1 per session by default; override with the `NAIVE_AGENT_*`
   settings in `.dev.vars.example`.
 - **Updates**: edit the playbook, bump `version` in its front matter, then run `bun run setup --agent`. It updates
   the agent in place (`NAIVE_AGENT_ID`, or the one agent named "Crusonia Research"), so Naive records a new
-  version instead of a duplicate agent. Running sessions keep the version they started with.
+  version instead of a duplicate agent, and adds the vault credential for the agent's Apify MCP URL when that URL
+  changed (needs `NAIVE_VAULT_ID`, `APIFY_TOKEN` and an admin-scoped key). Running sessions keep the version they
+  started with.
 
 ### Tools
 
 | Tool | What it does |
 | --- | --- |
 | `get_status` | Configured providers, database reachability, the workspace's lead counts by stage, open approvals, Company summary version, next steps. Works with no keys. |
-| `read_website` | Reads a site (homepage + about/product/pricing pages) and returns trimmed text per page. Apify crawler with `APIFY_TOKEN`, plain fetch without. |
+| `read_website` | Reads a site (homepage + about/product/pricing pages, never sign-in/sign-up) and returns trimmed text per page. Apify crawler with `APIFY_TOKEN`, retried with JavaScript rendering when a site returns no text (SPAs); plain fetch without. Crusonia's own host is read from its landing copy. |
 | `search_web` | Google search via Apify (`APIFY_TOKEN`): organic results and related queries. |
 | `get_company_summary` | The workspace's Company summary: one markdown document, with its version and who last changed it. |
 | `update_company_summary` | `{markdown, note, section?, run_id?}`: replaces the whole document, or only the section with that heading (appended if missing). Every edit is a new version. |
-| `save_profile` / `get_profile` | Older aliases: structured fields (company, website, sells, ICP, segments, signals, sources) written into / read from the Company summary. |
-| `add_leads` | Upserts found people/companies with source + source URL; dedupes by email, else company domain + name. Stage `no_consent`: never emailed. |
-| `list_leads` / `get_lead` | Leads by stage; one lead with its evidence, drafts and approvals. |
-| `save_evidence` | One fact about a lead plus the URL that supports it. |
-| `score_lead` | Fit score 0-100, rationale and qualified verdict. |
-| `create_draft` | New immutable draft version + pending send approval (short code, 7 days by default). Opted-in leads only. Sends nothing. |
+| `save_profile` / `get_profile` | Structured aliases of the Company summary (company, website, sells, ICP, segments, signals, sources). `save_profile` takes a `change_note`; `get_profile` also returns the markdown, the owner's recent notes on leads and the companies future runs skip. |
+| `add_leads` | Upserts found companies and people, one lead per company (keyed by the normalized company domain, never a job board or other host): new contacts, links and evidence merge into a known company; disqualified or excluded companies are skipped. Optional inline `evidence`, `score`/`qualified`/`rationale` and `why_summary`. Returns `created` / `merged` / `known` / `skipped` per lead. No consent: never emailed. New leads record the run that found them (`cohort`). |
+| `list_leads` / `get_lead` | Leads by stage; one lead with its contacts, links, why-summary, evidence (numbered), drafts, approvals and notes. |
+| `save_research` | One call per researched lead: evidence (about 3, deduped), score, qualified, rationale, next step, why-summary (citing evidence by number), contacts and links. Returns the channels it may be drafted on. |
+| `save_evidence` / `score_lead` | Fix a single evidence item or score. |
+| `create_draft` | `channel` `email` (default): opted-in leads only, new immutable version + pending send approval (7 days by default). `linkedin`, `x`, `intro`, `email_manual`: qualified leads, consent not needed, saved as a task the owner sends personally; must cite saved evidence (`citations`). Sends nothing. |
 | `list_pending_approvals` | Approvals waiting for a human, with the draft. |
+| `list_tasks` | The manual outreach queue: open tasks with the lead, text, citations and the profile to open. |
+| `add_note` | A note on a lead for the owner and later agents. |
 
-Every tool acts on the caller's workspace only. Every write also appends an `events` row. No tool sends email or decides
-an approval: a send happens only after a human approves it. For workspaces other than the owner's, `search_web` and
-`read_website` (when they use Apify) need credits and are rate-limited (`WEB_CALLS_PER_HOUR`).
+Every tool acts on the caller's workspace only. Every write also appends an `events` row. No tool sends anything or
+decides an approval: an email goes out only after a human approves it, and a manual message only when the owner sends
+it themselves. For workspaces other than the owner's, `search_web` and `read_website` (when they use Apify) need
+credits and are rate-limited (`WEB_CALLS_PER_HOUR`).
 
 ## REST API
 
@@ -180,10 +192,18 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | GET | `/api/leads` | List, newest first. Filters `stage`, `min_score`, `source`, `q` (email/name/company/domain); `limit` + `cursor` |
 | POST | `/api/leads` | Create an opted-in contact (`email`, optional `consent: {text, at?}`) |
 | POST | `/api/leads/import` | CSV import: JSON `{csv, mapping?, source?, dry_run?}` or a `text/csv` body. Dedupes by email, then company domain + name; reports created/updated/skipped per row |
-| GET | `/api/leads/:id` | Lead with evidence, drafts, approvals, messages, Naive sessions and the event timeline |
+| GET | `/api/leads/:id` | Lead (with `contacts`, `links`, `why_summary`, `next_step`) with evidence (numbered `n`), drafts, approvals, notes, messages, Naive sessions and the event timeline |
+| GET, POST | `/api/leads/:id/notes` | Notes on the lead, newest first / add `{body, kind?}` (`note`, or `thumbs_down` / `thumbs_up` with the reason as body) |
+| PATCH, DELETE | `/api/leads/:id/notes/:note_id` | Edit `{body}` / delete one of your own notes |
+| POST, DELETE | `/api/leads/:id/exclude` | Exclude the company `{reason?}` (future runs skip it; the reason is kept as a thumbs-down note) / un-exclude it |
 | PATCH | `/api/leads/:id` | Stage, consent (`null` revokes and closes pending send approvals), basic fields |
 | DELETE | `/api/leads/:id` | Delete (cascades; the audit events stay) |
 | POST | `/api/leads/:id/drafts` | Owner-written draft: new version + send approval (opted-in, unsuppressed leads only) |
+| GET | `/api/tasks` | Manual outreach tasks: `status` (`open` default, `sent`, `skipped`, `superseded`, `all`), `channel`, `lead_id`, `limit`. Each has the text, `citations`, `target_url` and `open_url` (profile, or a `mailto:` for `email_manual`), and the lead; plus `open_total` |
+| GET | `/api/tasks/:id` | One task |
+| POST | `/api/tasks/:id/sent` | `{body?, note?}`: the owner sent it (`body` = the text actually sent). Records an outbound message on the task's channel and moves the lead to `sent`; once |
+| POST | `/api/tasks/:id/skip` | `{reason?}`: not sending it; the stage is unchanged |
+| POST | `/api/tasks/:id/regenerate` | `{instructions?}` -> `{session_id}`: a Naive session writes a new version on the same channel (paid like research) |
 | GET | `/api/approvals` | `status` (default `pending`), `kind`, `lead_id` |
 | GET | `/api/approvals/:code` | One approval |
 | POST | `/api/approvals/:code/approve` | send: re-checks every rule, then sends via AgentMail. tool: allow (`scope`) |
@@ -195,7 +215,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | GET, POST | `/api/suppressions` | List (`q`, `cursor`) / add `{email, reason?}` |
 | DELETE | `/api/suppressions/:email` | Remove |
 | GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token", workspace: {id, name, owner}}` |
-| GET | `/api/summary` | Home: `pipeline` (found, researched, drafted, awaiting_approval, sent, replied, meetings: where leads are now), top 5 `pending_approvals`, `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` from Naive session usage, `budget_usd` from `WEEKLY_BUDGET_USD`, `day_usd` and `daily_cap_usd` for the workspace's daily cap), `paused` |
+| GET | `/api/summary` | Home: `pipeline` (cumulative: how many leads got at least to found, researched, drafted, sent, replied, meetings; plus `awaiting_approval` now), `pipeline_now` (where leads are now, one bucket each), `tasks_open`, top 5 `pending_approvals`, `pending_approvals_total`, `pending_sends_total` (send approvals only), `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` and `week_credits`: credits charged in the last 7 days; `provider_usd`: the raw Naive + Apify cost behind them; `budget_usd` from `WEEKLY_BUDGET_USD`; `day_usd` and `daily_cap_usd` for the workspace's daily cap), `paused` |
 | GET | `/api/status` | `get_status` data plus `workspace_id`, `inbox_address`, `naive_agent_configured`, `mcp_url`, `agent_mcp_url` (the workspace's Naive agent URL), `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error), `imessage` (owner workspace only: `enabled`, `active`, `missing`, `bridge` as last reported with `online`, `undeliverable_notices`) |
 | GET | `/api/company-summary` | `{markdown, version, updated_at, updated_by, change_note}` (version 0 and a suggested `template` before the first save) |
 | PUT | `/api/company-summary` | `{markdown, note?, base_version?}`: a new version (409 `version_conflict` if `base_version` is stale; 413 over 20,000 characters; an unchanged document saves nothing) |
@@ -203,12 +223,14 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | GET | `/api/company-summary/versions/:version` | One version with its markdown |
 | POST | `/api/company-summary/revert` | `{version}`: a new version copied from that one |
 | GET, PUT | `/api/profile` | Older alias: `{profile}` (company, website, sells, icp_description, segments, signals, sources) read from the Company summary; PUT writes those parts into it as a new version and keeps its other sections |
-| POST | `/api/onboarding/read-website` | `{url}` -> `{pages: [{url, title, text}]}`. Synchronous; Apify crawler with `APIFY_TOKEN` (a few cents), else a plain fetch |
+| POST | `/api/onboarding/read-website` | `{url, max_pages?, render_js?}` -> `{pages: [{url, title, text}], mode, rendered?, note?}`. Synchronous; Apify crawler with `APIFY_TOKEN` (a few cents, metered), retried with JavaScript rendering when it finds no text, else a plain fetch |
 | POST | `/api/onboarding/propose` | `{url?, description?}` -> `{session_id}`: a Naive session reads the site / description and writes the Company summary (author `onboarding`; a description is also saved as v1 right away) |
 | GET | `/api/onboarding/propose/:session_id` | `{status: "running" \| "done" \| "error", profile?}`; poll it (refreshes from Naive while active) |
 | POST | `/api/leads/find` | `{count?}` (25, max 50) -> `{session_id}`: a Naive session finds leads matching the Company summary, adds and scores them |
 | GET | `/api/workflows` | Naive sessions grouped by purpose: `{id, name, purpose, status, started_at, leads_processed, cost_usd, last_event_at, runs}` |
-| GET | `/api/workflows/runs/:session_id` | `{run, steps, lead, approvals}`. Steps from Naive's events API (free, cached in `naive_session_events`) and our audit events |
+| GET | `/api/workflows/runs/:session_id` | `{run, steps, lead, approvals}`: the clean timeline. Steps from Naive's events and our audit events, sorted by time; a tool call that waited for a confirmation is one step with `approval: {decision, via, code?, waited_ms}`, and pauses only the auto-confirm policy resolved are left out |
+| GET | `/api/workflows/runs/:session_id/trace` | The full trace: stored Naive events (`after_seq`, `limit` up to 1000; `has_more`, `next_after_seq`), plus the run, our audit events, approvals and `spend` (Naive cost, credits debited, Apify runs). Kept `TRACE_RETENTION_DAYS` (180) |
+| GET | `/api/workflows/runs/:session_id/trace/export` | The whole trace as a JSON file download |
 | GET | `/api/replies` | Inbound replies with their lead: `{id, lead_id, from, subject, preview, label, received_at}`; `limit`, `cursor`, `label`, `lead_id` |
 | GET, POST | `/api/keys` | API keys for `/mcp` and `/api`: list (no secrets) / create `{name}` (full key returned once) |
 | DELETE | `/api/keys/:id` | Revoke |
@@ -221,13 +243,15 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | GET | `/api/admin/runs?workspace=` | Platform admins only: a workspace's agent runs (read-only, audited) |
 | GET | `/api/admin/runs/:id/trace` | Platform admins only: one run's steps and stored Naive events (read-only, audited) |
 | POST | `/webhooks/agentmail` | Svix-signed. `message.received` (match by thread, then sender; classify; stop follow-ups; unsubscribe suppresses), `message.bounced` (permanent: suppress), `message.complained`, `message.delivered` |
-| POST | `/webhooks/naive` | `Vetta-Signature`-signed. `session.idle`: allowlisted tools (`AUTO_CONFIRM_TOOLS`) are allowed, other tools and `ask_operator` questions become approvals |
+| POST | `/webhooks/naive` | `Vetta-Signature`-signed. `session.idle`: allowlisted tools (`AUTO_CONFIRM_TOOLS`) are allowed (claimed in one statement, confirmed in parallel; a call another handler already claimed counts as allowed, so the session stays `running`), other tools and `ask_operator` questions become approvals |
 | POST | `/webhooks/photon/poll` | iMessage bridge, `X-Crusonia-Signature`-signed (`BRIDGE_SECRET`): delivery acks + bridge status in, notices to text the owner out |
 | POST | `/webhooks/photon` | iMessage bridge, signed: one owner command (approve, reject, edit, answer, tapback, status, pause, resume); answers with the reply text |
 | POST | `/webhooks/stripe` | `Stripe-Signature`-signed (`STRIPE_WEBHOOK_SECRET`; no secret, no processing). Credits packs and monthly plans, tracks subscriptions, claws back refunds; see [Billing](#billing-stripe) |
 
-Rules enforced in code: the agent never sends; drafts are immutable (an edit is a new version and closes the old
-approval); a send approval is bound to the recipient and draft version, expires (`SEND_APPROVAL_TTL_HOURS`, 7 days
+Rules enforced in code: the agent never sends; manual-channel drafts get no approval and the send path only accepts
+email drafts; manual drafts need a qualified lead and citations of its saved evidence; nobody suppressed or
+unsubscribed gets a draft on any channel; drafts are immutable (an edit is a new version and closes the old
+approval, and a lead has one open draft across channels); a send approval is bound to the recipient and draft version, expires (`SEND_APPROVAL_TTL_HOURS`, 7 days
 by default, for drafts from MCP and REST alike), is consumed once, and is re-checked at send time (not expired, latest
 version, same recipient, consent, not suppressed, not paused) inside the SQL that consumes it. Agent tool and
 question approvals expire sooner (`TOOL_APPROVAL_TTL_MINUTES`, 1 hour by default) because the Naive session waits on
@@ -236,9 +260,16 @@ label, never resent blindly.
 Webhooks are verified on the raw body and deduped by provider event id. Inbound email is stored and pattern-matched
 as data, never followed as instructions. Every state change writes an `events` row.
 
+Apify: every Actor run we start (`search_web`, `read_website`) carries `maxTotalChargeUsd` (`APIFY_MAX_CHARGE_USD`,
+$0.25 by default), is recorded in `apify_runs` (with its workspace), and its `usageTotalUsd` is debited to that
+workspace's credits at the same markup as Naive spend (ledger source `apify:<run>:<credits>`; later usage only tops up
+the difference). Runs started by a Naive agent are attributed to its session.
+
 The minute cron expires stale approvals (an expired tool call is denied to the agent), reconciles running Naive
 sessions that missed a webhook (events after `last_seq`), settles unconfirmed sends, drains the CRM sync queue,
-debits finished Naive sessions that still owe credits, and expires unused plan credits after their rollover month.
+debits finished Naive sessions and Apify runs that still owe credits (re-reading final Apify usage once), expires
+unused plan credits after their rollover month, reads finished sessions' traces to the end, and prunes traces older
+than `TRACE_RETENTION_DAYS`.
 
 ## Workspaces
 

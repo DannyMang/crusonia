@@ -2,7 +2,8 @@
 //   bun run setup                 print the values to add to .dev.vars
 //   bun run setup --write         also write them into .dev.vars
 //   bun run setup --naive-credential   re-add the MCP credentials to an existing Naive vault
-//   bun run setup --agent         only create or update the Naive agent (e.g. after editing playbooks/)
+//   bun run setup --agent         only create or update the Naive agent (e.g. after editing playbooks/), and add the
+//                                 vault credential for its Apify MCP URL if that URL changed
 //   bun run setup --stripe        only Stripe billing: products/prices from src/billing/plans.ts, the Customer
 //                                 Portal and the webhook endpoint (test key; --live for a live key,
 //                                 --rotate-webhook-secret for a new signing secret, --verify-checkout to create
@@ -229,10 +230,56 @@ async function setupNaiveAgent(baseUrl: string) {
     notes.push("Naive agent skipped: NAIVE_API_KEY not set.");
     return;
   }
-  await applyNaiveAgent(baseUrl, naiveClient(apiKey, [apiKey]));
+  const apifyToken = getVar("APIFY_TOKEN");
+  await applyNaiveAgent(baseUrl, naiveClient(apiKey, [apiKey, ...(apifyToken ? [apifyToken] : [])]));
+}
+
+type VaultCredential = { id: string; key?: string; mcp_server_url?: string | null };
+
+/**
+ * Naive injects a vault token only when the credential's mcp_server_url equals the agent's server URL exactly, so a
+ * new APIFY_MCP_URL needs its own credential. Adds it once (re-runs find it and send nothing). Needs NAIVE_VAULT_ID,
+ * APIFY_TOKEN, and a Naive key with the admin scope.
+ */
+async function ensureApifyCredential(naive: Naive) {
+  const vaultId = getVar("NAIVE_VAULT_ID");
+  const apifyToken = getVar("APIFY_TOKEN");
+  if (!vaultId || !apifyToken) {
+    notes.push(`Apify MCP credential not checked: ${!vaultId ? "NAIVE_VAULT_ID" : "APIFY_TOKEN"} is not set. The agent's Apify tools need a vault credential for ${APIFY_MCP_URL}.`);
+    return;
+  }
+  const creds: VaultCredential[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < 20; page++) {
+    const qs = new URLSearchParams({ limit: "100", ...(after ? { after } : {}) });
+    const res = await naive.request<{ data: VaultCredential[]; has_more: boolean; next_cursor: string | null }>(
+      "GET",
+      `/v1/vaults/${encodeURIComponent(vaultId)}/credentials?${qs}`,
+    );
+    creds.push(...res.data);
+    if (!res.has_more || !res.next_cursor) break;
+    after = res.next_cursor;
+  }
+  if (!creds.some((c) => c.mcp_server_url === APIFY_MCP_URL)) {
+    try {
+      await naive.post(
+        `/v1/vaults/${encodeURIComponent(vaultId)}/credentials`,
+        { kind: "static_bearer", key: "Apify MCP (rag-web-browser)", mcp_server_url: APIFY_MCP_URL, value: apifyToken },
+        `naive-credential:${vaultId}:${APIFY_MCP_URL}:${await sha256Hex(apifyToken)}`,
+      );
+      console.log(`Naive vault credential: Apify MCP -> ${APIFY_MCP_URL}`);
+    } catch (err) {
+      notes.push(`Apify MCP credential for ${APIFY_MCP_URL} failed (the key needs the admin scope); the agent's Apify tools will fail until it exists. ${(err as Error).message}`);
+    }
+  }
+  const stale = creds.filter((c) => c.mcp_server_url?.startsWith("https://mcp.apify.com") && c.mcp_server_url !== APIFY_MCP_URL);
+  if (stale.length) {
+    notes.push(`Naive vault: ${stale.length} Apify credential(s) for an older Apify MCP URL are no longer used by the agent; delete them in Naive if you like.`);
+  }
 }
 
 async function applyNaiveAgent(baseUrl: string, naive: Naive) {
+  await ensureApifyCredential(naive);
   const agent = await createNaiveAgent(baseUrl, naive);
   results.NAIVE_AGENT_ID = agent.id;
   const { budget } = agent.config;
