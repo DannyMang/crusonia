@@ -103,7 +103,8 @@ export interface Env {
   // iMessage approvals through Photon (src/services/imessage.ts, bridge/). The Photon credentials
   // (SPECTRUM_PROJECT_ID / SPECTRUM_PROJECT_SECRET) live only on the bridge, never on the Worker.
   // The bridge only calls the Worker (it accepts no inbound traffic), so the Worker needs no bridge URL.
-  // "true" turns it on (default off): new approvals and expiry reminders are texted, owner replies are applied.
+  // "true" turns on new notices (default off): new approvals and expiry reminders are texted. Off does not cancel what
+  // was already texted: a tapback on a delivered notice is still applied. To stop that too, stop the bridge.
   IMESSAGE_ENABLED?: string;
   // Shared HMAC secret signing the bridge's calls to /webhooks/photon and /webhooks/photon/poll. `openssl rand -hex 32`.
   BRIDGE_SECRET?: string;

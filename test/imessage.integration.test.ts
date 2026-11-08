@@ -272,6 +272,42 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     expect(await approvalRow(v2code)).toMatchObject({ status: "approved", decided_via: "imessage" });
   });
 
+  test("switched off: no new notices, but acks are recorded and a thumb on a delivered notice still applies", async () => {
+    const off = { IMESSAGE_ENABLED: "false" };
+    const { code } = await newSendApproval("off");
+    const id = `approval:${code}`;
+    // Off: the approval is not queued or handed out.
+    const quiet = await bridgeCall("/webhooks/photon/poll", { bridge: { state: "connected", connected: true }, acks: [], max: 10 }, off);
+    expect(quiet).toEqual({ ok: true, enabled: false, notices: [], poll_after_ms: 60_000 });
+    expect((await sql`select count(*)::int as n from imessage_outbox where id = ${id}`)[0]!.n).toBe(0);
+
+    // It was leased while on, and the ack arrives after the switch went off: the bubble id is still recorded.
+    let leased = false;
+    for (let i = 0; i < 10 && !leased; i++) {
+      const res = await bridgeCall("/webhooks/photon/poll", { bridge: { state: "connected", connected: true }, acks: [], max: 10 });
+      leased = (res.notices as Notice[]).some((n) => n.id === id);
+    }
+    expect(leased).toBe(true);
+    const bubble = `bubble-${run}-off`;
+    await bridgeCall("/webhooks/photon/poll", { bridge: { state: "connected", connected: true }, acks: [{ id, ok: true, message_id: bubble }], max: 10 }, off);
+    expect((await sql`select message_id from imessage_outbox where id = ${id}`)[0]!.message_id).toBe(bubble);
+
+    // The owner taps it while off: applied.
+    const body = JSON.stringify({ id: `it-${run}-off-tap`, from: OWNER, command: { action: "react", reaction: "like", message_id: bubble } });
+    const ts = Math.floor(Date.now() / 1000);
+    const res = await worker.fetch(
+      new Request("https://example.test/webhooks/photon", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-crusonia-timestamp": String(ts), "x-crusonia-signature": await signBridge(secret, ts, "/webhooks/photon", body) },
+        body,
+      }),
+      { ...env, ...off },
+      {} as ExecutionContext,
+    );
+    expect(((await res.json()) as { reply: string }).reply).toContain("Approved. Sent");
+    expect(await approvalRow(code)).toMatchObject({ status: "approved", decided_via: "imessage" });
+  });
+
   test("a thumb on a message that is not a notice does nothing and asks for no reply", async () => {
     expect(await thumb("like", `not-a-notice-${run}`)).toEqual({ ok: false, error: "unknown_message", reply: "" });
     expect(await thumb("dislike", `not-a-notice-${run}`)).toEqual({ ok: false, error: "unknown_message", reply: "" });

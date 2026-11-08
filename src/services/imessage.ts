@@ -10,7 +10,8 @@
 // Workspaces: the bridge texts the instance owner's phone (OWNER_PHONE), so iMessage covers the owner workspace only:
 // only its approvals are announced, and every tapback is looked up through the bubble's outbox row in the owner
 // workspace.
-// Off unless IMESSAGE_ENABLED=true and BRIDGE_SECRET is set. All message wording lives here.
+// IMESSAGE_ENABLED=true (with BRIDGE_SECRET set) turns new notices on. Off does not cancel what is already on the owner's
+// phone: a tapback on a delivered notice is still applied. All message wording lives here.
 import { z } from "zod";
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
@@ -238,32 +239,11 @@ const noticeRows = async (sql: Sql, codes: string[]): Promise<NoticeRow[]> =>
     left join drafts d on d.id = a.draft_id
     where a.workspace_id = ${WS} and a.code = any(${codes}::text[])`) as NoticeRow[];
 
-/**
- * One bridge poll, in one database round trip plus one read:
- *   1. record acks (delivered, or failed: released for the next poll) and the bridge's status (written at most every
- *      30 s, or when its state changes);
- *   2. queue a notice for every approval opened in the last 24 hours (once per approval, keyed by `approval:<code>`)
- *      and one reminder (`warn:<code>`) for approvals in the last quarter of their life (at most the last 12 hours),
- *      at least 10 minutes after the owner was told about them;
- *   3. lease up to `max` undelivered notices whose approval is still open (skip locked, so overlapping polls never
- *      get the same notice; a lease the bridge never acks expires after 2 minutes; 5 attempts at most).
- * The notice text is rendered now, so "expires in" is current. Answers without touching the database while off.
- */
-export async function handleBridgePoll(getSql: () => Sql, env: Env, poll: BridgePoll): Promise<PollResponse> {
-  if (!imessageConfig(env).active) return { ok: true, enabled: false, notices: [], poll_after_ms: DISABLED_POLL_MS };
-  const sql = getSql();
-  const delivered = poll.acks.filter((a) => a.ok);
-  const failed = poll.acks.filter((a) => !a.ok);
-  const status = JSON.stringify({ ...poll.bridge, seen_at: new Date().toISOString() });
-  // Integration-test fixtures on a shared database are never texted (unless IMESSAGE_INCLUDE_TEST_DATA=true): leads
-  // with an it_* source, recipients on reserved example domains (RFC 2606/6761), and ses_it_* agent sessions.
-  const includeTest = env.IMESSAGE_INCLUDE_TEST_DATA?.trim().toLowerCase() === "true";
-  const testDomain = "@([a-z0-9-]+\\.)*(example\\.(com|org|net)|[a-z0-9-]+\\.(test|example|invalid|localhost))$";
-  // Notices counted against the cap: delivered in the window, plus leases still outstanding.
-  const window = `${NOTICE_WINDOW_MINUTES} minutes`;
-  const capSetting = Number(env.IMESSAGE_NOTICE_CAP);
-  const cap = Number.isInteger(capSetting) && capSetting > 0 ? capSetting : NOTICE_CAP;
-  const results = await sql.transaction([
+/** Records the bridge's delivery results. */
+function ackQueries(sql: Sql, acks: BridgePoll["acks"]) {
+  const delivered = acks.filter((a) => a.ok);
+  const failed = acks.filter((a) => !a.ok);
+  return [
     // Delivered either way; the bubble id is recorded once and never reassigned to another notice.
     sql`update imessage_outbox o set delivered_at = coalesce(o.delivered_at, now()), last_error = null,
           message_id = coalesce(o.message_id, case
@@ -274,6 +254,41 @@ export async function handleBridgePoll(getSql: () => Sql, env: Env, poll: Bridge
     sql`update imessage_outbox o set leased_at = null, last_error = f.err
         from unnest(${failed.map((f) => f.id)}::text[], ${failed.map((f) => f.error ?? "send failed")}::text[]) as f(id, err)
         where o.id = f.id and o.delivered_at is null`,
+  ];
+}
+
+/**
+ * One bridge poll, in one database round trip plus one read:
+ *   1. record acks (delivered, or failed: released for the next poll) and the bridge's status (written at most every
+ *      30 s, or when its state changes);
+ *   2. queue a notice for every approval opened in the last 24 hours (once per approval, keyed by `approval:<code>`)
+ *      and one reminder (`warn:<code>`) for approvals in the last quarter of their life (at most the last 12 hours),
+ *      at least 10 minutes after the owner was told about them;
+ *   3. lease up to `max` undelivered notices whose approval is still open (skip locked, so overlapping polls never
+ *      get the same notice; a lease the bridge never acks expires after 2 minutes; 5 attempts at most).
+ * The notice text is rendered now, so "expires in" is current. While off, it only records acks: no new notices.
+ */
+export async function handleBridgePoll(getSql: () => Sql, env: Env, poll: BridgePoll): Promise<PollResponse> {
+  if (!imessageConfig(env).active) {
+    // Off stops new notices, but a text that already went out must keep its bubble id, or a later tapback can't find it.
+    if (poll.acks.length) {
+      const sql = getSql();
+      await sql.transaction(ackQueries(sql, poll.acks));
+    }
+    return { ok: true, enabled: false, notices: [], poll_after_ms: DISABLED_POLL_MS };
+  }
+  const sql = getSql();
+  const status = JSON.stringify({ ...poll.bridge, seen_at: new Date().toISOString() });
+  // Integration-test fixtures on a shared database are never texted (unless IMESSAGE_INCLUDE_TEST_DATA=true): leads
+  // with an it_* source, recipients on reserved example domains (RFC 2606/6761), and ses_it_* agent sessions.
+  const includeTest = env.IMESSAGE_INCLUDE_TEST_DATA?.trim().toLowerCase() === "true";
+  const testDomain = "@([a-z0-9-]+\\.)*(example\\.(com|org|net)|[a-z0-9-]+\\.(test|example|invalid|localhost))$";
+  // Notices counted against the cap: delivered in the window, plus leases still outstanding.
+  const window = `${NOTICE_WINDOW_MINUTES} minutes`;
+  const capSetting = Number(env.IMESSAGE_NOTICE_CAP);
+  const cap = Number.isInteger(capSetting) && capSetting > 0 ? capSetting : NOTICE_CAP;
+  const results = await sql.transaction([
+    ...ackQueries(sql, poll.acks),
     sql`insert into settings (key, value) values ('imessage_bridge', ${status}::jsonb)
         on conflict (key) do update set value = excluded.value
         where settings.value->>'state' is distinct from excluded.value->>'state'
