@@ -105,6 +105,18 @@ export async function findOrCreateCustomer(sql: Sql, env: Env, stripe: StripeCli
   return (await getAccount(sql, ws))!.stripe_customer_id!;
 }
 
+/** Checkout Studio settings on every Checkout Session. payment_method_collection is added for subscriptions only: Stripe refuses it without a recurring price. */
+const CHECKOUT_SETTINGS = {
+  ui_mode: "hosted_page",
+  billing_address_collection: "auto",
+  phone_number_collection: { enabled: false },
+  automatic_tax: { enabled: false },
+  allow_promotion_codes: false,
+  submit_type: "auto",
+  integration_identifier: "hosted_web_0001",
+  origin_context: "web",
+};
+
 const LIVE_SUBSCRIPTION = new Set(["active", "trialing", "past_due", "unpaid", "incomplete", "paused"]);
 
 export function resolveOffer(input: { plan?: string; pack?: string }): Offer {
@@ -142,13 +154,14 @@ export async function createCheckout(
     .post<{ id: string; url: string | null }>(
       "/v1/checkout/sessions",
       {
+        ...CHECKOUT_SETTINGS,
         mode: offer.kind === "subscription" ? "subscription" : "payment",
         customer,
         line_items: [{ price: price.id, quantity: 1 }],
         success_url: `${base}?checkout=success`,
         cancel_url: `${base}?checkout=cancelled`,
         metadata,
-        ...(offer.kind === "subscription" ? { subscription_data: { metadata } } : { payment_intent_data: { metadata } }),
+        ...(offer.kind === "subscription" ? { payment_method_collection: "always", subscription_data: { metadata } } : { payment_intent_data: { metadata } }),
       },
       `crusonia-checkout-${crypto.randomUUID()}`,
     )
