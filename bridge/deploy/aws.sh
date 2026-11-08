@@ -70,6 +70,7 @@ bootstrap_body() { # the first-boot script (bash, as root). Never echoes the env
   cat <<EOF
 set -euo pipefail
 export HOME=/root # cloud-init runs launch scripts without HOME; git and docker want one
+umask 077 # secrets stay private; only the code checkout below is made world-readable
 log() { echo "\$(date -u +%FT%TZ) \$*"; }
 # Progress beacons: unsigned POSTs the target Worker answers 401 but logs with the query string, so first boot can be
 # followed in \`wrangler tail\` without SSH. They carry step names only.
@@ -98,9 +99,11 @@ $(env_lines)
 ENVEOF
 )
 chmod 600 /opt/crusonia-bridge/bridge.env
-rm -rf /opt/crusonia-bridge/repo
-git clone --quiet "$REPO_URL" /opt/crusonia-bridge/repo
-git -C /opt/crusonia-bridge/repo checkout --quiet --detach "$GIT_REF"
+# The code (and only the code) must be readable by the container's unprivileged user.
+( umask 022
+  rm -rf /opt/crusonia-bridge/repo
+  git clone --quiet "$REPO_URL" /opt/crusonia-bridge/repo
+  git -C /opt/crusonia-bridge/repo checkout --quiet --detach "$GIT_REF" )
 beacon cloned
 IMAGE="crusonia-bridge:${GIT_REF:0:12}"
 # Host networking for the build and the container: the bridge only dials out (and its health server listens on
