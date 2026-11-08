@@ -2,6 +2,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
 import { AuthProvider, RedirectIfSignedIn, RequireAuth } from "./auth.tsx";
 import { AppShell } from "./components/AppShell.tsx";
+import Landing from "./landing/Landing.tsx";
 import Approvals from "./pages/Approvals.tsx";
 import SignIn from "./pages/auth/SignIn.tsx";
 import SignUp from "./pages/auth/SignUp.tsx";
@@ -36,7 +37,8 @@ export function App() {
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            {/* "/" is reserved for the public landing page (web/src/landing/), which sends signed-in visitors to /app. */}
+            {/* Public landing page (web/src/landing/); it sends signed-in visitors to /app. */}
+            <Route index element={<Landing />} />
 
             <Route path="sign-in/*" element={<RedirectIfSignedIn><SignIn /></RedirectIfSignedIn>} />
             <Route path="sign-up/*" element={<RedirectIfSignedIn fallback="/onboarding/1"><SignUp /></RedirectIfSignedIn>} />
