@@ -155,9 +155,10 @@ describe("company domains: one per company, never a host", () => {
 
 describe("summary funnel", () => {
   test("is cumulative: each step is at least the next one", () => {
-    expect(cumulativePipeline({ found: 5, researched: 2, drafted: 0, sent: 1, replied: 0, meetings: 1 }, 2)).toEqual({
+    expect(cumulativePipeline({ found: 5, researched: 2, qualified: 0, drafted: 0, sent: 1, replied: 0, meetings: 1 }, 2)).toEqual({
       found: 5,
       researched: 2,
+      qualified: 1,
       drafted: 1,
       awaiting_approval: 2,
       sent: 1,

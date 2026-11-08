@@ -151,13 +151,13 @@ suite("web app API (database, mocked Naive)", () => {
     const after = await getSummary(sql, { ...naiveEnv, WEEKLY_BUDGET_USD: "20" });
     // Cumulative: 4 leads found; met, awaiting and drafted got at least to drafted (met is a meeting, so it counts in
     // every step); now: one lead in each bucket it sits in.
-    const delta = (k: keyof typeof after.pipeline) => after.pipeline[k] - before.pipeline[k];
+    const delta = (k: keyof typeof after.pipeline) => (after.pipeline[k] ?? 0) - (before.pipeline[k] ?? 0);
     expect([delta("found"), delta("researched"), delta("drafted"), delta("sent"), delta("replied"), delta("meetings")]).toEqual([4, 3, 3, 1, 1, 1]);
     expect(delta("awaiting_approval")).toBe(1);
-    for (const [a, b] of [["found", "researched"], ["researched", "drafted"], ["drafted", "sent"], ["sent", "replied"], ["replied", "meetings"]] as const) {
-      expect(after.pipeline[a]).toBeGreaterThanOrEqual(after.pipeline[b]);
+    for (const [a, b] of [["found", "researched"], ["researched", "qualified"], ["qualified", "drafted"], ["drafted", "sent"], ["sent", "replied"], ["replied", "meetings"]] as const) {
+      expect(after.pipeline[a] ?? 0).toBeGreaterThanOrEqual(after.pipeline[b] ?? 0);
     }
-    const now = (k: keyof typeof after.pipeline_now) => after.pipeline_now[k] - before.pipeline_now[k];
+    const now = (k: keyof typeof after.pipeline_now) => (after.pipeline_now[k] ?? 0) - (before.pipeline_now[k] ?? 0);
     expect([now("found"), now("meetings"), now("awaiting_approval"), now("drafted")]).toEqual([1, 1, 1, 1]);
     expect(after.pending_approvals_total - before.pending_approvals_total).toBe(1);
     expect(after.pending_sends_total - before.pending_sends_total).toBe(1);
