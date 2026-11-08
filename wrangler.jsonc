@@ -13,14 +13,16 @@
     // Every minute: the scheduled handler will drive due work (expired approvals, stalled sessions).
     "crons": ["* * * * *"]
   },
-  // The dashboard SPA (web/, `bun run build:web`) is served as static assets. These paths run the Worker
-  // first (API, MCP, webhooks, health; see the comment in src/index.ts); any other path without a file falls
-  // back to index.html so the client-side router can handle /app/*, /onboarding/*, /sign-in.
+  // The dashboard SPA (web/, `bun run build:web`) is served as static assets; files that exist never run the
+  // Worker. These paths run the Worker first (API, MCP, webhooks, health). Any other path without a file goes
+  // to the Worker too ("none" below, not "single-page-application"): it answers 404 for a missing /assets/* or
+  // /media/* file and index.html for client-side routes (/app/*, /onboarding/*, /sign-in). See src/index.ts.
+  // Cache headers for the files are in web/public/_headers.
   "assets": {
     "directory": "./web/dist",
-    // src/index.ts hands "/" and unknown non-API paths to the SPA through this binding.
+    // src/index.ts serves index.html for client-side routes through this binding.
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
+    "not_found_handling": "none",
     "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/webhooks/*", "/health"]
   },
   // Version URLs (and aliased ones like app-crusonia.<subdomain>.workers.dev from
