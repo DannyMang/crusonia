@@ -227,6 +227,7 @@ function SendCard({ a, now, onDecided, editingRef }: { a: ApprovalListItem; now:
   const api = useApi();
   const qc = useQueryClient();
   const draft = a.draft;
+  const sendsLater = Boolean(draft?.scheduled_for && new Date(draft.scheduled_for).getTime() > Date.now());
   const [mode, setMode] = useState<"view" | "edit" | "reject">("view");
   const [armed, setArmed] = useState(false);
   const [subject, setSubject] = useState(draft?.subject ?? "");
@@ -249,7 +250,7 @@ function SendCard({ a, now, onDecided, editingRef }: { a: ApprovalListItem; now:
     mutationFn: () => api.approve(a.code),
     onSuccess: () => {
       invalidate();
-      onDecided(a.code, `Approved ${a.code}. Sending to ${a.recipient ?? who(a)}`);
+      onDecided(a.code, sendsLater ? `Approved ${a.code}. Goes out ${shortDate(draft!.scheduled_for!)} unless they reply first` : `Approved ${a.code}. Sending to ${a.recipient ?? who(a)}`);
     },
     onSettled: () => setArmed(false),
   });
@@ -331,6 +332,7 @@ function SendCard({ a, now, onDecided, editingRef }: { a: ApprovalListItem; now:
           <span className={cx("size-1.5 shrink-0 rounded-full", a.lead?.has_consent === false ? "bg-[#B42318]" : "bg-green")} />
           <span className="truncate">{a.lead?.has_consent === false ? "No consent on file" : `Opted in${a.recipient ? ` · ${a.recipient}` : ""}`}</span>
         </span>
+        {sendsLater ? <span className="text-[13px]/4 text-ink">Follow-up · goes out {shortDate(draft!.scheduled_for!)} unless they reply first</span> : null}
       </div>
       {mode === "edit" ? (
         <form
@@ -404,7 +406,7 @@ function SendCard({ a, now, onDecided, editingRef }: { a: ApprovalListItem; now:
           ) : (
             <>
               <ActionPill tone={armed ? "ink" : "primary"} onClick={() => (armed ? approve.mutate() : setArmed(true))} disabled={busy || !draft || a.lead?.has_consent === false}>
-                {approve.isPending ? "Sending…" : armed ? "Send now?" : "Approve & send"}
+                {sendsLater ? (approve.isPending ? "Scheduling…" : armed ? "Schedule it?" : "Approve & schedule") : approve.isPending ? "Sending…" : armed ? "Send now?" : "Approve & send"}
               </ActionPill>
               <ActionPill tone="outline" onClick={startEdit} disabled={busy || !draft}>
                 Edit
@@ -617,10 +619,10 @@ function TaskDetail({ t, onDone }: { t: Task; onDone: (m: string) => void }) {
       </div>
       {cite ? (
         <div className="flex min-w-0 items-center gap-2.5 border-y border-y-panel-line bg-panel px-5 py-2.5">
-          <span className="flex h-6 min-w-0 shrink items-center truncate rounded-full border border-panel-line bg-white px-2.25 text-xs/4 font-medium text-ink">
+          <span className="flex h-6 min-w-0 max-w-[65%] shrink-0 items-center truncate rounded-full border border-panel-line bg-white px-2.25 text-xs/4 font-medium text-ink">
             <span className="truncate">{cite.text.charAt(0).toUpperCase() + cite.text.slice(1)}</span>
           </span>
-          <a href={cite.source_url} target="_blank" rel="noopener noreferrer nofollow" className="shrink-0 truncate text-xs/4 text-muted hover:text-ink">
+          <a href={cite.source_url} target="_blank" rel="noopener noreferrer nofollow" className="min-w-0 shrink truncate text-xs/4 text-muted hover:text-ink">
             {sourceLabel(cite.source_url)}
           </a>
         </div>

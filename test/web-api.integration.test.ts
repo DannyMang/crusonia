@@ -19,6 +19,7 @@ import { listReplies } from "../src/services/replies.ts";
 import { getOnboardingProposal, getRunDetail, listWorkflows, startFindLeads, startOnboardingProposal } from "../src/services/runs.ts";
 import { setPaused } from "../src/services/settings.ts";
 import { getSummary } from "../src/services/summary.ts";
+import { getCompanySummary, writeCompanySummary } from "../src/services/company-summary.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -356,5 +357,19 @@ suite("web app API (database, mocked Naive)", () => {
     await sql`update naive_sessions set status = 'done' where id = ${sid("open")}`;
     await settleSessionUsage(sql, sid("open"));
     expect((await getSummary(sql, naiveEnv, WS)).spend.week_credits - before).toBe(20);
+  });
+  test("saving the profile unchanged keeps what was written by hand in the Company summary", async () => {
+    const ws = FIND;
+    await saveProfile(sql, ws, { website: "https://acme.test", sells: "Things", icp_description: "Teams" }, "user:test");
+    const first = await getCompanySummary(sql, ws);
+    const edited = `${first.markdown}\n\nBest fit today: teams with a public API.\n`;
+    await writeCompanySummary(sql, ws, { markdown: edited, author: "user:test" });
+    const unchanged = await getProfile(sql, ws);
+    const { updated_at: _u, ...input } = unchanged as NonNullable<typeof unchanged> & { updated_at?: unknown };
+    await saveProfile(sql, ws, input as Parameters<typeof saveProfile>[2], "user:test");
+    expect((await getCompanySummary(sql, ws)).markdown).toContain("Best fit today");
+    // A real change still saves.
+    await saveProfile(sql, ws, { ...input, sells: "Better things" } as Parameters<typeof saveProfile>[2], "user:test");
+    expect((await getCompanySummary(sql, ws)).markdown).toContain("Better things");
   });
 });

@@ -121,7 +121,8 @@ export function DraftCard({
   const api = useApi();
   const invalidate = useInvalidateLead(lead.id);
   const sorted = [...drafts].sort((a, b) => b.version - a.version);
-  const draft = sorted.find((d) => d.id === approval?.draft_id) ?? sorted[0];
+  // A follow-up a reply cancelled, or a version replaced by an edit, is history: show what's live, or what went out.
+  const draft = sorted.find((d) => d.id === approval?.draft_id) ?? sorted.find((d) => d.status !== "cancelled" && d.status !== "superseded") ?? sorted[0];
   const earlier = sorted.filter((d) => d !== draft);
   const [mode, setMode] = useState<"view" | "edit" | "reject">("view");
   const [subject, setSubject] = useState("");

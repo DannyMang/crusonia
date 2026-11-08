@@ -20,7 +20,7 @@ import { spendStatus } from "../src/services/limits.ts";
 import { addNote } from "../src/services/notes.ts";
 import { createDefinition, getDefinition } from "../src/services/workflow-defs.ts";
 import { listRuns, runWorkflow } from "../src/services/workflow-runs.ts";
-import { handleSessionIdle } from "../src/services/workflows.ts";
+import { handleSessionIdle, reconcileSessions } from "../src/services/workflows.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -649,6 +649,45 @@ suite("autopilot (database, mocked Naive)", () => {
     expect(confirms.map((c) => c.tool_call_id)).toEqual([`c1_${run}`]);
     expect(res.approvals).toHaveLength(2);
     await sql`delete from webhook_events where event_id like ${`%${id}%`}`;
+  });
+
+  test("a session already stuck on a parked call recovers, though its idle event is behind the cursor", async () => {
+    const ws = await workspace("stuck");
+    const env = baseEnv(ws);
+    const confirms: string[] = [];
+    const id = `ses_stuck_${run}`;
+    const call = `tc_stuck_${run}`;
+    let parked = true;
+    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
+    const fetchFn: FetchFn = async (input, init) => {
+      const u = String(input);
+      if (u.includes("/tool_confirmations")) {
+        confirms.push(JSON.parse(String(init!.body)).tool_call_id);
+        parked = false;
+        return json({});
+      }
+      // No events after the cursor: the idle event was read long ago.
+      if (u.includes("/events")) return json({ data: [], has_more: false, next_cursor: null });
+      return json(parked
+        ? { id, status: "idle", stop_reason: "awaiting_approval", pending_actions: [{ kind: "tool", tool_call_id: call, name: "crusonia.search_web", args: {}, parked_seq: 79 }] }
+        : { id, status: "running", stop_reason: null, pending_actions: [] });
+    };
+    await sql`insert into naive_sessions (id, workspace_id, purpose, status, last_seq, updated_at)
+              values (${id}, ${ws}, 'research', 'running', 100, now() - interval '10 minutes')`;
+    // What the bug left behind: the first park's claim, with the same id.
+    await sql`insert into webhook_events (source, event_id) values ('naive-autoconfirm', ${`autoconfirm:${id}:${call}`})`;
+
+    await reconcileSessions(sql, env, fetchFn);
+    expect(confirms).toEqual([call]);
+    const [row] = await sql`select status from naive_sessions where id = ${id}`;
+    expect(row!.status).toBe("running");
+
+    // Once it's running again, the same pass finds nothing to answer.
+    await sql`update naive_sessions set updated_at = now() - interval '10 minutes' where id = ${id}`;
+    await reconcileSessions(sql, env, fetchFn);
+    expect(confirms).toEqual([call]);
+    await sql`delete from webhook_events where event_id like ${`%${id}%`}`;
+    await sql`update naive_sessions set status = 'done' where id = ${id}`;
   });
 
   test("a tool call parked again with the same id is confirmed again; a duplicate delivery of one park isn't", async () => {

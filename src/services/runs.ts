@@ -288,7 +288,7 @@ const AUDIT_SUMMARY: Record<string, (d: Record<string, unknown>) => string> = {
 
 // Our audit events the timeline folds away: auto-allowed confirmations become part of their tool step, and our idle
 // bookkeeping repeats what Naive's own session.idle step already says.
-const FOLDED_AUDIT = new Set(["naive_tool_auto_allowed", "naive_idle"]);
+const FOLDED_AUDIT = new Set(["naive_tool_auto_allowed", "naive_idle", "billing_usage_debited"]);
 // Naive event types with nothing to show.
 const SILENT_TYPES = new Set([
   "session.usage",
@@ -442,7 +442,7 @@ export function buildSteps(events: StoredEvent[], audit: AuditEvent[] = [], appr
       step.approval.via = "policy";
     }
     const base = step._base ?? step.summary;
-    if (step.approval.decision === "pending" && step._awaiting) {
+    if (step.approval.decision === "pending" && step._awaiting && step.approval.via !== "policy") {
       step.type = "approval";
       step.summary = `Needs approval: ${base.replace(": ", " (")}${base.includes(": ") ? ")" : ""}`;
     } else if (step.approval.decision === "deny") {
@@ -456,7 +456,7 @@ export function buildSteps(events: StoredEvent[], audit: AuditEvent[] = [], appr
 
   // Pauses that only the owner's auto-confirm policy resolved are not something a person did or waited on.
   const dropped = new Set(
-    idleWaits.filter((w) => w.calls.length > 0 && w.calls.every((c) => c.approval?.via === "policy" && c.approval.decision !== "pending")).map((w) => w.step),
+    idleWaits.filter((w) => w.calls.length > 0 && w.calls.every((c) => c.approval?.via === "policy")).map((w) => w.step),
   );
 
   const ours: Work[] = [...audit]
