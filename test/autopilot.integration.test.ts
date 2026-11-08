@@ -650,4 +650,31 @@ suite("autopilot (database, mocked Naive)", () => {
     expect(res.approvals).toHaveLength(2);
     await sql`delete from webhook_events where event_id like ${`%${id}%`}`;
   });
+
+  test("a tool call parked again with the same id is confirmed again; a duplicate delivery of one park isn't", async () => {
+    const ws = await workspace("repark");
+    const env = baseEnv(ws);
+    const confirms: string[] = [];
+    const fetchFn: FetchFn = async (input, init) => {
+      if (String(input).includes("/tool_confirmations")) confirms.push(JSON.parse(String(init!.body)).tool_call_id);
+      return new Response(JSON.stringify({ id: "x", status: "idle", stop_reason: "awaiting_approval", pending_actions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+    const id = `ses_repark_${run}`;
+    const call = `tc_repark_${run}`;
+    await sql`insert into naive_sessions (id, workspace_id, purpose, status) values (${id}, ${ws}, 'research', 'running')`;
+    const park = (seq: number) =>
+      handleSessionIdle(sql, env, { sessionId: id, stopReason: "awaiting_approval", pendingActions: [{ tool_call_id: call, name: "crusonia.search_web", args: {}, parked_seq: seq }] }, fetchFn);
+
+    await park(30);
+    expect(confirms).toEqual([call]);
+    // The webhook and the reconcile cron both saw this park: one confirmation.
+    await park(30);
+    expect(confirms).toEqual([call]);
+    // Later Naive parks the same call again. Before this, nobody answered it and the session stayed open for good.
+    await park(79);
+    expect(confirms).toEqual([call, call]);
+    const [row] = await sql`select status from naive_sessions where id = ${id}`;
+    expect(row!.status).toBe("running");
+    await sql`delete from webhook_events where event_id like ${`%${id}%`}`;
+  });
 });

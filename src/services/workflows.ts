@@ -306,10 +306,12 @@ export async function handleSessionIdle(
   const allowed = pending.filter((a) => a.kind !== "question" && !paused && isToolAllowed(a.name, allowlist));
   const parked = pending.filter((a) => !allowed.includes(a));
 
-  // Claim every (session, tool call) in one statement so a webhook, the poll and the reconcile cron never confirm
+  // Claim every (session, parked tool call) in one statement so a webhook, the poll and the reconcile cron never confirm
   // the same call twice. A call another handler already claimed counts as auto-allowed: it is being confirmed, so
-  // the session is about to run again and must not be marked idle.
-  const key = (a: PendingAction) => `autoconfirm:${session.id}:${a.tool_call_id}`;
+  // the session is about to run again and must not be marked idle. The park's seq is part of the key because Naive can
+  // park the same tool_call_id again later (an identical search repeated, or a chat flagged for reading people's data,
+  // where every tool asks each time): that's a new request, and without an answer the session waits forever.
+  const key = (a: PendingAction) => `autoconfirm:${session.id}:${a.tool_call_id}${a.parked_seq === undefined ? "" : `:${a.parked_seq}`}`;
   const claimed = await claimWebhookEvents(sql, "naive-autoconfirm", allowed.map(key));
   const mine = allowed.filter((a) => claimed.has(key(a)));
   const results = await Promise.allSettled(
