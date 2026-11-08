@@ -4,6 +4,7 @@
 
 // The price list types are shared with the Worker (src/billing/catalog.ts), so the API and /pricing cannot drift.
 import type { CatalogPack, CatalogPlan, CreditFacts } from "../../src/billing/catalog.ts";
+import { currentWorkspace, leaveChosenWorkspace } from "./lib/workspace.ts";
 
 // ---------- shared ----------
 
@@ -326,9 +327,29 @@ export type Me = {
   /** `clerk` for a signed-in user; `token` for MCP_TOKEN or an API key. */
   auth: "clerk" | "token";
   key?: { id: string; name: string };
-  /** The workspace this caller acts on (every sign-up gets its own; `owner` is the instance owner's). */
-  workspace?: { id: string; name: string; owner: boolean };
+  /** The workspace this caller acts on (`owner` is the instance owner's), and their role in it. */
+  workspace?: { id: string; name: string; owner: boolean; role?: WorkspaceRole };
 };
+
+// ---------- workspaces and the team ----------
+
+export type WorkspaceRole = "owner" | "admin" | "member";
+export type InviteRole = Exclude<WorkspaceRole, "owner">;
+export type MyWorkspace = { id: string; name: string; role: WorkspaceRole; owner: boolean };
+export type TeamMember = { user_id: string; role: WorkspaceRole; joined_at: string; email?: string; name?: string; image_url?: string };
+export type TeamInvite = {
+  id: string;
+  email: string;
+  role: InviteRole;
+  inviter_name: string | null;
+  created_at: string;
+  expires_at: string;
+  last_sent_at: string;
+  status: "pending" | "expired";
+};
+/** What an invite link shows before anyone signs in. */
+export type InvitePreview = { workspace_name: string; inviter_name: string | null; email: string; role: InviteRole; expires_at: string };
+export type AcceptedInvite = { workspace: { id: string; name: string; role: WorkspaceRole }; already_member: boolean };
 
 /**
  * `pipeline` is cumulative (how many leads got at least this far: found >= researched >= drafted >= sent >= replied
@@ -617,6 +638,8 @@ export function createApi(getToken: TokenGetter, base = "") {
     const headers: Record<string, string> = { Accept: "application/json" };
     const token = await getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
+    const workspace = currentWorkspace();
+    if (workspace) headers["X-Crusonia-Workspace"] = workspace;
     let body: BodyInit | undefined;
     if (opts.csv !== undefined) {
       headers["Content-Type"] = "text/csv";
@@ -642,6 +665,8 @@ export function createApi(getToken: TokenGetter, base = "") {
     }
     if (!res.ok) {
       const e = (json as ApiErrorBody | undefined)?.error;
+      // Removed from that workspace, or it belonged to another account in this browser: back to the default one.
+      if (e?.code === "not_a_member" && workspace) leaveChosenWorkspace();
       throw new ApiError(res.status, e?.code ?? `http_${res.status}`, e?.message ?? (res.statusText || "Request failed"), e?.details);
     }
     return json as T;
@@ -762,6 +787,21 @@ export function createApi(getToken: TokenGetter, base = "") {
     /** Returns the full key exactly once (`key`); only its hash is stored. */
     createKey: (name: string) => post<{ api_key: ApiKey; key: string }>("/api/keys", { name }),
     revokeKey: (keyId: string) => del<{ api_key: ApiKey }>(`/api/keys/${id(keyId)}`),
+
+    // Workspaces and the team
+    workspaces: () => get<{ current: string; data: MyWorkspace[] }>("/api/workspaces"),
+    createWorkspace: (name: string) => post<{ workspace: MyWorkspace }>("/api/workspaces", { name }),
+    renameWorkspace: (name: string) => patch<{ workspace: { id: string; name: string } }>("/api/workspaces/current", { name }),
+    teamMembers: () => list<TeamMember>("/api/team/members"),
+    changeMemberRole: (userId: string, role: WorkspaceRole) => patch<{ member: { user_id: string; role: WorkspaceRole } }>(`/api/team/members/${id(userId)}`, { role }),
+    removeMember: (userId: string) => del(`/api/team/members/${id(userId)}`),
+    leaveWorkspace: () => post<void>("/api/team/leave"),
+    teamInvites: () => list<TeamInvite>("/api/team/invites"),
+    createInvite: (email: string, role: InviteRole) => post<{ invite: TeamInvite }>("/api/team/invites", { email, role }),
+    resendInvite: (inviteId: string) => post<{ invite: TeamInvite }>(`/api/team/invites/${id(inviteId)}/resend`),
+    revokeInvite: (inviteId: string) => del(`/api/team/invites/${id(inviteId)}`),
+    invitePreview: (token: string) => get<{ invite: InvitePreview }>(`/api/invites/${id(token)}`),
+    acceptInvite: (token: string) => post<AcceptedInvite>(`/api/invites/${id(token)}/accept`),
   };
 }
 

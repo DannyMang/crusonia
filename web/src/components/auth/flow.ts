@@ -9,6 +9,17 @@ export function safeNext(v: string | null | undefined): string | null {
   return v;
 }
 
+/** Where to come back to and which address to use, for moving between /sign-in and /sign-up (an invite link sets them). */
+export function carriedParams(params: URLSearchParams): string {
+  const keep = new URLSearchParams();
+  for (const key of ["redirect_url", "email"]) {
+    const value = params.get(key);
+    if (value) keep.set(key, value);
+  }
+  const s = keep.toString();
+  return s ? `?${s}` : "";
+}
+
 const AFTER_AUTH = "crusonia.afterAuth";
 
 /** OAuth leaves the page; remember where to land when /sso-callback finishes. */

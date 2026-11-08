@@ -1,19 +1,23 @@
-// The dashboard sidebar, identical on every screen (Paper: "Dashboard · Home" > Sidebar). The workspace switcher
-// is gone (owner, Nov 8: no workspaces for now); the credits pill took its place. Below 1024px it moves into a
-// drawer behind a top bar (MobileBar).
-import { useEffect, useRef, useState, type ComponentType, type SVGProps } from "react";
+// The dashboard sidebar, identical on every screen (Paper: "Final · Settings · Team" > Sidebar, "Final · Workspace
+// switcher"). Below 1024px it moves into a drawer behind a top bar (MobileBar).
+import { useMutation } from "@tanstack/react-query";
+import { useEffect, useRef, useState, type ComponentType, type FormEvent, type SVGProps } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
-import { useSession } from "../auth.tsx";
+import { isApiError } from "../api.ts";
+import { useApi, useSession } from "../auth.tsx";
 import { cx, initials, num, usd } from "../lib/format.ts";
-import { useBilling, usePause, usePendingCount, useSetPause } from "../queries.ts";
+import { openWorkspace } from "../lib/workspace.ts";
+import { useBilling, usePause, usePendingCount, useSetPause, useWorkspaces } from "../queries.ts";
 import {
   ApprovalsIcon,
+  CheckIcon,
   ChevronRight,
   ChevronUpDown,
   HomeIcon,
   IntegrationsIcon,
   LeadsIcon,
   Logo,
+  PlusIcon,
   RepliesIcon,
   SearchIcon,
   SendIcon,
@@ -137,6 +141,146 @@ function UserMenu() {
   );
 }
 
+const ROLE_LABEL = { owner: "Owner", admin: "Admin", member: "Member" } as const;
+
+const WorkspaceMark = ({ name }: { name: string }) => (
+  <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-pill text-xs/3 font-semibold text-ink">
+    {(name.trim()[0] ?? "?").toUpperCase()}
+  </span>
+);
+
+/** Which workspace you're in (Paper: "Final · Workspace switcher"). Switching is a full page load: see lib/workspace.ts. */
+function WorkspaceSwitcher() {
+  const api = useApi();
+  const list = useWorkspaces();
+  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const close = () => {
+    setOpen(false);
+    setCreating(false);
+    setName("");
+  };
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && close();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const create = useMutation({
+    mutationFn: (n: string) => api.createWorkspace(n),
+    // A new workspace is empty: start it like a new account.
+    onSuccess: ({ workspace }) => openWorkspace(workspace.id, "/onboarding/1"),
+  });
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (name.trim()) create.mutate(name.trim());
+  }
+  const rows = list.data?.data ?? [];
+  const currentId = list.data?.current;
+  const current = rows.find((w) => w.id === currentId);
+  // Only the current one once a new one is being named, as designed.
+  const shown = creating ? rows.filter((w) => w.id === currentId) : rows;
+  if (list.isPending) return <span aria-hidden className="block h-8.5 shrink-0 rounded-lg bg-[#200D0D0A] [animation:crusonia-pulse_1.6s_ease-in-out_infinite]" />;
+  if (!current) return null;
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => (open ? close() : setOpen(true))}
+        aria-expanded={open}
+        aria-haspopup="true"
+        aria-label={`Workspace: ${current.name}. Switch workspace`}
+        className="flex h-8.5 w-full items-center gap-2.5 rounded-lg pl-1.5 pr-2 text-left hover:bg-[#200D0D08]"
+      >
+        <WorkspaceMark name={current.name} />
+        <span className="min-w-0 grow truncate text-[13px]/4 font-semibold text-ink">{current.name}</span>
+        <ChevronUpDown className="shrink-0 text-[rgb(32_13_13/40%)]" />
+      </button>
+      {open ? (
+        <div className="absolute left-0 right-0 top-full z-20 mt-1 flex flex-col rounded-lg border border-[#200D0D1A] bg-white p-1 shadow-[0_8px_24px_-8px_#200D0D33]">
+          <div className="flex max-h-72 flex-col overflow-y-auto">
+            {shown.map((w) => {
+              const here = w.id === currentId;
+              return (
+                <button
+                  key={w.id}
+                  type="button"
+                  aria-current={here || undefined}
+                  onClick={() => (here ? close() : openWorkspace(w.id))}
+                  className={cx("flex h-11 shrink-0 items-center gap-2.5 rounded-md px-2 text-left", here ? "bg-[#200D0D08]" : "hover:bg-[#200D0D08]")}
+                >
+                  <WorkspaceMark name={w.name} />
+                  <span className="flex min-w-0 grow flex-col gap-px">
+                    <span className="truncate text-[13px]/4 font-medium text-ink">{w.name}</span>
+                    <span className="text-[11px]/3.5 text-muted">{ROLE_LABEL[w.role]}</span>
+                  </span>
+                  <span className="flex size-4 shrink-0 items-center justify-center">{here ? <CheckIcon className="text-ink" /> : null}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="my-1 h-px shrink-0 bg-[#200D0D14]" />
+          {creating ? (
+            <form onSubmit={submit} className="flex flex-col gap-2 p-1.5">
+              <input
+                autoFocus
+                value={name}
+                maxLength={80}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  create.reset();
+                }}
+                placeholder="Workspace name"
+                aria-label="Workspace name"
+                className="h-8 rounded-md border border-[#200D0D1A] bg-white px-2.5 text-[13px]/4 font-medium text-ink outline-none placeholder:text-[#200D0D80] focus:border-ink"
+              />
+              {create.isError ? (
+                <div role="alert" className="text-xs/4 font-medium text-[#B42318]">
+                  {isApiError(create.error) && create.error.status < 500 ? create.error.message : "That didn't work. Try again."}
+                </div>
+              ) : null}
+              <div className="flex justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreating(false);
+                    setName("");
+                    create.reset();
+                  }}
+                  className="flex h-6.75 items-center rounded-md border border-[#200D0D1A] bg-white px-2.5 text-xs/4 font-medium text-ink hover:bg-[#200D0D08]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!name.trim() || create.isPending || create.isSuccess}
+                  className="flex h-6.75 items-center rounded-md bg-lime px-2.5 text-xs/4 font-medium text-ink hover:bg-[#b3de7a] disabled:cursor-default disabled:opacity-60"
+                >
+                  Create
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button type="button" onClick={() => setCreating(true)} className="flex h-9 shrink-0 items-center gap-2.5 rounded-md px-2 text-left hover:bg-[#200D0D08]">
+              <span className="flex size-6 shrink-0 items-center justify-center text-ink">
+                <PlusIcon />
+              </span>
+              <span className="text-[13px]/4 font-medium text-ink">Create workspace</span>
+            </button>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** The balance, always visible (Paper: "Settings · Billing" > Sidebar > Credits pill). Opens the billing page. */
 function CreditsPill() {
   const billing = useBilling();
@@ -197,6 +341,7 @@ function SidebarContent({ drawer }: { drawer?: boolean }) {
       </NavLink>
 
       <div className="flex shrink-0 flex-col gap-1.5 px-2 pb-3">
+        <WorkspaceSwitcher />
         <CreditsPill />
         <button
           type="button"

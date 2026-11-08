@@ -8,13 +8,13 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { clerkEnabled } from "../../auth.tsx";
 import { ALL_PROVIDERS, AuthBrand, AuthField, AuthHeading, AuthLoadFailed, AuthShell, CodeForm, FormError, PrimaryButton, StartForm, SwitchLine, useLoadTimedOut, type Provider } from "../../components/auth/AuthLayout.tsx";
-import { clerkMessage, enabledProviders, goTo, isEmail, providerOffMessage, rememberAfterAuth, rememberWebsite } from "../../components/auth/flow.ts";
+import { carriedParams, clerkMessage, enabledProviders, goTo, isEmail, providerOffMessage, rememberAfterAuth, rememberWebsite, safeNext } from "../../components/auth/flow.ts";
 
 const TITLE = "Welcome to Crusonia!";
 const SUBTITLE = "Your first 25 leads, from just your website";
 const AFTER_SIGN_UP = "/onboarding/1";
 
-const footer = <SwitchLine className="pt-5" text="Already have an account?" to="/sign-in" label="Sign in" />;
+const switchLine = (search = "") => <SwitchLine className="pt-5" text="Already have an account?" to={`/sign-in${search}`} label="Sign in" />;
 
 export default function SignUp() {
   // From the landing page: keep the visitor's website for onboarding step 1 (survives the OAuth round trip).
@@ -25,7 +25,7 @@ export default function SignUp() {
 }
 
 function StaticSignUp() {
-  return <StartForm title={TITLE} subtitle={SUBTITLE} email="" disabled note="Sign-up is not configured in this build." footer={footer} />;
+  return <StartForm title={TITLE} subtitle={SUBTITLE} email="" disabled note="Sign-up is not configured in this build." footer={switchLine()} />;
 }
 
 type Pending = Provider | "email" | "verify" | "resend" | "details" | null;
@@ -40,9 +40,13 @@ function ClerkSignUp() {
   const navigate = useNavigate();
   const providers = enabledProviders(clerk, ALL_PROVIDERS, isLoaded);
   const loadFailed = useLoadTimedOut(isLoaded);
+  // An invite link sends new people here and back to accept (src/pages/InviteAccept.tsx), with the invited address.
+  const [params] = useSearchParams();
+  const after = safeNext(params.get("redirect_url")) ?? AFTER_SIGN_UP;
+  const footer = switchLine(carriedParams(params));
 
   const [step, setStep] = useState<"start" | "code" | "details">("start");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(params.get("email") ?? "");
   const [code, setCode] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -89,7 +93,7 @@ function ClerkSignUp() {
   /** After verification: finish, or ask for what Clerk still needs. */
   async function complete() {
     if (signUp.status === "complete") {
-      const done = await signUp.finalize({ navigate: goTo(navigate, AFTER_SIGN_UP) });
+      const done = await signUp.finalize({ navigate: goTo(navigate, after) });
       if (done.error) {
         setMessage(clerkMessage(done.error));
         setPending(null);
@@ -113,8 +117,8 @@ function ClerkSignUp() {
   async function startSso(p: Provider) {
     setPending(p);
     setMessage(null);
-    rememberAfterAuth(AFTER_SIGN_UP);
-    const { error } = await signUp.sso({ strategy: p === "github" ? "oauth_github" : "oauth_google", redirectUrl: AFTER_SIGN_UP, redirectCallbackUrl: "/sso-callback" });
+    rememberAfterAuth(after);
+    const { error } = await signUp.sso({ strategy: p === "github" ? "oauth_github" : "oauth_google", redirectUrl: after, redirectCallbackUrl: "/sso-callback" });
     if (error) {
       setMessage(providerOffMessage(error, p) ?? clerkMessage(error) ?? "Could not reach the sign-in provider. Try again.");
       setPending(null);

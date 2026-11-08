@@ -35,11 +35,14 @@ export function ApiKeysCard({
   onCreated,
   creating,
   onCreating: setCreating,
+  readOnly = false,
 }: {
   created: CreatedKey | null;
   onCreated: (k: CreatedKey | null) => void;
   creating: boolean;
   onCreating: (v: boolean) => void;
+  /** A member's view: the list, without revoking. */
+  readOnly?: boolean;
 }) {
   const list = useApiKeys();
   const missing = isApiError(list.error) && list.error.missingRoute;
@@ -83,14 +86,14 @@ export function ApiKeysCard({
       ) : list.isError ? (
         <QueryError error={list.error} what="API keys" onRetry={() => void list.refetch()} className="mb-4" />
       ) : data.length ? (
-        <KeyTable rows={data} />
+        <KeyTable rows={data} readOnly={readOnly} />
       ) : (
         // The rule only separates the empty state from a create form or a new key above it.
         <div className={cx((creating || created) && "border-t border-t-[#200D0D1A]")}>
           <EmptyState
             className="py-9"
             title="No API keys yet"
-            body="Create one per agent or machine, so you can revoke one without breaking the others."
+            body={readOnly ? undefined : "Create one per agent or machine, so you can revoke one without breaking the others."}
           />
         </div>
       )}
@@ -169,7 +172,7 @@ function NewKey({ k, onDone }: { k: CreatedKey; onDone: () => void }) {
   );
 }
 
-function KeyTable({ rows }: { rows: ApiKey[] }) {
+function KeyTable({ rows, readOnly }: { rows: ApiKey[]; readOnly: boolean }) {
   const th = "h-7 whitespace-nowrap p-0 text-left text-xs/4 font-medium text-faint";
   return (
     <table className="w-full table-fixed border-collapse">
@@ -226,7 +229,7 @@ function KeyTable({ rows }: { rows: ApiKey[] }) {
               <td className="p-0 text-right">
                 {revoked ? (
                   <span className="inline-flex h-5 items-center rounded-full bg-pill px-2 text-[11px]/3.5 font-semibold text-[#200D0DB3]">Revoked</span>
-                ) : (
+                ) : readOnly ? null : (
                   <RevokeButton k={k} />
                 )}
               </td>

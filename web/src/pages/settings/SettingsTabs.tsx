@@ -1,18 +1,22 @@
-// The Settings sub-navigation (Paper: "Settings · Connect your agent" > Settings tabs): General, Company summary,
-// Connect your agent, Billing. Tighter on phones so all four fit at 390px; narrower phones scroll the row sideways.
+// The Settings sub-navigation (Paper: "Final · Settings · Team" > Settings tabs): General, Company summary, Team,
+// Connect your agent, Billing. Tighter on phones; the row scrolls sideways when they don't fit. Members don't see
+// Connect your agent: it's for making API keys, which they can't.
 import { useEffect, useRef } from "react";
 import { NavLink } from "react-router";
 import { cx } from "../../lib/format.ts";
+import { useRole } from "../../queries.ts";
 
 const TABS = [
   { to: "/app/settings", label: "General", end: true },
   { to: "/app/settings/company", label: "Company summary", end: false },
+  { to: "/app/settings/team", label: "Team", end: false },
   { to: "/app/settings/agent", label: "Connect your agent", end: false },
   { to: "/app/settings/billing", label: "Billing", end: false },
 ] as const;
 
 export function SettingsTabs() {
   const nav = useRef<HTMLElement>(null);
+  const { role } = useRole();
   // Keep the current tab in view when the row is scrolled sideways.
   useEffect(() => {
     const row = nav.current;
@@ -26,7 +30,7 @@ export function SettingsTabs() {
       aria-label="Settings"
       className="relative flex h-9 shrink-0 items-end gap-2 overflow-x-auto shadow-[inset_0_-1px_0_#200D0D1A] [scrollbar-width:none] sm:gap-6 [&::-webkit-scrollbar]:hidden"
     >
-      {TABS.map((t) => (
+      {TABS.filter((t) => role !== "member" || t.to !== "/app/settings/agent").map((t) => (
         <NavLink
           key={t.to}
           to={t.to}

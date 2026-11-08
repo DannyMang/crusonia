@@ -31,7 +31,8 @@ export type AuthState = {
   isSignedIn: boolean;
   user: AuthUser | null;
   getToken: TokenGetter;
-  signOut: () => Promise<void>;
+  /** Back to /sign-in, or `redirectUrl`. */
+  signOut: (redirectUrl?: string) => Promise<void>;
 };
 
 export const AuthContext = createContext<AuthState | null>(null);

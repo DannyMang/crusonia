@@ -4,6 +4,7 @@ import { ClerkProvider, useAuth, useClerk, useUser } from "@clerk/react";
 import { useMemo, type ReactNode } from "react";
 import type { NavigateFunction } from "react-router";
 import { AuthContext, devBypass, devState, type AuthState } from "./auth.tsx";
+import { forgetWorkspace } from "./lib/workspace.ts";
 
 function ClerkBridge({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
@@ -25,7 +26,10 @@ function ClerkBridge({ children }: { children: ReactNode }) {
                 }
               : null,
             getToken: () => getToken(),
-            signOut: () => clerk.signOut({ redirectUrl: "/sign-in" }),
+            signOut: (redirectUrl = "/sign-in") => {
+              forgetWorkspace();
+              return clerk.signOut({ redirectUrl });
+            },
           },
     [isLoaded, isSignedIn, user, getToken, clerk],
   );

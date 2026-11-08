@@ -80,7 +80,7 @@ function status(): Status {
   };
 }
 
-const me: Me = { user: { id: "user_mock", email: "daniel@acme.com", name: "Daniel Ung" }, auth: "clerk" };
+const me: Me = { user: { id: "user_mock", email: "daniel@acme.com", name: "Daniel Ung" }, auth: "clerk", workspace: { id: "ws_acme", name: "Acme", owner: false, role: "owner" } };
 
 export const coreHandlers = [
   http.get("/api/me", () => ok(me)),

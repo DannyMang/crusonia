@@ -7,20 +7,20 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { clerkEnabled } from "../../auth.tsx";
 import { ALL_PROVIDERS, AuthLoadFailed, CodeForm, StartForm, SwitchLine, useLoadTimedOut, type Provider } from "../../components/auth/AuthLayout.tsx";
-import { clerkMessage, enabledProviders, goTo, isEmail, providerOffMessage, rememberAfterAuth, safeNext } from "../../components/auth/flow.ts";
+import { carriedParams, clerkMessage, enabledProviders, goTo, isEmail, providerOffMessage, rememberAfterAuth, safeNext } from "../../components/auth/flow.ts";
 
 const TITLE = "Welcome back";
 const SUBTITLE = "Sign in to your Crusonia workspace";
 const TWO_FACTOR = "This account has two-step verification turned on, which this screen does not support yet.";
 
-const footer = <SwitchLine className="pt-5" text="New to Crusonia?" to="/sign-up" label="Create an account" />;
+const switchLine = (search = "") => <SwitchLine className="pt-5" text="New to Crusonia?" to={`/sign-up${search}`} label="Create an account" />;
 
 export default function SignIn() {
   return clerkEnabled ? <ClerkSignIn /> : <StaticSignIn />;
 }
 
 function StaticSignIn() {
-  return <StartForm title={TITLE} subtitle={SUBTITLE} email="" disabled note="Sign-in is not configured in this build." footer={footer} />;
+  return <StartForm title={TITLE} subtitle={SUBTITLE} email="" disabled note="Sign-in is not configured in this build." footer={switchLine()} />;
 }
 
 type Pending = Provider | "email" | "verify" | "resend" | null;
@@ -34,9 +34,11 @@ function ClerkSignIn() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const next = safeNext(params.get("redirect_url")) ?? "/app";
+  const footer = switchLine(carriedParams(params));
 
   const [step, setStep] = useState<"start" | "code">("start");
-  const [email, setEmail] = useState("");
+  // An invite link passes the invited address along (src/pages/InviteAccept.tsx).
+  const [email, setEmail] = useState(params.get("email") ?? "");
   const [code, setCode] = useState("");
   const [pending, setPending] = useState<Pending>(null);
   const [emailHint, setEmailHint] = useState<string | null>(null);
