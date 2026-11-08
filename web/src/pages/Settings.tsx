@@ -10,6 +10,7 @@ import { Button, Card, EmptyState, QueryError, Skeleton } from "../components/ui
 import { cx, longDate } from "../lib/format.ts";
 import { keys, usePause, useProfile, useRole, useSetPause, useWorkspaces } from "../queries.ts";
 import { CrumbBar } from "./connect/CrumbBar.tsx";
+import { InstanceCard } from "./settings/InstanceCard.tsx";
 import { SettingsTabs } from "./settings/SettingsTabs.tsx";
 
 const cardTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
@@ -30,6 +31,7 @@ export default function Settings() {
           <div className="flex flex-col gap-6">
             <WorkspaceNameCard />
             <PauseCard />
+            <InstanceCard />
             <ProfileCard />
             <Suppressions />
             <AccountCard />

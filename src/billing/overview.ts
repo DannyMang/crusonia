@@ -4,7 +4,7 @@
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { stripeKeyMode } from "../providers/stripe.ts";
-import { billingEnforced, creditsEnforcedFor, ensureAccount, getAccount, getBalance, recentLedger } from "./accounts.ts";
+import { billingEnforced, creditsEnforcedFor, ensureAccount, getAccount, getBalance, paymentsLive, recentLedger } from "./accounts.ts";
 import { loadLedger, replayLedger } from "./expiry.ts";
 import { creditFacts, packCatalog, planCatalog } from "./catalog.ts";
 import { FREE_PLAN, creditsToUsd, freeSampleCredits, planByKey } from "./plans.ts";
@@ -20,6 +20,7 @@ export function billingConfig(env: Env) {
     configured: Boolean(env.STRIPE_SECRET_KEY),
     webhook_configured: Boolean(env.STRIPE_WEBHOOK_SECRET),
     mode: stripeKeyMode(env.STRIPE_SECRET_KEY) ?? null,
+    payments_live: paymentsLive(env),
     enforced: billingEnforced(env),
   };
 }

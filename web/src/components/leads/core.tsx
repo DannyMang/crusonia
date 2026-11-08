@@ -156,7 +156,8 @@ function linkLabel(l: LeadLink) {
 /** Company links (LinkedIn / GitHub / X / website) as chips, then the named people with their profile icons. */
 export function LinksAndContacts({ lead }: { lead: Pick<Lead, "links" | "contacts" | "website" | "domain"> }) {
   const links = [...(lead.links ?? [])];
-  if (!links.some((l) => l.kind === "website") && lead.website) links.push({ kind: "website", url: lead.website, source_url: lead.website });
+  const site = lead.website ?? (lead.domain ? `https://${lead.domain}` : null);
+  if (!links.some((l) => l.kind === "website") && site) links.push({ kind: "website", url: site, source_url: site });
   links.sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
   const contacts = lead.contacts ?? [];
   if (!links.length && !contacts.length) return <p className="text-[13px]/4.5 text-muted">None found yet</p>;

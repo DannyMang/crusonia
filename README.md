@@ -57,7 +57,8 @@ Live: https://crusonia.dev · MCP: https://crusonia.dev/mcp
 
 A second Worker, `crusonia-staging` (`env.staging` in `wrangler.jsonc`, its own `PUBLIC_URL`), for demos and
 testing against real providers without touching production. Its secrets live in `.dev.vars.staging` (gitignored):
-point `DATABASE_URL` at a Neon dev branch, use a Stripe test key and a separate `MCP_TOKEN`.
+point `DATABASE_URL` at a Neon dev branch, use a Stripe test key and a separate `MCP_TOKEN`. `BILLING_TEST_MODE_OK=true` in
+`wrangler.jsonc` is what lets Checkout take that test key here and nowhere else.
 
 1. `bun scripts/migrate.ts --env staging` (reads `DATABASE_URL` from `.dev.vars.staging`).
 2. `VITE_CLERK_PUBLISHABLE_KEY=<key> bun run deploy:staging`, then `bun run secrets:staging`. The key goes into the web
@@ -320,7 +321,11 @@ than `TRACE_RETENTION_DAYS`.
 
 Anyone can sign up: a new Clerk user gets their own private workspace on first sign-in, and can join others (see
 [Teams](#teams)), with its own Company summary, leads, approvals, runs, budget and credits, plus the free sample credits once.
-`SIGNUPS_OPEN=false` closes sign-up (existing members still get in). `BLOCKED_USER_IDS` refuses accounts, the API keys they made and every key of a workspace whose owners are all blocked (remove such a workspace from `AUTOPILOT_WORKSPACES` too). The instance
+A new workspace needs a verified email that isn't on a short list of throwaway domains (403 `email_not_verified`,
+`email_not_allowed`; `src/services/signup-check.ts`, which is why it needs `CLERK_SECRET_KEY`), and a mailbox gets one free
+sample however its address is written (`dan+1@gmail.com` and `d.an@gmail.com` are one person; a later account still gets a
+workspace, with no credits).
+`SIGNUPS_OPEN=false` closes sign-up (existing members still get in). `BLOCKED_USER_IDS` refuses accounts, the API keys they made and every key of a workspace whose owners are all blocked, and stops Autopilot in the workspaces they made. The instance
 owner's workspace (`ws_owner`) holds everything from before workspaces; `OWNER_CLERK_USER_ID` and `MCP_TOKEN` resolve
 to it. Every workspace sends from the one `AGENTMAIL_INBOX_ID` (the owner's address), so only the owner's workspace
 sends email; list other workspace ids in `SEND_WORKSPACE_IDS` to let them send too (otherwise approving their email
@@ -374,9 +379,11 @@ invitee's own.
 The email goes out from the instance's inbox as a fixed template, from any workspace (unlike outreach, `SEND_WORKSPACE_IDS`
 doesn't apply), so it's locked down: no custom message, names are escaped, a name that looks like a link isn't shown,
 addresses on the workspace's or the instance's do-not-contact list are refused (so a complaint stops them everywhere),
-nothing goes out while the workspace is paused, and the link is built from `PUBLIC_URL`. Limits over 24 hours, shared by
-invites and resends: `INVITES_PER_WORKSPACE_PER_DAY` (20), `INVITES_PER_USER_PER_DAY` (30, across workspaces),
-`INVITES_PER_EMAIL_PER_DAY` (3, across workspaces), `INVITES_PER_INSTANCE_PER_DAY` (200).
+nothing goes out while the workspace is paused, and the link is built from `PUBLIC_URL`. With open sign-up a stranger can
+send it, so it also needs a workspace owner with a verified email (403 `owner_email_unverified`), names the inviter by their
+verified address, says the people who run the instance didn't write it, and sends replies to the inviter. Limits over 24
+hours, shared by invites and resends: `INVITES_PER_WORKSPACE_PER_DAY` (10), `INVITES_PER_USER_PER_DAY` (15, across
+workspaces), `INVITES_PER_EMAIL_PER_DAY` (3, across workspaces), `INVITES_PER_INSTANCE_PER_DAY` (50).
 
 **Making workspaces.** Up to `MAX_WORKSPACES_PER_USER` (5) per person. The free sample is one per person: only the first
 workspace they make gets it. While sign-ups are closed, someone who only joined through an invite can't make one.
@@ -416,6 +423,33 @@ The people who operate a Crusonia instance can view agent runs and traces (the s
 Naive session) in any workspace, for debugging and quality: the platform admins in `PLATFORM_ADMIN_USER_IDS` and the
 owner (`OWNER_CLERK_USER_ID`). That access is read-only (`/api/admin/*`), and every view is recorded in the viewed
 workspace's audit trail (`events` kind `admin_viewed`). Admins have no write access to other workspaces.
+
+The web app has plain [`/terms`](web/src/pages/legal/Terms.tsx) and [`/privacy`](web/src/pages/legal/Privacy.tsx) pages, marked
+as drafts: they describe the hosted service, were not written by a lawyer, and aren't legal advice. If you host your own
+instance, replace them.
+
+## Opening sign-ups
+
+Every workspace spends the instance's one Naive and Apify account, so these hold on any instance anyone can sign up to:
+
+- **Test-mode payments are refused.** With a Stripe test key, `POST /api/billing/checkout` answers 503 `payments_not_live`
+  and the app says top-ups open soon, because card 4242 must not buy credits that spend real money. `BILLING_TEST_MODE_OK=true`
+  marks a test instance where it may (`env.staging` in `wrangler.jsonc`, never production). Free credits work either way.
+- **A spend cap for the instance.** `INSTANCE_DAILY_CAP_USD` (default 25): Naive and Apify spend of every workspace but the
+  owner's over a rolling 24 hours. A running session counts as at least $0.25 and an open Apify run as its limit, because
+  they report late. At the cap, new paid starts and web reads answer 429 `instance_busy`, Autopilot waits, and the owner
+  workspace's log gets `instance_cap_reached` once an hour. Sessions already running finish.
+- **A kill switch.** `PUT /api/admin/instance {"halted": true}`, or Settings for a platform admin: the same, for every
+  workspace including the owner's, until a signed-in platform admin releases it. `MCP_TOKEN` can pull it, not release it.
+  Logged as `instance_halted` and `instance_resumed`. `GET /api/admin/instance` shows both brakes.
+- **Per-IP limits**, per minute and per Cloudflare location (`ratelimits` in `wrangler.jsonc`, `src/lib/rate-limit.ts`): 60
+  wrong tokens or invite-link reads, 30 paid starts, 5 new workspaces. A valid token on `/mcp` is never limited, because many
+  workspaces' agents can share one IP.
+- **Logos.** `SHOW_APPROVAL_LOGOS_ON_PUBLIC_PAGES` in `web/src/lib/public-logos.ts` shows plain names on public pages for
+  the companies that require written approval (`web/src/assets/logos/LOGOS.md`).
+
+Then set `SIGNUPS_OPEN=true` and `AUTOPILOT_WORKSPACES=*`. Clerk's own settings still decide who can create an account: keep
+email verification and bot protection on.
 
 ## Billing (Stripe)
 
@@ -756,10 +790,10 @@ keep `/api/*`, `/mcp`, `/webhooks/*` and `/health` on the Worker (`run_worker_fi
 
 Work starts by itself: nobody clicks anything between entering a website and leads appearing.
 
-- **Which workspaces:** `AUTOPILOT_WORKSPACES` is a comma list of workspace ids, or `*` for all. Unset means none, so deploying this starts nothing and spends nothing.
+- **Which workspaces:** `AUTOPILOT_WORKSPACES` is a comma list of workspace ids, or `*` for all. Unset means none, so deploying this starts nothing and spends nothing. With `*` every sign-up gets it, within the rules below and the instance's brakes ([Opening sign-ups](#opening-sign-ups)). A workspace out of credits stops starting anything, Home says so, it costs a tick nothing, and it picks up by itself when credits arrive.
 - **The default workflow:** once a workspace on that list has a Company summary, and no onboarding session is still writing it, it gets "Find and qualify" (every `AUTOPILOT_EVERY_HOURS`, default 6; weekly cap `AUTOPILOT_WEEKLY_CAP_USD`, default $5) and autopilot turns on. The first run starts in the same minute. A workspace that had a summary before this feature stays off until a person turns it on.
 - **A run:** a lead-finding session finds about 5 companies and scores them. The 3 best go to research, one session per lead, which scores them against evidence and drafts a manual task, or an email with an approval for an opted-in lead. New CSV imports go to the workflow with a `csv_import` trigger, else the default one. Replies go to a workflow with a `reply` trigger.
-- **The rules on every start:** the workspace's switch (`PUT /api/autopilot`, people only, admins and owners), the global pause, one active run per workflow (a unique index), the workflow's spend cap, the workspace's daily cap, credits. A run stops counting as active after 3 hours. Schedules run on the minute cron, not Naive deployments: a deployment fires one fixed instruction, and each start here needs this moment's summary, a run id and these checks.
+- **The rules on every start:** the workspace's switch (`PUT /api/autopilot`, people only, admins and owners), the global pause, the instance's spend cap and kill switch, one active run per workflow (a unique index), the workflow's spend cap, the workspace's daily cap, credits. A run stops counting as active after 3 hours. Schedules run on the minute cron, not Naive deployments: a deployment fires one fixed instruction, and each start here needs this moment's summary, a run id and these checks.
 - **The Operator** (`playbooks/operator.md`, `NAIVE_OPERATOR_AGENT_ID`): every `AUTOPILOT_OPERATOR_EVERY_HOURS` (default 6), or sooner when a run finished, a reply came in or a person rated a lead (at least `AUTOPILOT_OPERATOR_MIN_GAP_MINUTES` apart, at most `AUTOPILOT_OPERATOR_MAX_PER_DAY`), it reads the pipeline and the owner's ratings, decides one thing, does it, and writes what it did and why (`log_cycle`). Without the agent id, schedules still run.
 
 ### Two kinds of agent

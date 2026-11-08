@@ -4,7 +4,7 @@ import { defaultFetch, requestJson, type FetchFn } from "./http.ts";
 
 export const AGENTMAIL_BASE = "https://api.agentmail.to/v0";
 
-export type SendInput = { to: string; subject: string; text: string; html?: string; labels?: string[] };
+export type SendInput = { to: string; subject: string; text: string; html?: string; labels?: string[]; reply_to?: string };
 export type ReplyInput = { text: string; html?: string; labels?: string[] };
 export type SentMessage = { message_id: string; thread_id: string };
 export type MessageItem = { message_id: string; thread_id: string; labels: string[]; timestamp: string };

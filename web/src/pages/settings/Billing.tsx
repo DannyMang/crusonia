@@ -97,6 +97,8 @@ export default function Billing() {
   };
 
   const configured = b?.billing.configured ?? false;
+  // A Stripe test key on an instance that isn't a test instance: nobody can pay yet (POST /checkout answers 503 payments_not_live).
+  const canPay = configured && b?.billing.payments_live !== false;
   const subscribed = b ? hasLiveSubscription(b) : false;
 
   return (
@@ -128,6 +130,8 @@ export default function Billing() {
               title="Payments are coming online"
               body="Buying credits and changing plans need Stripe on this deployment. Your balance and history below are up to date."
             />
+          ) : b && !canPay ? (
+            <Banner tone="calm" title="Top-ups open soon" body="Your balance and history below are up to date." />
           ) : null}
 
           {billing.isError && !b ? (
@@ -151,7 +155,7 @@ export default function Billing() {
                         <button
                           type="button"
                           className={outlineButton}
-                          disabled={!configured || anyBusy}
+                          disabled={!canPay || anyBusy}
                           aria-busy={busy({ kind: "checkout", key: p.key }) || undefined}
                           aria-label={`Buy ${num(p.credits)} credits for ${p.price}`}
                           onClick={() => startCheckout({ pack: p.key })}
@@ -176,7 +180,7 @@ export default function Billing() {
                       // Subscribed: switching happens in the Stripe portal (Checkout refuses a second subscription).
                       const action: Action = subscribed ? { kind: "portal" } : { kind: "checkout", key: p.key };
                       const working = busy(action);
-                      const canAct = configured && (!subscribed || b.has_customer);
+                      const canAct = subscribed ? configured && b.has_customer : canPay;
                       return (
                         <div
                           key={p.key}

@@ -192,6 +192,30 @@ function AutopilotSwitch({ state }: { state: Autopilot }) {
   );
 }
 
+/** Why nothing new is starting, in one calm line. Autopilot picks up by itself when this clears. */
+function AutopilotBlocked({ state }: { state: Autopilot }) {
+  if (!state.blocked) return null;
+  const text =
+    state.blocked === "instance_busy"
+      ? "Crusonia is at capacity. New runs start again soon."
+      : state.blocked === "daily_cap_reached"
+        ? "The daily spend cap is reached. New runs start again tomorrow."
+        : state.payments_live
+          ? "You're out of credits. New runs start when you add more."
+          : "You've used your free credits. New runs wait, and top-ups open soon.";
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-b-[#200D0D14] px-4.5 py-3.5 text-[13px]/4.5 font-medium text-ink">
+      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-ink" />
+      {text}
+      {state.blocked === "no_credits" && state.payments_live ? (
+        <Link to="/app/settings/billing" className="underline decoration-[#200D0D4D] underline-offset-[3px] hover:decoration-ink">
+          Billing
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
 function FeedRow({ item }: { item: AutopilotFeedItem }) {
   const text = (
     <span className="flex min-w-0 grow basis-0 flex-col gap-0.5">
@@ -239,6 +263,7 @@ function AutopilotCard() {
         </div>
       </div>
       <div className="flex min-w-0 grow basis-0 flex-col" aria-live="polite">
+        <AutopilotBlocked state={state} />
         {state.running.length ? (
           <div className="flex flex-wrap gap-x-5 gap-y-1.5 border-b border-b-[#200D0D14] px-4.5 py-3.5">
             {state.running.slice(0, 4).map((r) => (

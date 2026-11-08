@@ -2,6 +2,7 @@
 // Uses the /api auth: the workspace pays (the caller's workspace, whichever way they signed in).
 import { Hono } from "hono";
 import { z } from "zod";
+import { requirePaymentsLive } from "../billing/accounts.ts";
 import { createCheckout, createPortal, resolveOffer, stripeFor } from "../billing/checkout.ts";
 import { getBillingOverview } from "../billing/overview.ts";
 import { parseJson, sqlFor, wsOf, type AppEnv } from "../lib/context.ts";
@@ -23,6 +24,7 @@ billing.post("/checkout", async (c) => {
   const body = await parseJson(c, CheckoutBody);
   resolveOffer(body); // 400 unknown_offer before needing Stripe or the database
   stripeFor(c.env); // 503 not_configured before touching the database
+  requirePaymentsLive(c.env); // 503 payments_not_live: a Stripe test key on an instance that isn't a test instance
   return c.json(await createCheckout(sqlFor(c.env), c.env, c.get("principal"), wsOf(c), body));
 });
 

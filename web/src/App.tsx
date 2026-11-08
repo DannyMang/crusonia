@@ -30,6 +30,8 @@ const pages = {
   Step3Customer: () => import("./pages/onboarding/Step3Customer.tsx"),
   Step4Leads: () => import("./pages/onboarding/Step4Leads.tsx"),
   Pricing: () => import("./landing/Pricing.tsx"),
+  Terms: () => import("./pages/legal/Terms.tsx"),
+  Privacy: () => import("./pages/legal/Privacy.tsx"),
   Replies: () => import("./pages/Replies.tsx"),
   InviteAccept: () => import("./pages/InviteAccept.tsx"),
   Settings: () => import("./pages/Settings.tsx"),
@@ -152,6 +154,8 @@ export function App() {
               <Route index element={<Landing />} />
               {/* Public pricing (web/src/landing/Pricing.tsx); tiers come from src/billing/catalog.ts. */}
               <Route path="pricing" element={screen(L.Pricing)} />
+              <Route path="terms" element={screen(L.Terms)} />
+              <Route path="privacy" element={screen(L.Privacy)} />
 
               <Route path="sign-in/*" element={<RedirectIfSignedIn>{screen(L.SignIn)}</RedirectIfSignedIn>} />
               <Route path="sign-up/*" element={<RedirectIfSignedIn fallback="/onboarding/1">{screen(L.SignUp)}</RedirectIfSignedIn>} />

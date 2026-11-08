@@ -13,6 +13,7 @@ import { getStatus } from "../services/status.ts";
 import { getSummary } from "../services/summary.ts";
 import { workspaceMcpUrl } from "../services/naive-agents.ts";
 import { getWorkspace, type Workspace, type WorkspaceRole } from "../services/workspaces.ts";
+import { platformAdminIds } from "./admin.ts";
 
 export const dashboard = new Hono<AppEnv>();
 
@@ -21,6 +22,8 @@ type Me = {
   auth: "clerk" | "token";
   key?: { id: string; name: string };
   workspace?: { id: string; name: string; owner: boolean; role: WorkspaceRole };
+  /** An operator of this instance: Settings shows them its kill switch. */
+  platform_admin?: boolean;
 };
 
 export async function describePrincipal(env: Env, p: Principal): Promise<Me> {
@@ -31,6 +34,7 @@ export async function describePrincipal(env: Env, p: Principal): Promise<Me> {
     return {
       user: { id: p.userId, ...(fetched?.email ? { email: fetched.email } : {}), ...(fetched?.name ? { name: fetched.name } : {}), ...known },
       auth: "clerk",
+      ...(platformAdminIds(env).has(p.userId) ? { platform_admin: true } : {}),
     };
   }
   if (p.kind === "api_key") return { user: { id: `api_key:${p.keyId}`, name: p.name }, auth: "token", key: { id: p.keyId, name: p.name } };

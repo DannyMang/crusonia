@@ -13,7 +13,7 @@ import { Spinner } from "../components/icons.tsx";
 import { errorCopy } from "../components/ui.tsx";
 import { creditFacts, hasLiveSubscription, leadsFor, packCatalog, planCatalog, planLabel, PLAN_TAGS, priceAmount, TYPICAL_LEAD_CREDITS } from "../lib/billing.ts";
 import { cx, num } from "../lib/format.ts";
-import { useBilling } from "../queries.ts";
+import { useBilling, usePublicConfig } from "../queries.ts";
 import { GITHUB_URL, GitHubMark, SiteNav } from "./SiteNav.tsx";
 
 const TITLE = "Pricing · Crusonia";
@@ -217,7 +217,15 @@ function TierCta({ plan: p, featured }: { plan: CatalogPlan; featured: boolean }
   const name = planLabel(p.name);
   const b = billing.data;
   const current = b?.plans.find((x) => x.current)?.key;
+  // Paid plans wait until this instance takes real payments: no Checkout to fail, and no "Start Pro" sign-up that can't pay.
+  const closed = usePublicConfig().data?.payments_live === false && p.kind !== "free" && current !== p.key;
 
+  if (closed)
+    return (
+      <button type="button" disabled className={ctaClass(featured)}>
+        Opens soon
+      </button>
+    );
   if (!signedIn)
     return (
       <Link to="/sign-up" className={ctaClass(featured)}>

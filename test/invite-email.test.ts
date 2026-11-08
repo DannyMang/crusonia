@@ -26,6 +26,21 @@ describe("safeName", () => {
 });
 
 describe("inviteEmail", () => {
+  test("it says who asked for it, by their verified address, and that it isn't from the people who run Crusonia", () => {
+    const mail = inviteEmail({ ...base, workspaceName: "Acme", inviterName: "Dan", inviterEmail: "dan@acme.com" });
+    expect(mail.text).toContain("Dan (dan@acme.com) invited you to join Acme on Crusonia as a member.");
+    expect(mail.html).toContain("Dan (dan@acme.com) invited you");
+    for (const part of [mail.text, mail.html]) expect(part).toContain("The people who run Crusonia");
+    // The address is shown, never linked: the one link is still the invite.
+    expect([...mail.html.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual([base.url]);
+  });
+
+  test("the address can't carry markup or a second line", () => {
+    const mail = inviteEmail({ ...base, workspaceName: "Acme", inviterName: "Dan", inviterEmail: "<b>dan@acme.com\r\nBcc: x" });
+    expect(mail.html).not.toContain("<b>dan");
+    expect(mail.text).not.toMatch(/acme\.com\s*\r?\nBcc/);
+  });
+
   test("names are escaped in the HTML part, and only the one link goes anywhere", () => {
     const mail = inviteEmail({ ...base, workspaceName: `<img src=x onerror=alert(1)> & "co"`, inviterName: "<b>Dan</b>" });
     expect(mail.html).not.toContain("<img");

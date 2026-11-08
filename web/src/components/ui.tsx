@@ -209,6 +209,12 @@ export function errorCopy(err: unknown, what = "this", userId?: string | null): 
     if (err.status === 401) return { title: "Your session ended", body: "Sign in again to continue.", calm: false };
     if (err.code === "signups_closed")
       return { title: "Sign-ups are closed", body: "This Crusonia instance is not taking new accounts right now. Ask the owner for access.", calm: false };
+    if (err.code === "email_not_verified" || err.code === "email_not_allowed" || err.code === "owner_email_unverified")
+      return { title: err.code === "email_not_allowed" ? "Use your work email" : "Verify your email", body: err.message, calm: false };
+    if (err.code === "instance_busy") return { title: "Crusonia is at capacity", body: "New agent runs start again soon. Everything you have is safe.", calm: true };
+    if (err.code === "payments_not_live") return { title: "Top-ups open soon", body: "Your credits keep working in the meantime.", calm: true };
+    if (err.code === "insufficient_credits") return { title: "You're out of credits", body: err.message, calm: true };
+    if (err.code === "too_many_requests") return { title: "Too many requests", body: err.message, calm: true };
     if (err.code === "account_blocked") return { title: "No access", body: "This account cannot use this Crusonia instance.", calm: false };
     if (err.status === 403)
       return {

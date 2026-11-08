@@ -10,6 +10,7 @@ import { workspaceForOwnerId } from "../src/billing/webhook.ts";
 import { getSql, type Sql } from "../src/db.ts";
 import type { Env } from "../src/env.ts";
 import worker from "../src/index.ts";
+import { limitsConfig } from "../src/services/limits.ts";
 import { addSuppression } from "../src/services/settings.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
@@ -43,6 +44,10 @@ const env = (over: Partial<Env> = {}): Env => ({
   CLERK_SECRET_KEY: "sk_test_fake",
   AGENTMAIL_API_KEY: "am_fake",
   AGENTMAIL_INBOX_ID: INBOX,
+  // This suite sends more invites than the daily limits allow; each limit has its own test below.
+  INVITES_PER_INSTANCE_PER_DAY: "100000",
+  INVITES_PER_WORKSPACE_PER_DAY: "100000",
+  INVITES_PER_USER_PER_DAY: "100000",
   ...over,
 });
 
@@ -742,6 +747,112 @@ suite("organizations (database, faked Clerk and AgentMail)", () => {
       expect(sent.filter((m) => m.to === mail("by-key"))).toEqual([]);
       expect((await call(`it-owner-${run}`, "GET", "/api/team/members")).status).toBe(200);
       expect(await call(`it-owner-${run}`, "POST", "/api/workspaces", { body: { name: "x" } })).toMatchObject({ status: 403, body: { error: { code: "human_required" } } });
+    });
+  });
+
+  // ---------- open sign-up ----------
+
+  describe("open sign-up", () => {
+    const balance = async (t: string, e?: Env) => (await call(t, "GET", "/api/billing", e ? { env: e } : {})).body.balance as number;
+
+    test("a new workspace needs a verified email that isn't a throwaway, and Clerk's word for it", async () => {
+      const unverified = person("su_unv", { verified: [], unverified: [mail("su_unv")] });
+      expect(await call(await clerkToken(unverified), "GET", "/api/me")).toMatchObject({ status: 403, body: { error: { code: "email_not_verified" } } });
+      const throwaway = person("su_throw", { verified: [`someone-${run}@mailinator.com`] });
+      expect(await call(await clerkToken(throwaway), "GET", "/api/me")).toMatchObject({ status: 403, body: { error: { code: "email_not_allowed" } } });
+      const later = person("su_down");
+      clerkDown = true;
+      expect(await call(await clerkToken(later), "GET", "/api/me")).toMatchObject({ status: 503, body: { error: { code: "clerk_unavailable" } } });
+      clerkDown = false;
+      // None of them got a workspace or an account; the last one gets in once Clerk answers.
+      expect(await sql`select 1 from workspace_members where clerk_user_id = any(${[unverified, throwaway, later]}::text[])`).toEqual([]);
+      expect((await call(await clerkToken(later), "GET", "/api/me")).status).toBe(200);
+    });
+
+    test("a mailbox gets one free sample, however its address is written", async () => {
+      const first = person("su_a", { verified: [`dan${run}@gmail.com`] });
+      const second = person("su_b", { verified: [`d.a.n.${run}+again@googlemail.com`] });
+      expect(await balance(await clerkToken(first))).toBe(300);
+      const t = await clerkToken(second);
+      expect(await balance(t)).toBe(0);
+      // It still has a workspace, and says why nothing runs, instead of an error.
+      expect((await call(t, "GET", "/api/me")).status).toBe(200);
+      const [w] = await sql`select w.no_free_sample from workspaces w join workspace_members m on m.workspace_id = w.id where m.clerk_user_id = ${second}`;
+      expect(w!.no_free_sample).toBe(true);
+    });
+
+    test("two accounts on one mailbox at the same moment still get one sample between them", async () => {
+      const a = person("su_c", { verified: [`race${run}@acme.example.com`] });
+      const b = person("su_d", { verified: [`race${run}+2@acme.example.com`] });
+      const balances = await Promise.all([a, b].map(async (id) => balance(await clerkToken(id))));
+      expect(balances.sort((x, y) => x - y)).toEqual([0, 300]);
+    });
+
+    test("someone who joined by invite and makes their own workspace is checked too", async () => {
+      const owner = person("su_host");
+      const ws = await workspace("su_host", owner);
+      const joined = person("su_join", { verified: [`someone-${run}@yopmail.com`] });
+      await join(ws, joined, "member");
+      expect(await call(await clerkToken(joined), "POST", "/api/workspaces", { body: { name: "Mine" } })).toMatchObject({ status: 403, body: { error: { code: "email_not_allowed" } } });
+      const fine = person("su_join2");
+      await join(ws, fine, "member");
+      const made2 = await call(await clerkToken(fine), "POST", "/api/workspaces", { body: { name: "Mine" } });
+      expect(made2.status).toBe(201);
+      made.push(made2.body.workspace.id);
+      expect(await getBalance(sql, made2.body.workspace.id)).toBe(300);
+    });
+
+    test("an invite says who sent it, and replies go to them, not to the instance's inbox", async () => {
+      const owner = person("su_inv", { name: "Dana", verified: [mail("su_inv")] });
+      const ws = await workspace("su_inv", owner);
+      await invite(await clerkToken(owner), ws, mail("su_invited"));
+      const email = sent.at(-1)! as unknown as { text: string; html: string; reply_to?: string };
+      expect(email.text).toContain(`Dana (${mail("su_inv")}) invited you`);
+      expect(email.text).toContain("The people who run Crusonia didn't write it and haven't seen it.");
+      expect(email.reply_to).toBe(mail("su_inv"));
+    });
+
+    test("an admin's invite shows the admin; a workspace with no verified owner email can't invite at all", async () => {
+      const owner = person("su_o", { verified: [], unverified: [mail("su_o")] });
+      const admin = person("su_adm");
+      const ws = await workspace("su_o", owner);
+      await join(ws, admin, "admin");
+      const t = await clerkToken(admin);
+      const before = sent.length;
+      expect(await call(t, "POST", "/api/team/invites", { ws, body: { email: mail("su_nope") } })).toMatchObject({ status: 403, body: { error: { code: "owner_email_unverified" } } });
+      expect(sent.length).toBe(before);
+      expect(await sql`select 1 from workspace_invites where workspace_id = ${ws}`).toEqual([]);
+      // Refused before it uses up a send.
+      expect(await sql`select 1 from invite_sends where workspace_id = ${ws}`).toEqual([]);
+
+      clerkUsers.set(owner, { name: "su_o", verified: [mail("su_o")] });
+      await invite(t, ws, mail("su_yes"));
+      expect(sent.at(-1)!.text).toContain(`su_adm (${mail("su_adm")}) invited you`);
+
+      // Clerk down: refused too, rather than sent with nobody to answer for it.
+      clerkDown = true;
+      expect((await call(t, "POST", "/api/team/invites", { ws, body: { email: mail("su_down") } })).status).toBe(403);
+    });
+
+    test("the default limit is 10 invites per workspace per day", async () => {
+      const owner = person("su_lim");
+      const ws = await workspace("su_lim", owner);
+      const t = await clerkToken(owner);
+      const e = env({ INVITES_PER_WORKSPACE_PER_DAY: undefined });
+      for (let i = 0; i < 10; i++) await invite(t, ws, mail(`su_l${i}`), "member", e);
+      expect(await call(t, "POST", "/api/team/invites", { ws, env: e, body: { email: mail("su_l10") } })).toMatchObject({ status: 429, body: { error: { code: "invite_rate_limited" } } });
+    });
+
+    test("the default limit is 50 invites per instance per day", async () => {
+      const owner = person("su_inst");
+      const ws = await workspace("su_inst", owner);
+      const t = await clerkToken(owner);
+      // The same limit whatever else this database has sent: count what is there, and leave room for one.
+      const [{ n }] = (await sql`select count(*)::int as n from invite_sends where created_at > now() - interval '1 day'`) as { n: number }[];
+      const e = env({ INVITES_PER_INSTANCE_PER_DAY: String(n + 1) });
+      await invite(t, ws, mail("su_i0"), "member", e);
+      expect(await call(t, "POST", "/api/team/invites", { ws, env: e, body: { email: mail("su_i1") } })).toMatchObject({ status: 429, body: { error: { code: "invite_rate_limited" } } });
+      expect(limitsConfig({ PUBLIC_URL: "x" }).invitesPerInstancePerDay).toBe(50);
     });
   });
 

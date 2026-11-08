@@ -3,19 +3,21 @@
 //   - a workspace API key (`crs_live_...`, created with POST /api/keys; acts on the key's workspace), or
 //   - a Clerk session JWT. With CLERK_JWT_KEY (PEM public key) verification is networkless; otherwise
 //     @clerk/backend fetches the JWKS with CLERK_SECRET_KEY (cached per isolate).
-// Sign-up is open: a verified Clerk user gets their own private workspace on first sign-in (SIGNUPS_OPEN=false
+// Sign-up is open: a Clerk user with a verified email gets their own private workspace on first sign-in (SIGNUPS_OPEN=false
 // lets only existing members in; BLOCKED_USER_IDS are refused). A user can belong to several workspaces and names one
 // with X-Crusonia-Workspace, which is checked against membership on every request; a key or MCP_TOKEN is bound to its
 // own and refuses any other. Every request then acts on exactly one workspace (c.get("workspace")), and every service
 // query is filtered by it.
 import { verifyToken } from "@clerk/backend";
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { resolveBearer } from "../auth.ts";
 import { ensureAccount } from "../billing/accounts.ts";
 import type { Env } from "../env.ts";
 import { sqlFor, type AppEnv, type Principal } from "../lib/context.ts";
 import { ApiError } from "../lib/errors.ts";
+import { badTokenBlocked, clientIp, noteBadToken, tooManyRequests, withinLimit } from "../lib/rate-limit.ts";
 import { isApiKey, type ApiKeyLookup } from "../services/api-keys.ts";
+import { admitNewUser } from "../services/signup-check.ts";
 import { OWNER_WORKSPACE, WORKSPACE_HEADER, workspaceForClerkUser, workspaceRef, type Workspace, type WorkspaceRole } from "../services/workspaces.ts";
 
 const list = (raw: string | undefined) =>
@@ -86,10 +88,17 @@ export async function authenticate(
  * Clerk users must be members of it (and get a workspace with the free credits on their first sign-in); keys carry
  * theirs and MCP_TOKEN is the owner workspace, so a header naming another is refused. Only Clerk needs the database here.
  */
-export async function resolveWorkspace(env: Env, principal: Principal, requested?: string): Promise<{ workspace: Workspace; role: WorkspaceRole }> {
+export async function resolveWorkspace(env: Env, principal: Principal, requested?: string, ip: string | null = null): Promise<{ workspace: Workspace; role: WorkspaceRole }> {
   if (principal.kind === "clerk") {
     const sql = sqlFor(env);
-    const ws = await workspaceForClerkUser(sql, env, principal, { ...(requested === undefined ? {} : { requested }), onCreated: (id) => ensureAccount(sql, env, id) });
+    const ws = await workspaceForClerkUser(sql, env, principal, {
+      ...(requested === undefined ? {} : { requested }),
+      admit: async () => {
+        if (!(await withinLimit(env, "RL_SIGNUP", "signup", ip))) throw tooManyRequests();
+        return admitNewUser(env, principal.userId);
+      },
+      onCreated: (id) => ensureAccount(sql, env, id),
+    });
     return { workspace: workspaceRef(ws.id), role: ws.role };
   }
   const workspace = principal.kind === "owner_token" ? OWNER_WORKSPACE : workspaceRef(principal.workspaceId);
@@ -99,9 +108,21 @@ export async function resolveWorkspace(env: Env, principal: Principal, requested
   return { workspace, role: principal.kind === "owner_token" ? "owner" : "admin" };
 }
 
+/** authenticate(), with wrong tokens counted per IP. Only failures count: an IP over the limit gets 429 without a lookup. */
+async function authenticateLimited(c: Context<AppEnv>): Promise<Principal> {
+  const ip = clientIp(c);
+  if (badTokenBlocked(ip)) throw tooManyRequests();
+  try {
+    return await authenticate(c.env, c.req.header("authorization"));
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401 && c.req.header("authorization") && (await noteBadToken(c.env, ip))) throw tooManyRequests();
+    throw err;
+  }
+}
+
 export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const principal = await authenticate(c.env, c.req.header("authorization"));
-  const { workspace, role } = await resolveWorkspace(c.env, principal, c.req.header(WORKSPACE_HEADER));
+  const principal = await authenticateLimited(c);
+  const { workspace, role } = await resolveWorkspace(c.env, principal, c.req.header(WORKSPACE_HEADER), clientIp(c));
   c.set("principal", principal);
   c.set("workspace", workspace);
   c.set("role", role);

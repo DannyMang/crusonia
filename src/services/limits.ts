@@ -7,9 +7,11 @@
 //     are limited to WEB_CALLS_PER_HOUR (default 60), since they spend the instance's Apify account;
 //   - invite emails go out from the instance's own inbox, so they are limited over the last 24 hours per workspace,
 //     per sender, per address and per instance (src/services/invites.ts), and a person can make only so many workspaces.
+// The brakes for the instance as a whole are in ./instance.ts; paid starts and web reads check them here.
 import { logEvent, type Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { ApiError } from "../lib/errors.ts";
+import { instanceBrake, instanceBusy } from "./instance.ts";
 import { isOwnerWorkspace } from "./workspaces.ts";
 
 const positive = (raw: string | undefined, fallback: number) => {
@@ -22,10 +24,10 @@ export const limitsConfig = (env: Env) => ({
   startsPerHour: Math.trunc(positive(env.PAID_STARTS_PER_HOUR, 20)),
   maxActiveSessions: Math.trunc(positive(env.MAX_ACTIVE_SESSIONS, 5)),
   webCallsPerHour: Math.trunc(positive(env.WEB_CALLS_PER_HOUR, 60)),
-  invitesPerWorkspacePerDay: Math.trunc(positive(env.INVITES_PER_WORKSPACE_PER_DAY, 20)),
-  invitesPerUserPerDay: Math.trunc(positive(env.INVITES_PER_USER_PER_DAY, 30)),
+  invitesPerWorkspacePerDay: Math.trunc(positive(env.INVITES_PER_WORKSPACE_PER_DAY, 10)),
+  invitesPerUserPerDay: Math.trunc(positive(env.INVITES_PER_USER_PER_DAY, 15)),
   invitesPerEmailPerDay: Math.trunc(positive(env.INVITES_PER_EMAIL_PER_DAY, 3)),
-  invitesPerInstancePerDay: Math.trunc(positive(env.INVITES_PER_INSTANCE_PER_DAY, 200)),
+  invitesPerInstancePerDay: Math.trunc(positive(env.INVITES_PER_INSTANCE_PER_DAY, 50)),
   maxWorkspacesPerUser: Math.trunc(positive(env.MAX_WORKSPACES_PER_USER, 5)),
 });
 
@@ -51,15 +53,17 @@ export async function spendStatus(sql: Sql, env: Env, ws: string): Promise<Spend
 
 /**
  * How many of `wanted` new Naive sessions the workspace may start now (0..wanted) and, when fewer, why.
- * The daily cap applies to every workspace; the rate limits to every workspace but the owner's.
+ * The instance's brakes come first; the daily cap applies to every workspace, the rate limits to every workspace but
+ * the owner's.
  */
 export async function paidStartAllowance(
   sql: Sql,
   env: Env,
   ws: string,
   wanted: number,
-): Promise<{ allowed: number; reason?: "daily_cap_reached" | "rate_limited"; status: SpendStatus }> {
-  const status = await spendStatus(sql, env, ws);
+): Promise<{ allowed: number; reason?: "instance_busy" | "daily_cap_reached" | "rate_limited"; status: SpendStatus }> {
+  const [brake, status] = await Promise.all([instanceBrake(sql, env, ws), spendStatus(sql, env, ws)]);
+  if (brake) return { allowed: 0, reason: "instance_busy", status };
   if (status.spent_micro_usd >= status.cap_micro_usd) return { allowed: 0, reason: "daily_cap_reached", status };
   if (isOwnerWorkspace(ws)) return { allowed: wanted, status };
   const cfg = limitsConfig(env);
@@ -71,6 +75,7 @@ export async function paidStartAllowance(
 export async function requirePaidStart(sql: Sql, env: Env, ws: string, wanted = 1): Promise<void> {
   const a = await paidStartAllowance(sql, env, ws, wanted);
   if (a.allowed >= wanted) return;
+  if (a.reason === "instance_busy") throw instanceBusy();
   const usd = (micro: number) => Math.round(micro / 10_000) / 100;
   if (a.reason === "daily_cap_reached") {
     throw new ApiError(429, "daily_cap_reached", `This workspace reached its daily agent spend cap ($${usd(a.status.cap_micro_usd)} per 24 hours). Try again later.`, {
@@ -85,10 +90,12 @@ export async function requirePaidStart(sql: Sql, env: Env, ws: string, wanted = 
 }
 
 /**
- * Before an Apify-backed web call: free for the owner workspace; for any other workspace it needs a positive
- * credit balance and stays under WEB_CALLS_PER_HOUR (each call is recorded as a 'web_call' event).
+ * Before an Apify-backed web call: the instance's brakes first (the kill switch stops the owner workspace too), then
+ * free for the owner workspace; any other workspace needs a positive credit balance and stays under WEB_CALLS_PER_HOUR
+ * (each call is recorded as a 'web_call' event).
  */
 export async function requireWebCall(sql: Sql, env: Env, ws: string, tool: string): Promise<void> {
+  if (await instanceBrake(sql, env, ws)) throw instanceBusy();
   if (isOwnerWorkspace(ws)) return;
   const [row] = await sql`
     select (select coalesce(sum(amount), 0)::text from credit_ledger where workspace_id = ${ws}) as balance,
