@@ -6,8 +6,10 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { actorOf, parseJson, sqlFor, wsOf, type AppEnv, type Principal } from "../lib/context.ts";
 import { ApiError } from "../lib/errors.ts";
+import { clientIp, tooManyRequests, withinLimit } from "../lib/rate-limit.ts";
 import { clerkUser } from "../providers/clerk.ts";
 import { acceptInvite, createInvite, listInvites, previewInvite, resendInvite, revokeInvite, type InviteActor } from "../services/invites.ts";
+import { admitNewUser } from "../services/signup-check.ts";
 import { changeRole, createWorkspace, leaveWorkspace, listMembers, removeMember, renameWorkspace, type TeamActor } from "../services/team.ts";
 import { getWorkspace, ROLES, roleAtLeast, workspacesOf, type WorkspaceRole } from "../services/workspaces.ts";
 import { authenticate } from "./auth.ts";
@@ -55,7 +57,8 @@ workspaces.get("/", async (c) => {
 workspaces.post("/", async (c) => {
   const p = clerkOnly(c.get("principal"), "Creating a workspace");
   const body = await parseJson(c, z.object({ name: WorkspaceName }).strict());
-  return c.json({ workspace: await createWorkspace(sqlFor(c.env), c.env, p, body.name) }, 201);
+  if (!(await withinLimit(c.env, "RL_SIGNUP", "signup", clientIp(c)))) throw tooManyRequests();
+  return c.json({ workspace: await createWorkspace(sqlFor(c.env), c.env, p, body.name, { admit: () => admitNewUser(c.env, p.userId) }) }, 201);
 });
 
 workspaces.patch("/current", requireRole("admin"), async (c) => {

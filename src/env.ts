@@ -44,8 +44,19 @@ export interface Env {
   PAID_STARTS_PER_HOUR?: string;
   MAX_ACTIVE_SESSIONS?: string;
   WEB_CALLS_PER_HOUR?: string;
-  // Invite emails over the last 24 hours (they go out from AGENTMAIL_INBOX_ID): per workspace (default 20), per sender
-  // (30), per address (3) and per instance (200). Workspaces one person may make (default 5).
+  // The instance as a whole (src/services/instance.ts): Naive + Apify spend of every workspace but the owner's per rolling
+  // 24 hours in USD (default 25). At the cap, new paid starts answer 429 instance_busy.
+  INSTANCE_DAILY_CAP_USD?: string;
+  // The settings key of the instance's kill switch (default instance_control). Only tests set it: they share a database
+  // with staging, and must not stop it.
+  INSTANCE_CONTROL_KEY?: string;
+  // Per IP, per minute and per Cloudflare location (wrangler.jsonc `ratelimits`, src/lib/rate-limit.ts): wrong tokens and
+  // invite links, paid starts, and new workspaces. Absent in tests and under plain `bun`: no limit.
+  RL_ANON?: RateLimit;
+  RL_PAID?: RateLimit;
+  RL_SIGNUP?: RateLimit;
+  // Invite emails over the last 24 hours (they go out from AGENTMAIL_INBOX_ID): per workspace (default 10), per sender
+  // (15), per address (3) and per instance (50). Workspaces one person may make (default 5).
   INVITES_PER_WORKSPACE_PER_DAY?: string;
   INVITES_PER_USER_PER_DAY?: string;
   INVITES_PER_EMAIL_PER_DAY?: string;
@@ -81,6 +92,9 @@ export interface Env {
   BILLING_ENFORCED?: string;
   // Free-sample credits granted once per new workspace (default in src/billing/plans.ts; "0" turns it off).
   BILLING_FREE_CREDITS?: string;
+  // "true" only on a test instance (staging, wrangler.jsonc): Checkout accepts a Stripe test key there. Anywhere else a
+  // test key answers 503 payments_not_live, because a test card must not buy credits that spend real money.
+  BILLING_TEST_MODE_OK?: string;
 
   // secrets: written by scripts/setup.ts
   NAIVE_WEBHOOK_SECRET?: string;

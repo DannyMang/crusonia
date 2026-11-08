@@ -93,7 +93,7 @@ function overview(): Billing {
   const paid = s.plan !== "free";
   return {
     owner_id: "user_mock",
-    billing: { configured: !unconfigured, webhook_configured: !unconfigured, mode: unconfigured ? null : "test", enforced: false },
+    billing: { configured: !unconfigured, webhook_configured: !unconfigured, mode: unconfigured ? null : "test", enforced: false, payments_live: !unconfigured },
     plan: {
       key: s.plan,
       name: planCatalog().find((p) => p.key === s.plan)?.name ?? "Free",

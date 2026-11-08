@@ -5,6 +5,7 @@ import { logEvent, type Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { sqlFor, type Principal } from "../lib/context.ts";
 import { ApiError } from "../lib/errors.ts";
+import { stripeKeyMode } from "../providers/stripe.ts";
 import { isOwnerWorkspace } from "../services/workspaces.ts";
 import { BILLING_APP_PATH } from "./constants.ts";
 import { creditsToUsd, freeSampleCredits } from "./plans.ts";
@@ -14,6 +15,19 @@ export const billingEnforced = (env: Env) => /^(1|true|yes|on)$/i.test(env.BILLI
 
 /** Whether paid work in this workspace needs credits: always, except the owner workspace while BILLING_ENFORCED is off. */
 export const creditsEnforcedFor = (env: Env, ws: string) => !isOwnerWorkspace(ws) || billingEnforced(env);
+
+/**
+ * Whether people can pay here: a live Stripe key, or any key on an instance marked as a test instance. With a test key on
+ * a public instance, card 4242 would buy credits that spend real Naive and Apify money. A key whose mode can't be read
+ * doesn't count as live.
+ */
+export const paymentsLive = (env: Env) =>
+  stripeKeyMode(env.STRIPE_SECRET_KEY) === "live" || (Boolean(env.STRIPE_SECRET_KEY) && /^(1|true|yes|on)$/i.test(env.BILLING_TEST_MODE_OK?.trim() ?? ""));
+
+/** 503 payments_not_live before anyone is sent to Stripe Checkout. */
+export function requirePaymentsLive(env: Env): void {
+  if (!paymentsLive(env)) throw new ApiError(503, "payments_not_live", "Top-ups open soon. Your credits keep working in the meantime.");
+}
 
 export type BillingAccount = {
   workspace_id: string;
@@ -130,7 +144,7 @@ export async function requireCredits(
     throw new ApiError(
       402,
       "insufficient_credits",
-      `Not enough credits to start paid work (balance ${balance}). Buy a credit pack or subscribe in Settings > Billing.`,
+      `Not enough credits to start paid work (balance ${balance}). ${paymentsLive(env) ? "Buy a credit pack or subscribe in Settings > Billing." : "Top-ups open soon."}`,
       { balance, balance_usd: creditsToUsd(balance), billing_url: `${env.PUBLIC_URL.replace(/\/+$/, "")}${BILLING_APP_PATH}` },
     );
   }

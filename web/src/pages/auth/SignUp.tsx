@@ -1,11 +1,11 @@
 // Sign up (Paper artboard 2LXP-0). Clerk Core 3 custom flow (signal API): GitHub / Google via signUp.sso()
 // landing on /onboarding/1, or email: signUp.create({ emailAddress }) -> verifications.sendEmailCode() ->
 // verifyEmailCode({ code }) -> finalize(). If Clerk still needs a first/last name it asks for them here.
-// `#clerk-captcha` is where Clerk mounts its bot protection. The design's terms line is left out: there are
-// no Terms or Privacy pages to link to yet.
+// `#clerk-captcha` is where Clerk mounts its bot protection. The terms line opens in a new tab, so an email already typed
+// here stays.
 import { useAuth, useClerk, useSignUp } from "@clerk/react";
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { clerkEnabled } from "../../auth.tsx";
 import { ALL_PROVIDERS, AuthBrand, AuthField, AuthHeading, AuthLoadFailed, AuthShell, CodeForm, FormError, PrimaryButton, StartForm, SwitchLine, useLoadTimedOut, type Provider } from "../../components/auth/AuthLayout.tsx";
 import { carriedParams, clerkMessage, enabledProviders, goTo, isEmail, providerOffMessage, rememberAfterAuth, rememberWebsite, safeNext } from "../../components/auth/flow.ts";
@@ -22,6 +22,23 @@ export default function SignUp() {
   const website = params.get("website");
   useEffect(() => rememberWebsite(website), [website]);
   return clerkEnabled ? <ClerkSignUp /> : <StaticSignUp />;
+}
+
+const termsLink = "text-ink underline decoration-1 [text-underline-position:from-font] hover:decoration-2";
+
+function TermsLine() {
+  return (
+    <p className="pt-3 text-[13px]/4.5 font-[525] text-muted">
+      By continuing you agree to the{" "}
+      <Link to="/terms" target="_blank" className={termsLink}>
+        Terms
+      </Link>{" "}
+      and{" "}
+      <Link to="/privacy" target="_blank" className={termsLink}>
+        Privacy
+      </Link>
+    </p>
+  );
 }
 
 function StaticSignUp() {
@@ -298,7 +315,12 @@ function ClerkSignUp() {
       disabled={!isLoaded}
       emailError={emailHint ?? emailError}
       formError={formError}
-      afterButton={<div id="clerk-captcha" />}
+      afterButton={
+        <>
+          <TermsLine />
+          <div id="clerk-captcha" />
+        </>
+      }
       footer={footer}
     />
   );

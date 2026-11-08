@@ -1,7 +1,8 @@
 // Workspaces: every /api and /mcp call acts on exactly one. How each caller resolves to its workspace:
 //   Clerk session   one of the user's workspaces (workspace_members): the one named by X-Crusonia-Workspace, checked
 //                   against membership on every request, else the default (the owner workspace for OWNER_CLERK_USER_ID,
-//                   otherwise their oldest). A user with none gets one on first sign-in, with the free credits.
+//                   otherwise their oldest). A user with none gets one on first sign-in, with the free credits, once
+//                   their email is verified (./signup-check.ts).
 //   crs_live_ key   the key's workspace (api_keys.workspace_id); a header naming another one is refused
 //   MCP_TOKEN       the owner workspace; same
 // Webhooks map back through the row they are about (a Naive session, an email thread, a Stripe customer).
@@ -56,17 +57,18 @@ export const notAMember = () => new ApiError(403, "not_a_member", "You are not a
  * The workspace a signed-in Clerk user acts on for this request, and their role in it. Reads workspace_members every
  * time: there is no cache, so a removed member loses access on their next request.
  * 403 account_blocked for BLOCKED_USER_IDS, 403 not_a_member when `requested` is not one of theirs, 403 signups_closed
- * for a user with no workspace while SIGNUPS_OPEN is false. `onCreated` runs once for a new workspace (the billing
+ * for a user with no workspace while SIGNUPS_OPEN is false. `admit` runs before a new workspace is made and may refuse it
+ * (a verified email, the free sample's key: ./signup-check.ts). `onCreated` runs once for a new workspace (the billing
  * account and free credits; injected to avoid a cycle).
  */
 export async function workspaceForClerkUser(
   sql: Sql,
   env: Env,
   user: ClerkUser,
-  opts: { requested?: string; onCreated?: (workspaceId: string) => Promise<void> } = {},
+  opts: { requested?: string; admit?: () => Promise<{ freeSampleKey?: string }>; onCreated?: (workspaceId: string) => Promise<void> } = {},
 ): Promise<Workspace & { role: WorkspaceRole; created: boolean }> {
   const { userId } = user;
-  const { requested, onCreated } = opts;
+  const { requested, admit, onCreated } = opts;
   if (isBlockedUser(env, userId)) throw new ApiError(403, "account_blocked", "This account is blocked on this Crusonia instance");
   const rows = (await sql`select workspace_id, role from workspace_members where clerk_user_id = ${userId} order by created_at, workspace_id`) as {
     workspace_id: string;
@@ -90,15 +92,21 @@ export async function workspaceForClerkUser(
     throw new ApiError(403, "signups_closed", "Sign-ups are closed on this Crusonia instance; ask the owner for access");
   }
 
+  const sampleKey = (await admit?.())?.freeSampleKey ?? null;
+
   // Serialized per user: two first requests at once create one workspace, and both get it. Someone who already made a
-  // workspace (they were removed from it, or left it) gets a new one without a second free sample.
+  // workspace (they were removed from it, or left it) gets a new one without a second free sample, and so does a second
+  // account on a mailbox that already had one (the key is taken in the same transaction, so two at once get one sample).
   const id = newId("ws");
   const name = (user.name ? `${user.name}'s workspace` : user.email ? `${user.email}'s workspace` : "My workspace").slice(0, 200);
-  const [, , , created] = await sql.transaction([
+  const [, , , , , created] = await sql.transaction([
     sql`select pg_advisory_xact_lock(hashtext(${`workspace-member:${userId}`}))::text as locked`,
+    sql`select pg_advisory_xact_lock(hashtext(${`free-sample:${sampleKey ?? userId}`}))::text as locked`,
     sql`insert into workspaces (id, name, created_by, no_free_sample)
-        select ${id}, ${name}, ${userId}, exists (select 1 from workspaces where created_by = ${userId})
+        select ${id}, ${name}, ${userId},
+               exists (select 1 from workspaces where created_by = ${userId}) or exists (select 1 from settings where key = ${sampleKey})
         where not exists (select 1 from workspace_members where clerk_user_id = ${userId})`,
+    claimFreeSample(sql, sampleKey, id),
     sql`insert into workspace_members (workspace_id, clerk_user_id, role)
         select ${id}, ${userId}, 'owner' where exists (select 1 from workspaces where id = ${id})
         on conflict do nothing`,
@@ -113,6 +121,13 @@ export async function workspaceForClerkUser(
   }
   return { ...workspaceRef(workspaceId), role: created?.[0]?.role as WorkspaceRole, created: isNew };
 }
+
+/** Marks a mailbox's free sample as taken, if `workspaceId` was just made and it isn't taken yet. Part of a transaction. */
+export const claimFreeSample = (sql: Sql, key: string | null, workspaceId: string) =>
+  sql`insert into settings (key, value)
+      select ${key}, ${JSON.stringify({ workspace_id: workspaceId })}::jsonb
+      where ${key}::text is not null and exists (select 1 from workspaces where id = ${workspaceId})
+      on conflict (key) do nothing`;
 
 export type MyWorkspace = { id: string; name: string; role: WorkspaceRole; owner: boolean; joined_at: Date };
 

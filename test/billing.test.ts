@@ -587,14 +587,14 @@ describe("/api/billing without a database", () => {
     expect((await errorOf(noKey)).message).toContain("STRIPE_SECRET_KEY is not set");
     const portal = await post("/api/billing/portal", {});
     expect(portal.status).toBe(503);
-    const withKey = await post("/api/billing/checkout", { pack: "small" }, env({ STRIPE_SECRET_KEY: "sk_test_abc123" }));
+    const withKey = await post("/api/billing/checkout", { pack: "small" }, env({ STRIPE_SECRET_KEY: "sk_test_abc123", BILLING_TEST_MODE_OK: "true" }));
     expect((await errorOf(withKey)).message).toStartWith("DATABASE_URL is not set");
   });
 
   test("/api/status reports billing config without secrets; get_status lists Stripe", async () => {
     const res = await call("/api/status", { headers: auth }, env({ STRIPE_SECRET_KEY: "sk_test_abc123", BILLING_ENFORCED: "true" }));
     const body = (await res.json()) as { billing: unknown; providers: Record<string, { configured: boolean; missing?: string[] }> };
-    expect(body.billing).toEqual({ configured: true, webhook_configured: false, mode: "test", enforced: true });
+    expect(body.billing).toEqual({ configured: true, webhook_configured: false, mode: "test", payments_live: false, enforced: true });
     expect(body.providers.stripe).toMatchObject({ configured: false, missing: ["STRIPE_WEBHOOK_SECRET"] });
     expect(JSON.stringify(body)).not.toContain("sk_test_abc123");
   });

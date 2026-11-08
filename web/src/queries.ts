@@ -45,6 +45,12 @@ export function useMe() {
   return useQuery({ queryKey: keys.me, queryFn: () => api.me(), staleTime: 5 * 60_000 });
 }
 
+/** What a signed-out visitor may know about this instance: /pricing reads it. */
+export function usePublicConfig() {
+  const api = useApi();
+  return useQuery({ queryKey: ["public-config"] as const, queryFn: () => api.publicConfig(), staleTime: 5 * 60_000, retry: false });
+}
+
 export function useWorkspaces() {
   const api = useApi();
   return useQuery({ queryKey: keys.workspaces, queryFn: () => api.workspaces(), staleTime: 60_000 });

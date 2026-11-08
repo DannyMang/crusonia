@@ -12,6 +12,7 @@ import { NaiveClient, type NaiveEvent, type NaiveSession, type PendingAction } f
 import { toolApprovalTtlMinutes } from "./approval-ttl.ts";
 import { createAgentApproval } from "./approvals.ts";
 import { getCompanySummary, summaryForMessage, type SummaryView } from "./company-summary.ts";
+import { instanceBusy } from "./instance.ts";
 import { paidStartAllowance, requirePaidStart } from "./limits.ts";
 import { naiveAgentFor } from "./naive-agents.ts";
 import { workflowBrief, type QualificationWorkflow } from "./qualification.ts";
@@ -91,7 +92,8 @@ export function redraftMessage(input: { leadId: string; draftId: string; channel
 /**
  * One research session per lead in workspace `ws`, on the workspace's Naive agent. Sessions are billed to the
  * workspace when they finish (`billable: false` leaves them unbilled). The daily spend cap and the rate limits can
- * start fewer sessions than asked: the rest are skipped with reason 'daily_cap_reached' or 'rate_limited'.
+ * start fewer sessions than asked: the rest are skipped with reason 'daily_cap_reached' or 'rate_limited'. The instance's
+ * brakes refuse the whole batch: 429 instance_busy.
  */
 export async function startResearch(
   sql: Sql,
@@ -143,6 +145,7 @@ export async function startResearch(
   });
   if (!eligible.length) return { started, skipped, failed };
   const allowance = await paidStartAllowance(sql, env, ws, eligible.length);
+  if (allowance.reason === "instance_busy") throw instanceBusy();
   for (const lead of eligible.slice(allowance.allowed)) skipped.push({ lead_id: lead.id, reason: allowance.reason ?? "rate_limited" });
   const toStart = eligible.slice(0, allowance.allowed);
   if (!toStart.length) return { started, skipped, failed };

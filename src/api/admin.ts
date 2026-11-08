@@ -3,13 +3,17 @@
 // any workspace's agent runs and read a run's trace; nothing here writes to a workspace (no Naive refresh either),
 // and every read is recorded in the viewed workspace's audit trail (events kind 'admin_viewed': the admin, what was
 // viewed). Admins act on other workspaces through these routes only; everywhere else they are a normal user.
+// /api/admin/instance is the one thing here that writes: the instance's kill switch (src/services/instance.ts).
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
+import { paymentsLive } from "../billing/accounts.ts";
 import { logEvent } from "../db.ts";
 import type { Env } from "../env.ts";
-import { actorOf, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
+import { actorOf, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
 import { ApiError } from "../lib/errors.ts";
+import { instanceState, setInstanceHalted, type InstanceState } from "../services/instance.ts";
 import { getRunDetail, toRun, type SessionRow } from "../services/runs.ts";
+import { signupsOpen } from "../services/workspaces.ts";
 
 const list = (raw: string | undefined) =>
   (raw ?? "")
@@ -21,6 +25,39 @@ const list = (raw: string | undefined) =>
 export const platformAdminIds = (env: Env) => new Set([...list(env.PLATFORM_ADMIN_USER_IDS), ...list(env.OWNER_CLERK_USER_ID)]);
 
 export const admin = new Hono<AppEnv>();
+
+/** A platform admin, or the owner's own token so a script (or an emergency, from a terminal) can reach the switch. */
+const requireInstanceOperator: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const p = c.get("principal");
+  if (p.kind !== "owner_token" && !(p.kind === "clerk" && platformAdminIds(c.env).has(p.userId))) {
+    throw new ApiError(403, "forbidden", "Platform admins only");
+  }
+  await next();
+};
+
+const instanceView = (env: Env, s: InstanceState) => ({
+  halted: s.halted,
+  halted_at: s.halted_at,
+  halted_by: s.halted_by,
+  spent_usd: Math.round(s.spent_micro_usd / 10_000) / 100,
+  cap_usd: s.cap_micro_usd / 1_000_000,
+  cap_reached: s.spent_micro_usd >= s.cap_micro_usd,
+  signups_open: signupsOpen(env),
+  autopilot_workspaces: (env.AUTOPILOT_WORKSPACES ?? "").includes("*") ? "all" : env.AUTOPILOT_WORKSPACES?.trim() ? "listed" : "none",
+  payments_live: paymentsLive(env),
+});
+
+// Registered before requireAdmin below: a route registered before a middleware answers without running it.
+admin.get("/instance", requireInstanceOperator, async (c) => c.json(instanceView(c.env, await instanceState(sqlFor(c.env), c.env))));
+
+// {halted: true} stops new agent runs and web reads in every workspace, the owner's too; running sessions finish. Pulling
+// it stays open to the owner's token, but only a signed-in platform admin can release it: that token is also in a vault.
+admin.put("/instance", requireInstanceOperator, async (c) => {
+  const body = await parseJson(c, z.object({ halted: z.boolean() }).strict());
+  const p = c.get("principal");
+  if (!body.halted && p.kind !== "clerk") throw new ApiError(403, "human_required", "Releasing the kill switch needs a signed-in platform admin");
+  return c.json(instanceView(c.env, await setInstanceHalted(sqlFor(c.env), c.env, body.halted, actorOf(p))));
+});
 
 const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
   const p = c.get("principal");

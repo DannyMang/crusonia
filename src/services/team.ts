@@ -8,7 +8,7 @@ import { newId } from "../ids.ts";
 import { ApiError, notFound } from "../lib/errors.ts";
 import { clerkUsers } from "../providers/clerk.ts";
 import { limitsConfig } from "./limits.ts";
-import { isInvitedUser, isOwnerUser, isOwnerWorkspace, signupsOpen, type ClerkUser, type WorkspaceRole } from "./workspaces.ts";
+import { claimFreeSample, isInvitedUser, isOwnerUser, isOwnerWorkspace, signupsOpen, type ClerkUser, type WorkspaceRole } from "./workspaces.ts";
 
 export type Member = {
   user_id: string;
@@ -129,25 +129,34 @@ export async function leaveWorkspace(sql: Sql, env: Env, ws: string, userId: str
 }
 
 /**
- * A new workspace owned by the caller. The free sample is one per person: only the first workspace they make gets it.
- * While SIGNUPS_OPEN is false, people who only joined through an invite can't make one (that would turn every invite
+ * A new workspace owned by the caller. The free sample is one per person: only the first workspace they make gets it, if
+ * their mailbox hasn't had one (`admit`: ./signup-check.ts, for someone who joined through an invite and now makes their
+ * own). While SIGNUPS_OPEN is false, people who only joined through an invite can't make one (that would turn every invite
  * into a sign-up); 403 workspace_limit past MAX_WORKSPACES_PER_USER.
  */
-export async function createWorkspace(sql: Sql, env: Env, user: ClerkUser, name: string): Promise<{ id: string; name: string; role: WorkspaceRole; owner: boolean }> {
+export async function createWorkspace(
+  sql: Sql,
+  env: Env,
+  user: ClerkUser,
+  name: string,
+  opts: { admit?: () => Promise<{ freeSampleKey?: string }> } = {},
+): Promise<{ id: string; name: string; role: WorkspaceRole; owner: boolean }> {
   const { userId } = user;
   if (!signupsOpen(env) && !isOwnerUser(env, userId) && !isInvitedUser(env, userId)) {
     const [owns] = await sql`select 1 as hit from workspace_members where clerk_user_id = ${userId} and role = 'owner' limit 1`;
     if (!owns) throw new ApiError(403, "signups_closed", "Sign-ups are closed on this Crusonia instance; ask the owner for access");
   }
+  const sampleKey = (await opts.admit?.())?.freeSampleKey ?? null;
   const id = newId("ws");
   const cap = limitsConfig(env).maxWorkspacesPerUser;
-  const [, rows] = await sql.transaction([
+  const [, , rows] = await sql.transaction([
     sql`select pg_advisory_xact_lock(hashtext(${`workspace-member:${userId}`}))::text as locked`,
+    sql`select pg_advisory_xact_lock(hashtext(${`free-sample:${sampleKey ?? userId}`}))::text as locked`,
     sql`with made as (
           select count(*)::int as n from workspaces where created_by = ${userId}
         ), w as (
           insert into workspaces (id, name, created_by, no_free_sample)
-          select ${id}, ${name}, ${userId}, made.n > 0 from made where made.n < ${cap}::int
+          select ${id}, ${name}, ${userId}, made.n > 0 or exists (select 1 from settings where key = ${sampleKey}) from made where made.n < ${cap}::int
           returning id
         ), m as (
           insert into workspace_members (workspace_id, clerk_user_id, role) select id, ${userId}, 'owner' from w
@@ -156,6 +165,7 @@ export async function createWorkspace(sql: Sql, env: Env, user: ClerkUser, name:
           select id, null, 'workspace_created', jsonb_build_object('actor', ${`clerk:${userId}`}::text) from w
         )
         select id from w`,
+    claimFreeSample(sql, sampleKey, id),
   ]);
   if (!rows?.length) throw new ApiError(403, "workspace_limit", `You can make up to ${cap} workspaces`);
   await ensureAccount(sql, env, id);

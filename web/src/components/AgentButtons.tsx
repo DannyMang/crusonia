@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { claudeCodeCommand, codexCommand, copyText, cursorInstallUrl } from "../lib/agent-install.ts";
 import { cx } from "../lib/format.ts";
+import { publicLogoAllowed } from "../lib/public-logos.ts";
 import { BrandLogo } from "./BrandLogo.tsx";
 
 type Size = "lg" | "row";
@@ -39,7 +40,7 @@ export function CursorButton({ mcpUrl, size = "lg" }: { mcpUrl?: string; size?: 
   );
 }
 
-function CopyCommandButton({ agent, command, size, onCopied }: { agent: "claude" | "codex"; command: string; size: Size; onCopied: (msg: string) => void }) {
+function CopyCommandButton({ agent, command, size, publicPage, onCopied }: { agent: "claude" | "codex"; command: string; size: Size; publicPage?: boolean; onCopied: (msg: string) => void }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -64,14 +65,16 @@ function CopyCommandButton({ agent, command, size, onCopied }: { agent: "claude"
     <button type="button" onClick={copy} aria-label={label} title={`Copies: ${command}`} className={button(size)} data-copied={copied || undefined}>
       {/* Icon and label crossfade in one grid cell each, so the button keeps its width when it says "Copied".
           The button keeps its accessible name; the status line announces the copy. */}
-      <span className="grid shrink-0">
-        <span className="agent-face agent-face-idle col-start-1 row-start-1">
-          <BrandLogo name={agent} size={markSize[size]} />
+      {!publicPage || publicLogoAllowed(agent) ? (
+        <span className="grid shrink-0">
+          <span className="agent-face agent-face-idle col-start-1 row-start-1">
+            <BrandLogo name={agent} size={markSize[size]} />
+          </span>
+          <span aria-hidden className="agent-face agent-face-copied col-start-1 row-start-1">
+            <CheckMark size={markSize[size]} />
+          </span>
         </span>
-        <span aria-hidden className="agent-face agent-face-copied col-start-1 row-start-1">
-          <CheckMark size={markSize[size]} />
-        </span>
-      </span>
+      ) : null}
       <span className="grid text-left">
         <span className="agent-face agent-face-idle col-start-1 row-start-1">{label}</span>
         <span aria-hidden className="agent-face agent-face-copied col-start-1 row-start-1">
@@ -82,15 +85,18 @@ function CopyCommandButton({ agent, command, size, onCopied }: { agent: "claude"
   );
 }
 
-/** The three buttons plus a polite status line for screen readers. `mcpUrl`: the endpoint the Worker reports. */
-export function AgentButtons({ mcpUrl, size = "lg", className }: { mcpUrl?: string; size?: Size; className?: string }) {
+/**
+ * The three buttons plus a polite status line for screen readers. `mcpUrl`: the endpoint the Worker reports. `publicPage`:
+ * on a page anyone can see, where some logos need their owner's approval first (lib/public-logos.ts).
+ */
+export function AgentButtons({ mcpUrl, size = "lg", className, publicPage }: { mcpUrl?: string; size?: Size; className?: string; publicPage?: boolean }) {
   const [status, setStatus] = useState("");
   return (
     <>
       <div className={className}>
         <CursorButton mcpUrl={mcpUrl} size={size} />
-        <CopyCommandButton agent="claude" command={claudeCodeCommand(mcpUrl)} size={size} onCopied={setStatus} />
-        <CopyCommandButton agent="codex" command={codexCommand(mcpUrl)} size={size} onCopied={setStatus} />
+        <CopyCommandButton agent="claude" command={claudeCodeCommand(mcpUrl)} size={size} publicPage={publicPage} onCopied={setStatus} />
+        <CopyCommandButton agent="codex" command={codexCommand(mcpUrl)} size={size} publicPage={publicPage} onCopied={setStatus} />
       </div>
       <p role="status" className="sr-only">
         {status}

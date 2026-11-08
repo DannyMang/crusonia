@@ -16,7 +16,7 @@ export function ConnectAgent() {
         </h2>
         <p className="text-[18px]/[27px] font-[525] text-muted sm:text-[20.2px]/[29.2px]">Connect your agent in one click, then run your whole GTM from it.</p>
       </div>
-      <AgentButtons className="flex flex-col gap-3.5 sm:flex-row sm:flex-wrap sm:items-center" />
+      <AgentButtons publicPage className="flex flex-col gap-3.5 sm:flex-row sm:flex-wrap sm:items-center" />
     </section>
   );
 }
