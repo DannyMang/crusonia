@@ -9,7 +9,7 @@ import { sendApprovalTtlMinutes } from "../services/approval-ttl.ts";
 import { createLead, deleteLead, getLeadFull, importLeads, LEAD_STAGES, patchLead, searchLeads } from "../services/crm.ts";
 import { IMPORT_FIELDS } from "../services/csv.ts";
 import { createDraft } from "../services/drafts.ts";
-import { MAX_FIND_LEADS, naiveAgent, startFindLeads } from "../services/runs.ts";
+import { getFindRun, MAX_FIND_LEADS, naiveAgent, startFindLeads } from "../services/runs.ts";
 
 export const leads = new Hono<AppEnv>();
 
@@ -54,16 +54,25 @@ leads.post("/", async (c) => {
 
 // Starts a Naive session that searches for leads matching the saved profile, adds them (add_leads) and
 // researches them. Async: follow it in GET /api/workflows (purpose find_leads).
-const FindBody = z.object({ count: z.number().int().min(1).max(MAX_FIND_LEADS).default(25) }).strict();
+// `like_lead_id`: find companies like that lead (the agent reads its why_summary, links and notes).
+const FindBody = z
+  .object({ count: z.number().int().min(1).max(MAX_FIND_LEADS).default(25), like_lead_id: z.string().trim().min(1).max(64).optional() })
+  .strict();
 
 leads.post("/find", async (c) => {
   const body = await parseJson(c, FindBody);
   naiveAgent(c.env); // 503 not_configured before touching the database
   const principal = c.get("principal");
   await requireCredits(c.env, principal); // 402 insufficient_credits when BILLING_ENFORCED and the balance is <= 0
-  const result = await startFindLeads(sqlFor(c.env), c.env, body.count, actorOf(principal), undefined, { billingOwnerId: billingOwnerOf(principal) });
+  const result = await startFindLeads(sqlFor(c.env), c.env, body.count, actorOf(principal), undefined, {
+    billingOwnerId: billingOwnerOf(principal),
+    likeLeadId: body.like_lead_id,
+  });
   return c.json(result, 202);
 });
+
+// The leads one find run touched, each with find_status created | merged | known (from its add_leads results).
+leads.get("/find/:session_id", async (c) => c.json(await getFindRun(sqlFor(c.env), c.env, c.req.param("session_id"))));
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024;
 const Mapping = z.partialRecord(z.enum(IMPORT_FIELDS), z.string().min(1).max(200));

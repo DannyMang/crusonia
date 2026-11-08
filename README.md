@@ -181,7 +181,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 
 | Method | Path | What |
 | --- | --- | --- |
-| GET | `/api/leads` | List, newest first. Filters `stage`, `min_score`, `source`, `q` (email/name/company/domain); `limit` + `cursor` |
+| GET | `/api/leads` | List, newest first. Filters `stage`, `min_score`, `source`, `q` (email/name/company/domain); `limit` + `cursor`. Each row has `notes_count` and `rating` (`up` / `down` / null: the latest thumbs note) |
 | POST | `/api/leads` | Create an opted-in contact (`email`, optional `consent: {text, at?}`) |
 | POST | `/api/leads/import` | CSV import: JSON `{csv, mapping?, source?, dry_run?}` or a `text/csv` body. Dedupes by email, then company domain + name; reports created/updated/skipped per row |
 | GET | `/api/leads/:id` | Lead (with `contacts`, `links`, `why_summary`, `next_step`) with evidence (numbered `n`), drafts, approvals, notes, messages, Naive sessions and the event timeline |
@@ -213,7 +213,8 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/onboarding/read-website` | `{url, max_pages?, render_js?}` -> `{pages: [{url, title, text}], mode, rendered?, note?}`. Synchronous; Apify crawler with `APIFY_TOKEN` (a few cents, metered), retried with JavaScript rendering when it finds no text, else a plain fetch |
 | POST | `/api/onboarding/propose` | `{url?, description?}` -> `{session_id}`: a Naive session reads the site and saves a proposed profile |
 | GET | `/api/onboarding/propose/:session_id` | `{status: "running" \| "done" \| "error", profile?}`; poll it (refreshes from Naive while active) |
-| POST | `/api/leads/find` | `{count?}` (25, max 50) -> `{session_id}`: a Naive session finds leads for the saved profile, adds and researches them |
+| POST | `/api/leads/find` | `{count?, like_lead_id?}` (25, max 50) -> `{session_id}`: a Naive session finds leads for the saved profile (or companies like that lead), adds and scores them |
+| GET | `/api/leads/find/:session_id` | `{run, leads}`: the leads that find run touched, each with `find_status` `created` / `merged` / `known` (from its add_leads results in the stored trace) |
 | GET | `/api/workflows` | Naive sessions grouped by purpose: `{id, name, purpose, status, started_at, leads_processed, cost_usd, last_event_at, runs}` |
 | GET | `/api/workflows/runs/:session_id` | `{run, steps, lead, approvals}`: the clean timeline. Steps from Naive's events and our audit events, sorted by time; a tool call that waited for a confirmation is one step with `approval: {decision, via, code?, waited_ms}`, and pauses only the auto-confirm policy resolved are left out |
 | GET | `/api/workflows/runs/:session_id/trace` | The full trace: stored Naive events (`after_seq`, `limit` up to 1000; `has_more`, `next_after_seq`), plus the run, our audit events, approvals and `spend` (Naive cost, credits debited, Apify runs). Kept `TRACE_RETENTION_DAYS` (180) |
