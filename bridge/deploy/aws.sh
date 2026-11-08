@@ -62,7 +62,8 @@ check_inputs() {
 env_lines() { # exactly the five settings the bridge needs, plus non-secret config
   grep -E '^(SPECTRUM_PROJECT_ID|SPECTRUM_PROJECT_SECRET|OWNER_PHONE)=' "$CREDS_FILE"
   grep -E '^BRIDGE_SECRET=' "$BRIDGE_SECRET_FILE" | head -n 1
-  printf 'WORKER_URL=%s\nSPECTRUM_MODE=live\nBRIDGE_VERSION=%s\n' "$WORKER_URL" "${GIT_REF:0:12}"
+  # PORT: the loopback health server, on an uncommon port since the container shares the host's network.
+  printf 'WORKER_URL=%s\nSPECTRUM_MODE=live\nBRIDGE_VERSION=%s\nPORT=18733\n' "$WORKER_URL" "${GIT_REF:0:12}"
 }
 
 bootstrap_body() { # the first-boot script (bash, as root). Never echoes the env file. Validated by deploy/test-bootstrap.sh.
@@ -129,7 +130,13 @@ if connected; then log "bridge connected (read-only root filesystem)"; beacon co
   log "not connected with a read-only root filesystem; retrying writable"
   beacon retry_writable
   run
-  if connected; then log "bridge connected"; beacon connected_rw; else log "bridge NOT connected; see: docker logs crusonia-bridge"; beacon not_connected; fi
+  if connected; then log "bridge connected"; beacon connected_rw; else
+    log "bridge NOT connected; see: docker logs crusonia-bridge"
+    beacon not_connected
+    # Why, as URL-safe text (long digit runs masked): container state, then its last log lines.
+    beacon "state_\$(docker inspect -f '{{.State.Status}}-exit{{.State.ExitCode}}-oom{{.State.OOMKilled}}-restarts{{.RestartCount}}' crusonia-bridge 2>&1 | tr -c 'A-Za-z0-9_.-' '_' | head -c 120)"
+    beacon "log_\$(docker logs --tail 3 crusonia-bridge 2>&1 | sed -E 's/[0-9]{7,}/N/g' | tr -c 'A-Za-z0-9_.:-' '_' | head -c 600)"
+  fi
 fi
 if [ "${SEND_TEST_MESSAGE:-0}" = "1" ] && [ ! -f /opt/crusonia-bridge/.test-message-sent ]; then
   out="\$(docker exec crusonia-bridge bun src/cli.ts notify test:connected "$TEST_TEXT" 2>&1 || true)"
