@@ -137,20 +137,21 @@ export function normalizeProfile(raw: Record<string, unknown>): Profile {
 }
 
 /**
- * Saves a full profile (not a patch) into the workspace's Company summary: the title, Website
- * line and the profile's sections are replaced, the rest of the document is kept. `author` is the summary author.
+ * Saves a full profile into the workspace's Company summary. Only the parts that changed are rewritten and an empty
+ * value keeps what's there (profileToMarkdown); the rest of the document is kept. `author` is the summary author.
  */
 export async function saveProfile(sql: Sql, ws: string, input: ProfileInput, author: string): Promise<Profile> {
   const profile = normalizeProfile(input as Record<string, unknown>);
   const current = await getCompanySummary(sql, ws);
   // Saving the structured view unchanged keeps the document as it is: rendering it again would drop anything written by
   // hand inside a section, and there's no history to get it back from.
-  if (current.markdown) {
-    const { updated_at: _a, ...before } = normalizeProfile(markdownToProfile(current.markdown, current.updated_at) as unknown as Record<string, unknown>) as Profile & { updated_at?: unknown };
+  const prev = current.markdown ? (normalizeProfile(markdownToProfile(current.markdown, current.updated_at) as unknown as Record<string, unknown>) as Profile) : undefined;
+  if (prev && current.markdown) {
+    const { updated_at: _a, ...before } = prev as Profile & { updated_at?: unknown };
     const { updated_at: _b, ...after } = profile as Profile & { updated_at?: unknown };
     if (JSON.stringify(before) === JSON.stringify(after)) return markdownToProfile(current.markdown, current.updated_at);
   }
-  const saved = await writeCompanySummary(sql, ws, { markdown: profileToMarkdown(profile, current.markdown), author });
+  const saved = await writeCompanySummary(sql, ws, { markdown: profileToMarkdown(profile, current.markdown, prev), author });
   return markdownToProfile(saved.markdown ?? "", saved.updated_at);
 }
 

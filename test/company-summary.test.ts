@@ -9,6 +9,7 @@ import {
   SUMMARY_HEADINGS,
   SUMMARY_TEMPLATE,
   summaryForMessage,
+  updateCompanySummary,
 } from "../src/services/company-summary.ts";
 import { hostOf, registrableDomain } from "../src/services/domains.ts";
 import { normalizeProfile } from "../src/services/profile.ts";
@@ -116,6 +117,30 @@ describe("the /api/profile alias", () => {
     const fresh = profileToMarkdown(profile, null);
     for (const h of SUMMARY_HEADINGS) expect(fresh).toContain(`## ${h}`);
     expect(markdownToProfile(fresh, null)).toEqual({ ...profile, updated_at: null });
+  });
+
+  test("a save with the current profile rewrites only what changed and never blanks a section", () => {
+    const doc = profileToMarkdown(
+      normalizeProfile({ company: "Acme", website: "https://acme.de", sells: "Dispatch software", icp_description: "3PLs", signals: [{ name: "Hiring", description: "Job posts" }] }),
+      null,
+    );
+    const edited = replaceSection(doc, "What we sell", "Dispatch software.\n\nWritten by hand: we also do returns.");
+    const prev = normalizeProfile(markdownToProfile(edited, null) as unknown as Record<string, unknown>);
+
+    const changedBuyer = profileToMarkdown({ ...prev, icp_description: "Freight brokers" }, edited, prev);
+    expect(sectionBody(changedBuyer, "Who buys")).toContain("Freight brokers");
+    expect(sectionBody(changedBuyer, "What we sell")).toContain("Written by hand");
+
+    const blanks = profileToMarkdown(normalizeProfile({}), edited, prev);
+    expect(blanks).toBe(cleanMarkdown(edited));
+  });
+
+  test("updating the summary refuses an empty document or section", async () => {
+    const sql = (() => {
+      throw new Error("must not reach the database");
+    }) as never;
+    await expect(updateCompanySummary(sql, "ws", { markdown: "  \n", author: "user:x" })).rejects.toMatchObject({ code: "empty_summary" });
+    await expect(updateCompanySummary(sql, "ws", { markdown: "", section: "Avoid", author: "agent:x" })).rejects.toMatchObject({ code: "empty_summary" });
   });
 });
 
