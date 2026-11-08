@@ -60,7 +60,8 @@ testing against real providers without touching production. Its secrets live in 
 point `DATABASE_URL` at a Neon dev branch, use a Stripe test key and a separate `MCP_TOKEN`.
 
 1. `bun scripts/migrate.ts --env staging` (reads `DATABASE_URL` from `.dev.vars.staging`).
-2. `bun run deploy:staging`, then `bun run secrets:staging`.
+2. `VITE_CLERK_PUBLISHABLE_KEY=<key> bun run deploy:staging`, then `bun run secrets:staging`. The key goes into the web
+   build; without it, every page that needs sign-in shows "Sign-in is not configured".
 3. `bun run setup --env staging --write`: its own AgentMail webhook (on the same inbox), Naive webhook, vault and
    agent ("Crusonia Research (staging)", so setup never repoints the production agent), written to
    `.dev.vars.staging`. `bun run setup --env staging --stripe` writes `.dev.vars.staging.stripe.test`. Upload both

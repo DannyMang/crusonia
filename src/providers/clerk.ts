@@ -15,6 +15,7 @@ type RawUser = {
   last_name?: string | null;
   username?: string | null;
   image_url?: string | null;
+  has_image?: boolean;
 };
 
 export type ClerkProfile = {
@@ -22,6 +23,7 @@ export type ClerkProfile = {
   /** The primary address, verified or not: for display only. */
   email?: string;
   name?: string;
+  /** A photo the person chose. Clerk's generated placeholder doesn't count: the app shows initials instead. */
   image_url?: string;
   /** Lowercased. Only these prove the user owns an address. */
   verified_emails: string[];
@@ -35,7 +37,7 @@ function toProfile(u: RawUser): ClerkProfile {
     id: u.id,
     ...(email ? { email } : {}),
     ...(name ? { name } : {}),
-    ...(u.image_url ? { image_url: u.image_url } : {}),
+    ...(u.image_url && u.has_image ? { image_url: u.image_url } : {}),
     verified_emails: emails.filter((e) => e.verification?.status === "verified").map((e) => e.email_address.trim().toLowerCase()),
   };
 }
