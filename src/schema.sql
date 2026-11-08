@@ -25,6 +25,18 @@ create table if not exists leads (
   updated_at     timestamptz not null default now()
 );
 
+-- Leads found by agents (MCP `add_leads`) have no consent and often no email yet. They are deduped by
+-- email when there is one, otherwise by company domain + lowercased name (empty name = the company itself).
+-- Emails are stored lowercased. These statements are safe to re-run.
+alter table leads alter column email drop not null;
+alter table leads add column if not exists domain       text;
+alter table leads add column if not exists title        text;
+alter table leads add column if not exists linkedin_url text;
+alter table leads add column if not exists source_url   text;
+create unique index if not exists leads_no_email_uq
+  on leads (domain, (coalesce(lower(name), ''))) where email is null;
+create index if not exists leads_stage_idx on leads (stage, updated_at desc);
+
 create table if not exists evidence (
   id         bigserial primary key,
   lead_id    text not null references leads(id) on delete cascade,
@@ -32,6 +44,7 @@ create table if not exists evidence (
   source_url text not null,
   created_at timestamptz not null default now()
 );
+create index if not exists evidence_lead_idx on evidence (lead_id, id);
 
 create table if not exists lookalikes (
   id         bigserial primary key,
