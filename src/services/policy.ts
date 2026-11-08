@@ -8,7 +8,30 @@
 // changes the account reaches the owner as an approval. Our own search_web / read_website wrap those Actors with page
 // limits and a maxTotalChargeUsd cap, and are metered into credits.
 
-export const DEFAULT_AUTO_CONFIRM_TOOLS = "crusonia.*,apify.apify--rag-web-browser,apify.get-*,web_search,web_fetch";
+// Crusonia tools are listed one by one instead of `crusonia.*`: the list_* tools (all leads, tasks and approvals) and
+// web_fetch are left out, so text on a scraped page can't make the agent read the whole pipeline and fetch it out to a
+// URL without the owner seeing an approval first.
+export const DEFAULT_AUTO_CONFIRM_TOOLS = [
+  "crusonia.get_status",
+  "crusonia.get_company_summary",
+  "crusonia.update_company_summary",
+  "crusonia.get_profile",
+  "crusonia.save_profile",
+  "crusonia.get_workflow",
+  "crusonia.get_lead",
+  "crusonia.read_website",
+  "crusonia.search_web",
+  "crusonia.add_leads",
+  "crusonia.save_research",
+  "crusonia.save_evidence",
+  "crusonia.score_lead",
+  "crusonia.flag_for_review",
+  "crusonia.add_note",
+  "crusonia.create_draft",
+  "apify.apify--rag-web-browser",
+  "apify.get-*",
+  "web_search",
+].join(",");
 
 /** Unset or empty means the default list; `none` means ask the owner for every tool. */
 export function parseToolAllowlist(raw: string | undefined): string[] {

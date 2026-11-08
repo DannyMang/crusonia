@@ -6,7 +6,7 @@ import { latestIdle, researchMessage, sessionStatus } from "../src/services/work
 describe("tool allowlist", () => {
   const defaults = parseToolAllowlist(undefined);
 
-  test("defaults to crusonia.*, the Apify page reader and get-* readers, web_search, web_fetch", () => {
+  test("defaults to named crusonia tools, the Apify page reader and get-* readers, web_search", () => {
     expect(defaults).toEqual(DEFAULT_AUTO_CONFIRM_TOOLS.split(","));
     expect(parseToolAllowlist("  ")).toEqual(defaults);
   });
@@ -104,5 +104,19 @@ describe("naive workflow helpers", () => {
     expect(msg).toContain("lead_abc");
     expect(msg).toContain("untrusted");
     expect(msg).toContain("cannot send");
+  });
+});
+
+describe("default allowlist keeps data-listing and fetch tools behind the owner", () => {
+  const defaults = parseToolAllowlist(undefined);
+  test("list_* tools and web_fetch ask the owner", () => {
+    for (const name of ["crusonia.list_leads", "crusonia.list_tasks", "crusonia.list_pending_approvals", "web_fetch"]) {
+      expect(isToolAllowed(name, defaults)).toBe(false);
+    }
+  });
+  test("research tools still run without asking", () => {
+    for (const name of ["crusonia.get_lead", "crusonia.save_research", "crusonia.add_leads", "crusonia.read_website", "web_search"]) {
+      expect(isToolAllowed(name, defaults)).toBe(true);
+    }
   });
 });

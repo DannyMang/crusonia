@@ -254,7 +254,7 @@ suite("database integration (mocked providers)", () => {
           ? ok({
               data: [
                 { seq: 1, type: "session.running", data: {} },
-                { seq: 2, type: "session.idle", data: { stop_reason: "awaiting_approval", pending_actions: [{ tool_call_id: "w1", name: "web_fetch" }, { tool_call_id: "x1", name: "shell.exec" }] } },
+                { seq: 2, type: "session.idle", data: { stop_reason: "awaiting_approval", pending_actions: [{ tool_call_id: "w1", name: "web_search" }, { tool_call_id: "x1", name: "shell.exec" }] } },
               ],
               has_more: false,
               next_cursor: null,
@@ -265,7 +265,7 @@ suite("database integration (mocked providers)", () => {
     ]);
     expect(await reconcileSessions(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
     const [s] = await sql`select status, last_seq from naive_sessions where id = ${sessionId}`;
-    expect(s).toEqual({ status: "running", last_seq: 2 }); // web_fetch auto-allowed, so it resumed
+    expect(s).toEqual({ status: "running", last_seq: 2 }); // web_search auto-allowed, so it resumed
     const [approval] = await sql`select code from approvals where naive_session_id = ${sessionId} and tool_call_id = 'x1'`;
     expect(approval).toBeDefined();
 

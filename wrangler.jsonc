@@ -27,7 +27,7 @@
   },
   // Version URLs (and aliased ones like app-crusonia.<subdomain>.workers.dev from
   // `bun run deploy:preview`) stay on. They run with production's secrets and database.
-  "preview_urls": true,
+  "preview_urls": false,
   "vars": {
     // Public base URL of this Worker. Webhooks and the MCP endpoint are registered under it.
     "PUBLIC_URL": "https://crusonia.veri-web.workers.dev"
