@@ -277,7 +277,8 @@ suite("database integration (mocked providers)", () => {
   test("research starts one Naive session per lead and skips leads with an open session", async () => {
     const lead = await newLead("research");
     // A workspace other than the owner's runs on its own copy of the template agent (src/services/naive-agents.ts).
-    await sql`update workspaces set naive_agent_id = 'agt_ws_copy', naive_credential_id = 'vcr_x', naive_synced_at = now() where id = ${WS}`;
+    await sql`update workspaces set naive_agent_id = 'agt_ws_copy', naive_credential_id = 'vcr_x', naive_synced_at = now(),
+                naive_workflow_version = 'research@3, agent v7' where id = ${WS}`;
     const nv = provider([(c) => (c.url.endsWith("/v1/sessions") ? ok({ id: `ses_it_${run}_r`, status: "queued" }) : undefined)]);
     const first = await startResearch(sql, env, WS, { lead_ids: [lead.id, "lead_missing"] }, "test", nv.fn);
     expect(first.failed).toEqual([]);
@@ -286,7 +287,11 @@ suite("database integration (mocked providers)", () => {
     expect(nv.calls[0]!.body).toMatchObject({ agent_id: "agt_ws_copy", metadata: { lead_id: lead.id, purpose: "research", workspace_id: WS } });
     expect(nv.calls[0]!.body.message).toContain("There is no Company summary yet");
     expect((await sql`select stage from leads where id = ${lead.id}`)[0]!.stage).toBe("researching");
-    expect((await sql`select workspace_id, billing_owner_id from naive_sessions where id = ${`ses_it_${run}_r`}`)[0]).toEqual({ workspace_id: WS, billing_owner_id: WS });
+    expect((await sql`select workspace_id, billing_owner_id, workflow_version from naive_sessions where id = ${`ses_it_${run}_r`}`)[0]).toEqual({
+      workspace_id: WS,
+      billing_owner_id: WS,
+      workflow_version: "research@3, agent v7",
+    });
     const second = await startResearch(sql, env, WS, { lead_ids: [lead.id] }, "test", nv.fn);
     expect(second.skipped).toEqual([{ lead_id: lead.id, reason: "session_open" }]);
     expect(nv.calls).toHaveLength(1);

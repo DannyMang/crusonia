@@ -86,7 +86,14 @@ type Row = {
  * company, website and LinkedIn values replace older ones. New leads get stage
  * `no_consent`: Crusonia never emails them (sends require recorded consent).
  */
-export async function addLeads(sql: Sql, ws: string, inputs: LeadInput[]): Promise<{ results: AddLeadResult[]; counts: Record<string, number> }> {
+/** `cohort`: the batch new leads are recorded under ('run:<session id>' for an agent run); existing leads keep theirs. */
+export async function addLeads(
+  sql: Sql,
+  ws: string,
+  inputs: LeadInput[],
+  opts: { cohort?: string | null } = {},
+): Promise<{ results: AddLeadResult[]; counts: Record<string, number> }> {
+  const cohort = opts.cohort ?? "agent";
   if (inputs.length > MAX_LEADS_PER_CALL) {
     throw new ServiceError("invalid", `Send at most ${MAX_LEADS_PER_CALL} leads per call (got ${inputs.length}).`);
   }
@@ -171,8 +178,8 @@ export async function addLeads(sql: Sql, ws: string, inputs: LeadInput[]): Promi
           linkedin_url text, source text, source_url text, variant text)
       ),
       up as (
-        insert into leads as l (id, workspace_id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage)
-        select id, ${ws}, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent' from input
+        insert into leads as l (id, workspace_id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage, cohort)
+        select id, ${ws}, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent', ${cohort} from input
         on conflict (workspace_id, email) do update set
           name = coalesce(l.name, excluded.name),
           title = coalesce(excluded.title, l.title),
@@ -200,8 +207,8 @@ export async function addLeads(sql: Sql, ws: string, inputs: LeadInput[]): Promi
           linkedin_url text, source text, source_url text, variant text)
       ),
       up as (
-        insert into leads as l (id, workspace_id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage)
-        select id, ${ws}, null, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent' from input
+        insert into leads as l (id, workspace_id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage, cohort)
+        select id, ${ws}, null, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent', ${cohort} from input
         on conflict (workspace_id, domain, (coalesce(lower(name), ''))) where email is null do update set
           title = coalesce(excluded.title, l.title),
           company = coalesce(excluded.company, l.company),

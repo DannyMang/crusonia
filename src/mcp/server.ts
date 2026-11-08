@@ -60,22 +60,33 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
   }
 }
 
+type RunRef = { id: string; purpose: string; workflow_version: string | null };
+
 /**
- * Who wrote a Company summary version from MCP: the Naive session named by `run_id` (its first message carries
- * it; 'onboarding' for an onboarding session), else the only active session when the caller is a Naive agent's
- * credential, else the key ('agent:api_key:<id>') or 'agent:mcp_token'.
+ * The Naive run (session) behind an MCP call: the one named by `run_id` (every first message carries it), else the
+ * only active session in the workspace when the caller is a Naive agent's credential (MCP_TOKEN or an agent key).
  */
-export async function agentAuthor(sql: Sql, ws: string, bearer: BearerIdentity | undefined, runId?: string | null): Promise<string> {
-  const author = (s: { id: string; purpose: string }) => (s.purpose === "onboarding" ? "onboarding" : `agent:${s.id}`);
+export async function resolveRun(sql: Sql, ws: string, bearer: BearerIdentity | undefined, runId?: string | null): Promise<RunRef | null> {
   if (runId) {
-    const [s] = await sql`select id, purpose from naive_sessions where workspace_id = ${ws} and input->>'run_id' = ${runId} limit 1`;
-    if (s) return author(s as { id: string; purpose: string });
+    const [s] = await sql`select id, purpose, workflow_version from naive_sessions where workspace_id = ${ws} and input->>'run_id' = ${runId} limit 1`;
+    if (s) return s as RunRef;
   }
   if (!bearer || bearer.kind === "owner_token" || bearer.agent) {
     const active = await sql`
-      select id, purpose from naive_sessions where workspace_id = ${ws} and status in ('running', 'idle') order by created_at desc limit 2`;
-    if (active.length === 1) return author(active[0] as { id: string; purpose: string });
+      select id, purpose, workflow_version from naive_sessions where workspace_id = ${ws} and status in ('running', 'idle')
+      order by created_at desc limit 2`;
+    if (active.length === 1) return active[0] as RunRef;
   }
+  return null;
+}
+
+/**
+ * Who wrote a Company summary version from MCP: the run's session ('onboarding' for an onboarding run), else the key
+ * ('agent:api_key:<id>') or 'agent:mcp_token'.
+ */
+export async function agentAuthor(sql: Sql, ws: string, bearer: BearerIdentity | undefined, runId?: string | null): Promise<string> {
+  const run = await resolveRun(sql, ws, bearer, runId);
+  if (run) return run.purpose === "onboarding" ? "onboarding" : `agent:${run.id}`;
   return bearer?.kind === "api_key" ? `agent:api_key:${bearer.keyId}` : "agent:mcp_token";
 }
 
@@ -208,10 +219,18 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
       description: `Adds or updates people/companies you found (up to ${MAX_LEADS_PER_CALL} per call). Each lead needs a source and source_url, plus an email or a company domain/website. Deduped by email, otherwise by company domain + name, so re-adding is safe and fills in missing fields. New leads get stage 'no_consent': they are stored for research and scoring but are never emailed. Returns each lead's id and whether it was added, updated or skipped (with the reason).`,
       inputSchema: z.object({
         leads: z.array(leadInputSchema).min(1).max(MAX_LEADS_PER_CALL).describe("Leads to add or update."),
+        run_id: runIdArg,
       }),
       annotations: { ...WRITE, idempotentHint: true },
     },
-    (args) => run(() => addLeads(db(), ws, args.leads)),
+    (args) =>
+      run(async () => {
+        const sql = db();
+        // New leads are recorded under the run that found them (their cohort).
+        const found = await resolveRun(sql, ws, ctx.bearer, args.run_id);
+        const cohort = found ? `run:${found.id}` : ctx.bearer?.kind === "api_key" ? `mcp:${ctx.bearer.keyId}` : "mcp";
+        return addLeads(sql, ws, args.leads, { cohort });
+      }),
   );
 
   server.registerTool(
@@ -268,10 +287,16 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
       title: "Create an email draft",
       description:
         `Saves an email draft for an opted-in lead (has_consent: true) and opens a pending send approval with a short code that expires in ${describeMinutes(sendTtlMinutes)}. Drafts are immutable: calling again creates a new version and supersedes the older open draft and its approval. This does NOT send anything; a human must approve first. Fails for leads without consent, without an email, or who unsubscribed.`,
-      inputSchema: draftInputSchema,
+      inputSchema: draftInputSchema.extend({ run_id: runIdArg }),
       annotations: WRITE,
     },
-    (args) => run(() => createDraft(db(), ws, args, { ttlMinutes: sendTtlMinutes })),
+    ({ run_id, ...args }) =>
+      run(async () => {
+        const sql = db();
+        // A draft written in a run records that run and its workflow version.
+        const found = await resolveRun(sql, ws, ctx.bearer, run_id);
+        return createDraft(sql, ws, args, { ttlMinutes: sendTtlMinutes, sessionId: found?.id ?? null, workflowVersion: found?.workflow_version ?? null });
+      }),
   );
 
   server.registerTool(

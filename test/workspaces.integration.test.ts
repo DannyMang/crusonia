@@ -16,7 +16,7 @@ import { createDraft } from "../src/services/drafts.ts";
 import { handleAgentMailEvent } from "../src/services/inbound.ts";
 import { addLeads } from "../src/services/leads.ts";
 import { paidStartAllowance } from "../src/services/limits.ts";
-import { naiveAgentFor, workspaceMcpUrl } from "../src/services/naive-agents.ts";
+import { naiveAgentFor, resetTemplateVersionCache, workspaceMcpUrl } from "../src/services/naive-agents.ts";
 import { addSuppression } from "../src/services/settings.ts";
 import { resetWorkspaceCache } from "../src/services/workspaces.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
@@ -403,6 +403,41 @@ suite("workspaces (database, faked Naive)", () => {
     });
   });
 
+  // ---------- variants, cohorts and workflow versions ----------
+
+  test("each lead keeps a deterministic variant and the cohort that brought it in; drafts and runs record the workflow version", async () => {
+    const ws = await createTestWorkspace(sql, `cohort_${run}`);
+    created.push(ws);
+    const key = await testKey(sql, ws, "agent");
+    // A CSV import is one cohort.
+    const csv = await call(key, "POST", "/api/leads/import", { csv: `email,name\nc1-${run}@it.example.com,One\nc2-${run}@it.example.com,Two\n` });
+    expect(csv.body.cohort).toMatch(/^import:imp_/);
+    const imported = await sql`select cohort, variant from leads where workspace_id = ${ws} and email like ${`c_-${run}@it.example.com`}`;
+    expect(new Set(imported.map((r) => r.cohort))).toEqual(new Set([csv.body.cohort]));
+    // Leads an agent run finds are that run's cohort; the run records its workflow version.
+    await sql`insert into naive_sessions (id, workspace_id, purpose, status, input, workflow_version)
+              values (${`ses_ws_${run}_find`}, ${ws}, 'find_leads', 'done', ${JSON.stringify({ run_id: `run_${run}_find` })}::jsonb, 'research@3, agent v7')`;
+    const found = (await tool(key, "add_leads", { run_id: `run_${run}_find`, leads: [{ email: `c3-${run}@it.example.com`, source: "it", source_url: "https://example.com/x" }] })).data;
+    const leadId = found.results[0].id as string;
+    expect((await sql`select cohort from leads where id = ${leadId}`)[0]!.cohort).toBe(`run:ses_ws_${run}_find`);
+    // Re-adding it later (another batch) changes neither its cohort nor its variant; the variant is the same in any workspace.
+    const before = (await sql`select variant from leads where id = ${leadId}`)[0]!.variant;
+    await tool(key, "add_leads", { leads: [{ email: `c3-${run}@it.example.com`, title: "CEO", source: "it", source_url: "https://example.com/y" }] });
+    expect((await sql`select cohort, variant, title from leads where id = ${leadId}`)[0]).toEqual({ cohort: `run:ses_ws_${run}_find`, variant: before, title: "CEO" });
+    await tool(keyA, "add_leads", { leads: [{ email: `c3-${run}@it.example.com`, source: "it", source_url: "https://example.com/z" }] });
+    expect((await sql`select variant from leads where workspace_id = ${A} and email = ${`c3-${run}@it.example.com`}`)[0]!.variant).toBe(before);
+    // A draft written in a run records the run and its workflow version; one written by a person records none.
+    await call(key, "PATCH", `/api/leads/${leadId}`, { consent: { text: "opted in" } });
+    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input, workflow_version)
+              values (${`ses_ws_${run}_res`}, ${ws}, ${leadId}, 'research', 'running', ${JSON.stringify({ run_id: `run_${run}_res` })}::jsonb, 'research@3, agent v8')`;
+    const draft = (await tool(key, "create_draft", { run_id: `run_${run}_res`, lead_id: leadId, subject: "Hi", body: "Body" })).data.draft;
+    expect(draft).toMatchObject({ session_id: `ses_ws_${run}_res`, workflow_version: "research@3, agent v8", variant: before });
+    const manual = (await call(key, "POST", `/api/leads/${leadId}/drafts`, { subject: "Hi 2", body: "Body" })).body.draft;
+    expect(manual).toMatchObject({ session_id: null, workflow_version: null });
+    const runs = (await call(key, "GET", "/api/workflows?runs=10", undefined, env({ NAIVE_API_KEY: undefined }))).body.data;
+    expect(runs.flatMap((w: any) => w.runs).find((r: any) => r.id === `ses_ws_${run}_find`)).toMatchObject({ workflow_version: "research@3, agent v7" });
+  });
+
   // ---------- the Company summary ----------
 
   describe("Company summary", () => {
@@ -642,6 +677,7 @@ suite("workspaces (database, faked Naive)", () => {
     const e = env();
     const first = await naiveAgentFor(sql, e, ws, fetchFn);
     expect(first.agentId).toBe(`agt_ws_${run}`);
+    expect(first.workflowVersion).toBe("playbook@3, agent v7");
     const create = calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/agents"))!;
     const wsUrl = workspaceMcpUrl(e, ws);
     expect(wsUrl).toBe(`https://example.test/mcp?ws=${ws}`);
@@ -684,7 +720,8 @@ suite("workspaces (database, faked Naive)", () => {
     expect((await sql`select naive_template_version from workspaces where id = ${ws}`)[0]!.naive_template_version).toBe(8);
     expect(calls.filter((c) => c.url.endsWith("/credentials"))).toHaveLength(1);
 
-    // The owner workspace runs on the template agent itself.
-    expect((await naiveAgentFor(sql, e, "ws_owner", fetchFn)).agentId).toBe("agt_template");
+    // The owner workspace runs on the template agent itself (its version read from Naive, cached briefly).
+    resetTemplateVersionCache();
+    expect(await naiveAgentFor(sql, e, "ws_owner", fetchFn)).toMatchObject({ agentId: "agt_template", workflowVersion: "playbook@3, agent v8" });
   });
 });

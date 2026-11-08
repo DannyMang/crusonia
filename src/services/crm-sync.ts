@@ -515,7 +515,12 @@ export async function runImportStep(sql: Sql, client: HubSpotClient, item: Queue
     after = page.paging?.next?.after;
   }
 
-  const results = await applyImportCandidates(sql, OWNER_WORKSPACE_ID, rows, { source: IMPORT_SOURCE, actor: p.actor, via: IMPORT_SOURCE });
+  const results = await applyImportCandidates(sql, OWNER_WORKSPACE_ID, rows, {
+    source: IMPORT_SOURCE,
+    actor: p.actor,
+    via: IMPORT_SOURCE,
+    cohort: `hubspot_import:${p.started_at}`,
+  });
   const s = summarizeImport(results);
   p.created += s.created;
   p.updated += s.updated;

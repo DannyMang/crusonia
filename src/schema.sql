@@ -581,6 +581,19 @@ create unique index if not exists leads_ws_no_email_uq
 create index if not exists leads_ws_created_idx on leads (workspace_id, created_at desc, id desc);
 create index if not exists leads_ws_stage_idx on leads (workspace_id, stage, updated_at desc);
 
+-- What the demo's run history reads (per workspace, like everything above): each lead keeps its A/B `variant`
+-- (deterministic from its email or domain + name, never reassigned) and its `cohort`, the batch that first brought it
+-- in ('import:<id>' for a CSV import, 'run:<session id>' for an agent run, 'hubspot_import:<time>', 'manual'); set
+-- once on insert, never changed. Leads from before cohorts get '<source>:<day added>'. Runs record the workflow
+-- version they ran (playbook and agent version), and a draft written in a run records that run and its version.
+alter table leads add column if not exists cohort text;
+update leads set cohort = source || ':' || to_char(created_at at time zone 'UTC', 'YYYY-MM-DD') where cohort is null;
+create index if not exists leads_ws_cohort_idx on leads (workspace_id, cohort);
+alter table naive_sessions add column if not exists workflow_version text;
+alter table drafts add column if not exists workflow_version text;
+alter table drafts add column if not exists session_id text;
+alter table workspaces add column if not exists naive_workflow_version text;
+
 -- The do-not-contact list is per workspace.
 alter table suppressions drop constraint if exists suppressions_pkey;
 create unique index if not exists suppressions_ws_email_uq on suppressions (workspace_id, email);

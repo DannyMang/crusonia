@@ -23,6 +23,19 @@ import { isOwnerWorkspace } from "./workspaces.ts";
 export const CRUSONIA_SERVER = "crusonia";
 const SYNC_EVERY_MS = 10 * 60_000;
 
+/** The workflow version a run records: the playbook and the agent version, e.g. "research@3, agent v12". */
+export function workflowVersionOf(agent: NaiveAgent): string | null {
+  const playbook = agent.metadata?.playbook ?? "playbook";
+  const pv = agent.metadata?.playbook_version;
+  if (!pv && agent.current_version === undefined) return null;
+  return `${playbook}@${pv ?? "?"}${agent.current_version !== undefined ? `, agent v${agent.current_version}` : ""}`;
+}
+
+// The template agent's version, cached per isolate (a free read; a failure only leaves the version unknown).
+const TEMPLATE_TTL_MS = 60_000;
+let templateVersion: { agentId: string; value: string | null; at: number } | undefined;
+export const resetTemplateVersionCache = () => (templateVersion = undefined);
+
 export const workspaceMcpUrl = (env: Env, ws: string) => `${env.PUBLIC_URL.replace(/\/+$/, "")}/mcp?ws=${encodeURIComponent(ws)}`;
 
 function naiveFailure(err: unknown): never {
@@ -65,6 +78,7 @@ export function workspaceAgentConfig(template: NaiveAgent, url: string, ws: stri
 }
 
 type AgentRow = {
+  naive_workflow_version: string | null;
   naive_agent_id: string | null;
   naive_credential_id: string | null;
   naive_api_key_id: string | null;
@@ -72,34 +86,49 @@ type AgentRow = {
   naive_synced_at: Date | string | null;
 };
 
+export type WorkspaceAgent = { client: NaiveClient; agentId: string; workflowVersion: string | null };
+
 /**
- * The Naive agent that runs this workspace's sessions (created or re-synced as needed), with the client.
- * The owner workspace runs on the template agent itself.
+ * The Naive agent that runs this workspace's sessions (created or re-synced as needed), with the client and the
+ * workflow version its runs record. The owner workspace runs on the template agent itself.
  */
-export async function naiveAgentFor(sql: Sql, env: Env, ws: string, fetchFn?: FetchFn): Promise<{ client: NaiveClient; agentId: string }> {
+export async function naiveAgentFor(sql: Sql, env: Env, ws: string, fetchFn?: FetchFn): Promise<WorkspaceAgent> {
   const template = naiveTemplate(env, fetchFn);
-  if (isOwnerWorkspace(ws)) return template;
-  return { client: template.client, agentId: await ensureWorkspaceAgent(sql, env, ws, template) };
+  if (isOwnerWorkspace(ws)) {
+    if (!templateVersion || templateVersion.agentId !== template.agentId || Date.now() - templateVersion.at > TEMPLATE_TTL_MS) {
+      const value = await template.client.getAgent(template.agentId).then(workflowVersionOf, () => null);
+      templateVersion = { agentId: template.agentId, value, at: Date.now() };
+    }
+    return { ...template, workflowVersion: templateVersion.value };
+  }
+  return { client: template.client, ...(await ensureWorkspaceAgent(sql, env, ws, template)) };
 }
 
-async function ensureWorkspaceAgent(sql: Sql, env: Env, ws: string, template: { client: NaiveClient; agentId: string }): Promise<string> {
+async function ensureWorkspaceAgent(
+  sql: Sql,
+  env: Env,
+  ws: string,
+  template: { client: NaiveClient; agentId: string },
+): Promise<{ agentId: string; workflowVersion: string | null }> {
   const { client } = template;
   const [row] = (await sql`
-    select naive_agent_id, naive_credential_id, naive_api_key_id, naive_template_version, naive_synced_at
+    select naive_agent_id, naive_credential_id, naive_api_key_id, naive_template_version, naive_synced_at, naive_workflow_version
     from workspaces where id = ${ws}`) as AgentRow[];
   if (!row) throw new ApiError(404, "not_found", "Workspace not found");
   const fresh = row.naive_synced_at && Date.now() - new Date(row.naive_synced_at).getTime() < SYNC_EVERY_MS;
-  if (row.naive_agent_id && row.naive_credential_id && fresh) return row.naive_agent_id;
+  if (row.naive_agent_id && row.naive_credential_id && fresh) return { agentId: row.naive_agent_id, workflowVersion: row.naive_workflow_version };
 
   const current = await client.getAgent(template.agentId).catch(naiveFailure);
+  const workflowVersion = workflowVersionOf(current);
   const url = workspaceMcpUrl(env, ws);
   if (row.naive_agent_id && row.naive_credential_id) {
     if (row.naive_template_version !== (current.current_version ?? null)) {
       // The template changed (playbook, tools, budget): apply it to the copy. A no-op patch mints no version.
       await client.updateAgent(row.naive_agent_id, workspaceAgentConfig(current, url, ws)).catch(naiveFailure);
     }
-    await sql`update workspaces set naive_template_version = ${current.current_version ?? null}, naive_synced_at = now() where id = ${ws}`;
-    return row.naive_agent_id;
+    await sql`update workspaces set naive_template_version = ${current.current_version ?? null}, naive_workflow_version = ${workflowVersion},
+                naive_synced_at = now() where id = ${ws}`;
+    return { agentId: row.naive_agent_id, workflowVersion };
   }
 
   // First run: claim provisioning so concurrent starts create one agent.
@@ -128,10 +157,11 @@ async function ensureWorkspaceAgent(sql: Sql, env: Env, ws: string, template: { 
       .catch(naiveFailure);
     await sql`
       update workspaces set naive_credential_id = ${credential.id}, naive_api_key_id = ${api_key.id}, naive_mcp_url = ${url},
-             naive_template_version = ${current.current_version ?? null}, naive_synced_at = now(), naive_provisioning_at = null
+             naive_template_version = ${current.current_version ?? null}, naive_workflow_version = ${workflowVersion},
+             naive_synced_at = now(), naive_provisioning_at = null
       where id = ${ws}`;
     await logEvent(sql, ws, null, "naive_agent_created", { agent_id: agentId, template_version: current.current_version ?? null });
-    return agentId;
+    return { agentId, workflowVersion };
   } catch (err) {
     await sql`update workspaces set naive_provisioning_at = null where id = ${ws}`.catch(() => {});
     throw err;

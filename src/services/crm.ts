@@ -122,9 +122,9 @@ export async function createLead(sql: Sql, ws: string, input: CreateLeadInput, a
   const domain = normalizeDomain(input.domain) ?? companyDomain({ website: input.website, email }) ?? null;
   const rows = await sql`
     with ins as (
-      insert into leads (id, workspace_id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
+      insert into leads (id, workspace_id, cohort, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
                          consent_text, consent_at, variant, stage)
-      values (${id}, ${ws}, ${email}, ${input.name ?? null}, ${input.title ?? null}, ${input.company ?? null}, ${domain},
+      values (${id}, ${ws}, 'manual', ${email}, ${input.name ?? null}, ${input.title ?? null}, ${input.company ?? null}, ${domain},
               ${input.website ?? null}, ${input.linkedin_url ?? null}, ${input.sells ?? null}, ${input.best_customers ?? null},
               ${input.source ?? "api"}, ${input.consent?.text ?? null}, ${consentAt}::timestamptz, ${await variantFor(email)},
               ${consentAt ? "new" : "no_consent"})
@@ -263,19 +263,23 @@ export async function importLeads(sql: Sql, ws: string, input: ImportInput, acto
   }
 
   const source = input.source ?? "csv_import";
+  const cohort = `import:${newId("imp")}`;
   const results = await applyImportCandidates(sql, ws, toCandidates(rows, map, new Date().toISOString()), {
     source,
     actor,
     via: "csv_import",
     dryRun: input.dry_run,
+    cohort,
   });
   const { skip_reasons, ...summary } = summarizeImport(results);
   if (!input.dry_run) {
     await sql`insert into events (workspace_id, lead_id, kind, data)
-              values (${ws}, null, 'leads_imported', ${JSON.stringify({ via: "csv_import", ...summary, source, actor })}::jsonb)`;
+              values (${ws}, null, 'leads_imported', ${JSON.stringify({ via: "csv_import", ...summary, source, cohort, actor })}::jsonb)`;
   }
   return {
     dry_run: Boolean(input.dry_run),
+    // The batch the created leads are recorded under (leads.cohort).
+    ...(input.dry_run ? {} : { cohort }),
     ...summary,
     skip_reasons,
     columns: Object.fromEntries(Object.entries(map).map(([field, idx]) => [field, rows[0]![idx!]])),
@@ -291,6 +295,8 @@ export type ApplyImportOptions = {
   /** events.data.via: 'csv_import', 'hubspot_import'. The CRM sync trigger ignores 'hubspot_import'. */
   via: string;
   dryRun?: boolean;
+  /** leads.cohort for created leads: the import batch ('import:<id>', 'hubspot_import:<time>'). */
+  cohort?: string;
 };
 
 /**
@@ -300,6 +306,7 @@ export type ApplyImportOptions = {
  */
 export async function applyImportCandidates(sql: Sql, ws: string, candidates: ImportCandidate[], opts: ApplyImportOptions): Promise<RowResult[]> {
   const { source, actor, via } = opts;
+  const cohort = opts.cohort ?? `import:${newId("imp")}`;
   const emails = [...new Set(candidates.flatMap((c) => (c.email ? [c.email] : [])))];
   const domains = [...new Set(candidates.flatMap((c) => (c.domain ? [c.domain] : [])))];
   const [existing, suppressedRows] = await sql.transaction(
@@ -342,9 +349,9 @@ export async function applyImportCandidates(sql: Sql, ws: string, candidates: Im
     const done = await sql`
       with r as (${createRecordset(sql, withEmail.slice(i, i + CHUNK))}),
       ins as (
-        insert into leads (id, workspace_id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
+        insert into leads (id, workspace_id, cohort, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
                            consent_text, consent_at, variant, stage)
-        select id, ${ws}, email, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
+        select id, ${ws}, ${cohort}, email, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
                consent_text, consent_at, variant, stage from r
         on conflict (workspace_id, email) do nothing
         returning id, email, consent_at
@@ -361,9 +368,9 @@ export async function applyImportCandidates(sql: Sql, ws: string, candidates: Im
     const done = await sql`
       with r as (${createRecordset(sql, withoutEmail.slice(i, i + CHUNK))}),
       ins as (
-        insert into leads (id, workspace_id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
+        insert into leads (id, workspace_id, cohort, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
                            variant, stage)
-        select id, ${ws}, null, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
+        select id, ${ws}, ${cohort}, null, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
                variant, 'no_consent' from r
         on conflict (workspace_id, domain, (coalesce(lower(name), ''))) where email is null do nothing
         returning id, domain, name

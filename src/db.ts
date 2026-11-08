@@ -39,6 +39,8 @@ export type Lead = {
   rationale: string | null;
   review_question: string | null;
   reply_label: string | null;
+  // The batch that first brought the lead in ('import:<id>', 'run:<session id>', 'hubspot_import:<time>', 'manual').
+  cohort?: string | null;
   // HubSpot contact id (a person lead) and company id; set by the HubSpot import and sync.
   hubspot_id: string | null;
   hubspot_company_id?: string | null;
@@ -62,6 +64,9 @@ export type Draft = {
   provider_message_id: string | null;
   provider_thread_id: string | null;
   error: string | null;
+  // The agent run that wrote it and that run's workflow version (null for drafts written by a person).
+  session_id?: string | null;
+  workflow_version?: string | null;
   created_at: Date;
 };
 

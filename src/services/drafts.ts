@@ -31,7 +31,7 @@ export async function createDraft(
   sql: Sql,
   ws: string,
   input: DraftInput,
-  opts: { ttlMinutes: number; via?: string; actor?: string },
+  opts: { ttlMinutes: number; via?: string; actor?: string; sessionId?: string | null; workflowVersion?: string | null },
 ): Promise<CreatedDraft> {
   const { ttlMinutes } = opts;
   const via = opts.via ?? "mcp";
@@ -72,8 +72,9 @@ export async function createDraft(
           returning code
         ),
         draft as (
-          insert into drafts (id, workspace_id, lead_id, version, variant, subject, body, status)
-          select ${newId("draft")}, lead.workspace_id, lead.id, next.version, lead.variant, ${input.subject}, ${input.body}, 'pending_approval'
+          insert into drafts (id, workspace_id, lead_id, version, variant, subject, body, status, session_id, workflow_version)
+          select ${newId("draft")}, lead.workspace_id, lead.id, next.version, lead.variant, ${input.subject}, ${input.body}, 'pending_approval',
+                 ${opts.sessionId ?? null}, ${opts.workflowVersion ?? null}
           from lead, next
           returning *
         ),

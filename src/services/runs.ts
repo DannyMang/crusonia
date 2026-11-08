@@ -51,6 +51,7 @@ function naiveFailure(err: unknown): never {
 export type SessionRow = {
   id: string;
   workspace_id: string;
+  workflow_version?: string | null;
   lead_id: string | null;
   purpose: string;
   status: string; // running | idle | done | error
@@ -89,6 +90,8 @@ export function toRun(row: SessionRow, paused: boolean) {
     last_event_at: iso(row.last_event_at) ?? iso(row.updated_at)!,
     leads_processed: row.purpose === "research" ? (row.lead_id ? 1 : 0) : row.leads_processed,
     cost_usd: microToUsd(row.consumed_micro_usd),
+    // The playbook and agent version the run used ("research@3, agent v12"); null when unknown.
+    workflow_version: row.workflow_version ?? null,
   };
 }
 export type Run = ReturnType<typeof toRun>;
@@ -131,7 +134,7 @@ export function buildWorkflow(agg: WorkflowAggregate, runs: SessionRow[], paused
 }
 export type WorkflowSummary = ReturnType<typeof buildWorkflow>;
 
-const SESSION_COLUMNS = (sql: Sql) => sql`id, workspace_id, lead_id, purpose, status, stop_reason, input, consumed_micro_usd, leads_processed,
+const SESSION_COLUMNS = (sql: Sql) => sql`id, workspace_id, workflow_version, lead_id, purpose, status, stop_reason, input, consumed_micro_usd, leads_processed,
   events_seq, events_synced_at, last_event_at, created_at, updated_at`;
 
 /** The workspace's workflows, newest activity first, each with its `recentRuns` most recent runs. */
@@ -499,7 +502,7 @@ export const MAX_FIND_LEADS = 50;
 // Every first message carries the run id (the agent passes it to update_company_summary, so an edit is attributed
 // to this session) and the current Company summary, as data.
 export function runIdLine(runId: string): string {
-  return `Crusonia run id: ${runId} (pass it as run_id when you call update_company_summary).`;
+  return `Crusonia run id: ${runId} (pass it as run_id when you call add_leads, create_draft or update_company_summary).`;
 }
 
 export function onboardingMessage(input: { url?: string; description?: string }, summary: SummaryView, runId: string): string {
@@ -556,8 +559,8 @@ async function startOwnerSession(
     .catch(naiveFailure);
   const data = { ...input.data, run_id: runId };
   await sql.transaction([
-    sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input, billing_owner_id)
-        values (${session.id}, ${ws}, null, ${input.purpose}, 'running', ${JSON.stringify(data)}::jsonb, ${ws})
+    sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input, billing_owner_id, workflow_version)
+        values (${session.id}, ${ws}, null, ${input.purpose}, 'running', ${JSON.stringify(data)}::jsonb, ${ws}, ${naive.workflowVersion})
         on conflict (id) do nothing`,
     sql`insert into events (workspace_id, lead_id, kind, data)
         values (${ws}, null, ${`${input.purpose}_started`}, ${JSON.stringify({ ...data, session_id: session.id, actor: input.actor })}::jsonb)`,
