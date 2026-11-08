@@ -1,11 +1,13 @@
-// The dashboard sidebar, identical on every screen (Paper: "Dashboard · Home" > Sidebar).
+// The dashboard sidebar, identical on every screen (Paper: "Dashboard · Home" > Sidebar). The workspace switcher
+// is gone (owner, Nov 8: no workspaces for now); the credits pill took its place.
 import { useEffect, useRef, useState, type ComponentType, type SVGProps } from "react";
 import { NavLink, useNavigate } from "react-router";
 import { useSession } from "../auth.tsx";
-import { cx, initials } from "../lib/format.ts";
-import { usePause, usePendingCount, useProfile, useSetPause } from "../queries.ts";
+import { cx, initials, num, usd } from "../lib/format.ts";
+import { useBilling, usePause, usePendingCount, useSetPause } from "../queries.ts";
 import {
   ApprovalsIcon,
+  ChevronRight,
   ChevronUpDown,
   ExperimentsIcon,
   HomeIcon,
@@ -124,11 +126,42 @@ function UserMenu() {
   );
 }
 
+/** The balance, always visible (Paper: "Settings · Billing" > Sidebar > Credits pill). Opens the billing page. */
+function CreditsPill() {
+  const billing = useBilling();
+  const b = billing.data;
+  return (
+    <NavLink
+      to="/app/settings/billing"
+      aria-label={b ? `${num(b.balance)} credits (${usd(b.balance_usd)}). Open billing` : "Credits. Open billing"}
+      title="Credit balance. Open billing"
+      className="flex h-8.5 shrink-0 items-center gap-2 rounded-full bg-pill pl-3 pr-2.5 transition-colors hover:bg-[#E9E6E1]"
+    >
+      <CreditIcon />
+      {b ? (
+        <span className={cx("whitespace-nowrap tabular-nums text-[13px]/4 font-semibold", b.balance < 0 ? "text-[#B42318]" : "text-ink")}>{num(b.balance)} credits</span>
+      ) : billing.isPending ? (
+        <span aria-hidden className="block h-3.5 w-20 rounded bg-[#200D0D0F] [animation:crusonia-pulse_1.6s_ease-in-out_infinite]" />
+      ) : (
+        <span className="text-[13px]/4 font-semibold text-ink">Credits</span>
+      )}
+      <span className="grow" />
+      {b ? <span className="tabular-nums text-xs/4 font-medium text-[#200D0D99]">{usd(b.balance_usd)}</span> : null}
+      <ChevronRight width={12} height={12} className="text-[rgb(32_13_13/40%)]" />
+    </NavLink>
+  );
+}
+
+const CreditIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden className="shrink-0">
+    <circle cx="7" cy="7" r="5.6" fill="none" stroke="#200D0D" strokeWidth="1.3" />
+    <path d="M7 4.2v5.6" fill="none" stroke="#200D0D" strokeWidth="1.3" strokeLinecap="round" />
+  </svg>
+);
+
 export function Sidebar() {
   const pending = usePendingCount();
-  const profile = useProfile();
   const navigate = useNavigate();
-  const company = profile.data?.company?.trim() || "Workspace";
 
   // ⌘K / Ctrl+K jumps to lead search.
   useEffect(() => {
@@ -150,14 +183,7 @@ export function Sidebar() {
       </NavLink>
 
       <div className="flex shrink-0 flex-col gap-1.5 px-2 pb-3">
-        <div className="flex h-8.5 shrink-0 items-center gap-2 rounded-lg border border-[#200D0D1A] bg-white pl-2 pr-2.5">
-          <span className="flex size-5 shrink-0 items-center justify-center rounded-[5px] bg-ink text-[11px]/3 font-semibold text-white">
-            {company.charAt(0).toUpperCase()}
-          </span>
-          <span className="min-w-0 grow truncate text-[13px]/4 font-medium text-ink">
-            {company} <span className="text-[#200D0D99]">· Crusonia</span>
-          </span>
-        </div>
+        <CreditsPill />
         <button
           type="button"
           onClick={() => navigate("/app/leads?focus=search")}

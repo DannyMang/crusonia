@@ -28,8 +28,10 @@ const pages = {
   Step2Reading: () => import("./pages/onboarding/Step2Reading.tsx"),
   Step3Customer: () => import("./pages/onboarding/Step3Customer.tsx"),
   Step4Leads: () => import("./pages/onboarding/Step4Leads.tsx"),
+  Pricing: () => import("./landing/Pricing.tsx"),
   Replies: () => import("./pages/Replies.tsx"),
   Settings: () => import("./pages/Settings.tsx"),
+  SettingsBilling: () => import("./pages/settings/Billing.tsx"),
   WorkflowRun: () => import("./pages/WorkflowRun.tsx"),
   Workflows: () => import("./pages/Workflows.tsx"),
 } satisfies Record<string, Loader>;
@@ -140,6 +142,8 @@ export function App() {
             <Routes>
               {/* Public landing page (web/src/landing/); it sends signed-in visitors to /app. */}
               <Route index element={<Landing />} />
+              {/* Public pricing (web/src/landing/Pricing.tsx); tiers come from src/billing/catalog.ts. */}
+              <Route path="pricing" element={screen(L.Pricing)} />
 
               <Route path="sign-in/*" element={<RedirectIfSignedIn>{screen(L.SignIn)}</RedirectIfSignedIn>} />
               <Route path="sign-up/*" element={<RedirectIfSignedIn fallback="/onboarding/1">{screen(L.SignUp)}</RedirectIfSignedIn>} />
@@ -168,6 +172,8 @@ export function App() {
                   <Route path="integrations" element={page(L.Integrations)} />
                   <Route path="connect" element={page(L.Connect)} />
                   <Route path="settings" element={page(L.Settings)} />
+                  {/* Stripe Checkout success/cancel and the portal return here (src/billing/constants.ts BILLING_APP_PATH). */}
+                  <Route path="settings/billing" element={page(L.SettingsBilling)} />
                   <Route path="*" element={page(L.NotFound)} />
                 </Route>
               </Route>

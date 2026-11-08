@@ -2,15 +2,16 @@
 // S1 hero (oil-painted field, the tree blossoms once, the painting fades to white) under a floating nav,
 // S2 infrastructure, S3 connect your agent, S4 closing CTA with a plant growing from the bottom edge.
 // Owner rules: Inter only, white sections after the hero, no lime highlight behind text, and no links to pages
-// that do not exist (no pricing, footer or legal links yet). Signed-in visitors go straight to /app.
+// that do not exist (no footer or legal links yet; Pricing is back now that /pricing exists). Signed-in visitors go
+// straight to /app.
 import { useEffect } from "react";
 import { Link, Navigate } from "react-router";
 import { devBypass, useSession } from "../auth.tsx";
-import { Logo } from "../components/icons.tsx";
 import { ConnectAgent } from "./ConnectAgent.tsx";
 import { Infrastructure } from "./Infrastructure.tsx";
 import { PlayOnceVideo } from "./PlayOnceVideo.tsx";
 import { SECTIONS, scrollOnClick, scrollToId } from "./sections.ts";
+import { SiteNav } from "./SiteNav.tsx";
 import { WebsiteForm } from "./WebsiteForm.tsx";
 
 const TITLE = "Crusonia · A go-to-market team that grows on its own";
@@ -47,7 +48,7 @@ export default function Landing() {
 
   return (
     <div className="min-h-screen bg-white text-ink [font-synthesis:none]">
-      <Nav />
+      <SiteNav page="landing" />
       <main>
         <Hero />
         <Infrastructure />
@@ -55,50 +56,6 @@ export default function Landing() {
         <ClosingCta />
       </main>
     </div>
-  );
-}
-
-const navLink = "text-base/5 font-medium text-ink transition-colors hover:text-[#200D0DB3]";
-
-function Nav() {
-  return (
-    <header className="fixed inset-x-3 top-3 z-50 sm:inset-x-6 sm:top-5">
-      <nav aria-label="Main" className="flex h-14 items-center justify-between rounded-2xl bg-white pr-2 pl-4 shadow-[0_10px_30px_#200D0D1A] sm:h-16 sm:pr-3 sm:pl-6">
-        <div className="flex items-center gap-11">
-          <a
-            href="#top"
-            aria-label="Crusonia, back to top"
-            className="flex items-center gap-2.5"
-            onClick={(e) => {
-              e.preventDefault();
-              window.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-            }}
-          >
-            <Logo size={34} className="size-7.5 sm:size-8.5" />
-            <span className="text-lg/6 font-semibold sm:text-xl/6">crusonia</span>
-          </a>
-          <div className="hidden items-center gap-7 md:flex">
-            <a href={`#${SECTIONS.howItWorks}`} onClick={scrollOnClick(SECTIONS.howItWorks)} className={navLink}>
-              How it works
-            </a>
-            <a href={`#${SECTIONS.connect}`} onClick={scrollOnClick(SECTIONS.connect)} className={navLink}>
-              Connect your agent
-            </a>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 sm:gap-2">
-          <Link
-            to="/sign-in"
-            className="flex h-10.5 items-center rounded-lg px-3 text-[15px]/5 font-semibold text-ink transition-colors hover:bg-[#200D0D08] sm:border sm:border-[#200D0D26] sm:px-5 sm:text-base/5"
-          >
-            Sign in
-          </Link>
-          <Link to="/sign-up" className="flex h-10.5 items-center rounded-lg bg-ink px-4 text-[15px]/5 font-bold text-white transition-colors hover:bg-[#3A2424] sm:px-5 sm:text-base/5">
-            Get started
-          </Link>
-        </div>
-      </nav>
-    </header>
   );
 }
 

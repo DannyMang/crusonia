@@ -1,5 +1,6 @@
 // All mock handlers, one file per area so each can evolve on its own.
 import { approvalHandlers } from "./approvals.ts";
+import { billingHandlers } from "./billing.ts";
 import { coreHandlers } from "./core.ts";
 import { experimentHandlers } from "./experiments.ts";
 import { keyHandlers } from "./keys.ts";
@@ -15,4 +16,5 @@ export const handlers = [
   ...experimentHandlers,
   ...keyHandlers,
   ...onboardingHandlers,
+  ...billingHandlers,
 ];

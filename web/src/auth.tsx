@@ -90,14 +90,15 @@ function maybeSignedIn(): boolean {
 }
 
 /**
- * Must sit inside the router (Clerk navigates with React Router). On the landing page ("/") a visitor without
+ * Must sit inside the router (Clerk navigates with React Router). On the landing and pricing pages a visitor without
  * Clerk's session cookie is simply signed out, and Clerk (its SDK and its scripts) is not loaded. Every other
  * page, or a visitor who may be signed in, loads it; once loaded it stays.
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const landing = pathname === "/";
+  // Public marketing pages: the landing and /pricing.
+  const landing = pathname === "/" || pathname === "/pricing";
   const [clerkNeeded, setClerkNeeded] = useState(() => !landing || maybeSignedIn());
   if (!clerkNeeded && !landing) setClerkNeeded(true);
 
