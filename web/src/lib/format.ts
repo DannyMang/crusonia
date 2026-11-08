@@ -69,6 +69,33 @@ export function creditsLabel(n: number | null | undefined): string {
   return `${v.toLocaleString("en-US")} ${v === 1 ? "credit" : "credits"}`;
 }
 
+/** What someone wrote in a reply, without the signature line and the quoted email under it. Untrusted: render as text. */
+export function replyBody(body: string | null | undefined): string {
+  const lines: string[] = [];
+  for (const line of (body ?? "").split(/\r?\n/)) {
+    const t = line.trim();
+    if (/^On .+wrote:$/.test(t) || /^-{2,}\s*Original Message/i.test(t) || /^--\s*(Sent via .*)?$/.test(t)) break;
+    if (t.startsWith(">")) continue;
+    lines.push(line);
+  }
+  return lines.join("\n").trim();
+}
+
+/** Agent text for a one-line log: no markdown marks or raw lead ids, and a tool name reads as words. */
+export function plainStep(text: string): string {
+  const clean = text
+    .replace(/\*\*|`/g, "")
+    .replace(/\s+(?:for|on)\s+lead_[0-9a-z]+/gi, "")
+    .replace(/\s*\(lead_[0-9a-z]+\)/gi, "")
+    .replace(/:?\s*\blead_[0-9a-z]+\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return clean.replace(/^(?:crusonia\.)?([a-z]+(?:_[a-z]+)+)/, (_, tool: string) => {
+    const words = tool.replace(/_/g, " ");
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  });
+}
+
 export function num(n: number | null | undefined): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
   return n.toLocaleString("en-US");

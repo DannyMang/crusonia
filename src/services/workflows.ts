@@ -410,6 +410,14 @@ export async function reconcileSessions(sql: Sql, env: Env, fetchFn?: FetchFn): 
         // Without pending_actions on the event, handleSessionIdle reads them from the session.
         await handleSessionIdle(sql, env, { sessionId: s.id, stopReason: data.stop_reason, pendingActions: data.pending_actions }, fetchFn);
         handled++;
+      } else if (!events.length) {
+        // Nothing new, but a session we think is running may be parked on a call nobody answered: its idle event is behind
+        // the cursor by now, so only asking the session itself shows that.
+        const remote = await client.getSession(s.id);
+        if (remote.pending_actions?.length) {
+          await handleSessionIdle(sql, env, { sessionId: s.id, stopReason: remote.stop_reason, pendingActions: remote.pending_actions }, fetchFn);
+          handled++;
+        }
       }
       await sql`update naive_sessions set last_seq = greatest(last_seq, ${after}),
                   updated_at = case when status = 'running' then now() else updated_at end

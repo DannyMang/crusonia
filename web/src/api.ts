@@ -327,7 +327,8 @@ export type ImportResult = {
 // ---------- approvals ----------
 
 export type ApprovalListItem = Approval & {
-  draft: { id: string; version: number; variant: string; subject: string; body: string; status: string } | null;
+  /** `scheduled_for`: a follow-up approving only schedules; it goes out then, unless the lead replies first. */
+  draft: { id: string; version: number; variant: string; subject: string; body: string; status: string; scheduled_for?: string | null } | null;
   lead: { id: string; email: string | null; name: string | null; company: string | null; stage: string; has_consent: boolean } | null;
 };
 
