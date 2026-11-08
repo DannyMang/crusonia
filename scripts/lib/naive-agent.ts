@@ -114,6 +114,8 @@ export function agentSettings(get: (key: string) => string | undefined): { model
 export function naiveAgentConfig(input: {
   baseUrl: string;
   playbook: Playbook;
+  /** Defaults to AGENT_NAME. Another environment (staging) needs its own name: setup finds agents by name. */
+  name?: string;
   model: string;
   harness?: string;
   budget: Budget;
@@ -124,7 +126,7 @@ export function naiveAgentConfig(input: {
   for (const tool of APIFY_ALLOWED_TOOLS) configs[`apify.${tool}`] = allow;
   configs.ask_operator = { enabled: true, permission: "ask" };
   return {
-    name: AGENT_NAME,
+    name: input.name ?? AGENT_NAME,
     description:
       "Researches one Crusonia lead per session: sourced evidence, an ICP fit score and, for opted-in leads only, an email draft that a human approves.",
     model: input.model,

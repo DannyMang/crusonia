@@ -20,8 +20,8 @@ import { AgentMailClient } from "agentmail";
 import { HubSpotClient } from "../src/providers/hubspot.ts";
 import { NotionClient } from "../src/providers/notion.ts";
 import { setupHubSpot, setupNotion } from "./lib/crm-setup.ts";
-import { ROOT, getVar, requireVar } from "./lib/env.ts";
-import { APIFY_MCP_URL, PLAYBOOK_PATH, agentSettings, changedFields, naiveAgentConfig, parsePlaybook } from "./lib/naive-agent.ts";
+import { DEV_VARS, ROOT, WRANGLER_ENV, getVar, requireVar } from "./lib/env.ts";
+import { AGENT_NAME, APIFY_MCP_URL, PLAYBOOK_PATH, agentSettings, changedFields, naiveAgentConfig, parsePlaybook } from "./lib/naive-agent.ts";
 import { setupStripe } from "./lib/stripe-setup.ts";
 
 export { APIFY_MCP_URL };
@@ -60,7 +60,12 @@ function stripJsonComments(text: string): string {
 function publicUrl(): string {
   const fromEnv = getVar("PUBLIC_URL");
   const config = JSON.parse(stripJsonComments(readFileSync(`${ROOT}wrangler.jsonc`, "utf8")));
-  const url = (fromEnv ?? config.vars?.PUBLIC_URL ?? "").replace(/\/+$/, "");
+  const vars = WRANGLER_ENV ? config.env?.[WRANGLER_ENV]?.vars : config.vars;
+  if (WRANGLER_ENV && !config.env?.[WRANGLER_ENV]) {
+    console.error(`wrangler.jsonc has no env.${WRANGLER_ENV}.`);
+    process.exit(1);
+  }
+  const url = (fromEnv ?? vars?.PUBLIC_URL ?? "").replace(/\/+$/, "");
   if (!/^https:\/\//.test(url)) {
     console.error("PUBLIC_URL is not set. Deploy first (`bun run deploy`), then put the workers.dev URL in wrangler.jsonc vars.PUBLIC_URL.");
     process.exit(1);
@@ -186,7 +191,12 @@ async function setupNaive(baseUrl: string) {
   if (vaultId) {
     if (!addCredential) notes.push("Naive vault: already configured (NAIVE_VAULT_ID set), skipped. Use --naive-credential to re-add the MCP credentials.");
   } else {
-    const vault = await post<{ id: string }>("/v1/vaults", { display_name: "Crusonia" }, "naive-vault");
+    // The default environment keeps its original seed; another one (--env) gets its own vault.
+    const vault = await post<{ id: string }>(
+      "/v1/vaults",
+      { display_name: WRANGLER_ENV ? `Crusonia (${WRANGLER_ENV})` : "Crusonia" },
+      WRANGLER_ENV ? `naive-vault:${baseUrl}` : "naive-vault",
+    );
     vaultId = vault.id;
     results.NAIVE_VAULT_ID = vaultId;
     addCredential = true;
@@ -265,9 +275,13 @@ async function agentsNamed(naive: Naive, name: string): Promise<AgentRow[]> {
  */
 export async function createNaiveAgent(baseUrl: string, naive: Naive) {
   const playbook = parsePlaybook(readFileSync(`${ROOT}${PLAYBOOK_PATH}`, "utf8"));
-  const config = naiveAgentConfig({ baseUrl, playbook, ...agentSettings(getVar) });
+  // Setup finds the agent by name, so each wrangler environment needs its own: `--env staging` defaults to
+  // "Crusonia Research (staging)". NAIVE_AGENT_NAME overrides it.
+  const name = getVar("NAIVE_AGENT_NAME") ?? (WRANGLER_ENV ? `${AGENT_NAME} (${WRANGLER_ENV})` : undefined);
+  const config = naiveAgentConfig({ baseUrl, playbook, ...(name ? { name } : {}), ...agentSettings(getVar) });
 
   let id = getVar("NAIVE_AGENT_ID");
+  const byName = !id;
   if (!id) {
     const matches = await agentsNamed(naive, config.name);
     if (matches.length > 1) {
@@ -290,6 +304,15 @@ export async function createNaiveAgent(baseUrl: string, naive: Naive) {
     }
     throw err;
   }
+  // Never repoint another environment's agent: one found by name must already serve this PUBLIC_URL.
+  const servedUrl = (current.mcp_servers as { name?: string; url?: string }[] | undefined)?.find((s) => s.name === "crusonia")?.url;
+  const ownUrl = config.mcp_servers.find((s) => s.name === "crusonia")!.url;
+  if (byName && servedUrl && servedUrl !== ownUrl) {
+    throw new Error(
+      `The Naive agent "${config.name}" serves ${servedUrl}, not ${ownUrl}. Set NAIVE_AGENT_NAME (or --env) for a separate agent, ` +
+        "or NAIVE_AGENT_ID to move that agent on purpose.",
+    );
+  }
   if (config.harness && current.harness && config.harness !== current.harness) {
     notes.push(`Naive agent: NAIVE_AGENT_HARNESS=${config.harness} ignored; the harness is fixed at creation (${current.harness}).`);
   }
@@ -310,14 +333,15 @@ async function setupStripeBilling(baseUrl: string) {
     live: args.has("--live"),
     rotateWebhookSecret: args.has("--rotate-webhook-secret"),
     verifyCheckout: args.has("--verify-checkout"),
-    secretPath: (mode) => `${ROOT}.dev.vars.stripe.${mode}`,
+    secretPath: (mode) => `${DEV_VARS}.stripe.${mode}`,
     log: (line) => console.log(line),
   });
   notes.push(...result.notes);
   if (result.secretWritten) {
+    const file = `${DEV_VARS.slice(ROOT.length)}.stripe.${result.mode}`;
     notes.push(
-      `Stripe webhook secret written to .dev.vars.stripe.${result.mode} (mode 600, gitignored). Upload it with ` +
-        `\`bunx wrangler secret bulk .dev.vars.stripe.${result.mode}\` (and copy the line into .dev.vars for wrangler dev).`,
+      `Stripe webhook secret written to ${file} (mode 600, gitignored). Upload it with ` +
+        `\`bunx wrangler secret bulk ${file}${WRANGLER_ENV ? ` --env ${WRANGLER_ENV}` : ""}\` (and copy the line into ${DEV_VARS.slice(ROOT.length)} for wrangler dev).`,
     );
   }
 }
@@ -349,7 +373,7 @@ async function setupCrm() {
 // ---------- output ----------
 
 function writeDevVars(values: Record<string, string>) {
-  const path = `${ROOT}.dev.vars`;
+  const path = DEV_VARS;
   const lines = existsSync(path) ? readFileSync(path, "utf8").split("\n") : [];
   for (const [key, value] of Object.entries(values)) {
     const line = `${key}=${value}`;
@@ -361,7 +385,7 @@ function writeDevVars(values: Record<string, string>) {
 }
 
 const baseUrl = publicUrl();
-console.log(`PUBLIC_URL: ${baseUrl}\n`);
+console.log(`PUBLIC_URL: ${baseUrl}${WRANGLER_ENV ? ` (env ${WRANGLER_ENV}, ${DEV_VARS.slice(ROOT.length)})` : ""}\n`);
 
 // Exactly one mode per run: --stripe, --crm, --agent, or (none) AgentMail + Naive.
 const steps: [string, (baseUrl: string) => Promise<void>][] = args.has("--stripe")
