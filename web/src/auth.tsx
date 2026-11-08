@@ -1,12 +1,14 @@
 // Auth for the dashboard. Production: Clerk (the API verifies the Clerk session token sent as
-// `Authorization: Bearer <token>`, fetched fresh with getToken() per request).
+// `Authorization: Bearer <token>`, fetched fresh with getToken() per request). Clerk itself lives in
+// auth-clerk.tsx and is loaded on demand, so the landing page skips it for visitors who are not signed in.
 // Local development only (`import.meta.env.DEV`, compiled out of production builds):
 //   - `bun run dev:mock` (VITE_MSW=1): MSW answers /api, so no sign-in is needed;
 //   - sessionStorage `crusonia.devToken` = the MCP_TOKEN from .dev.vars: talk to `wrangler dev` without Clerk.
-import { ClerkProvider, useAuth, useClerk, useUser } from "@clerk/react";
-import { createContext, useContext, useMemo, useRef, type ReactNode } from "react";
+import { createContext, lazy, Suspense, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router";
 import { createApi, type Api, type TokenGetter } from "./api.ts";
+
+const ClerkAuth = lazy(() => import("./auth-clerk.tsx"));
 
 export const CLERK_PUBLISHABLE_KEY: string | undefined = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY || undefined;
 export const clerkEnabled = Boolean(CLERK_PUBLISHABLE_KEY);
@@ -24,7 +26,7 @@ export const devBypass: boolean = import.meta.env.DEV && (import.meta.env.VITE_M
 
 export type AuthUser = { id: string | null; name: string | null; email: string | null; imageUrl: string | null };
 
-type AuthState = {
+export type AuthState = {
   isLoaded: boolean;
   isSignedIn: boolean;
   user: AuthUser | null;
@@ -32,7 +34,7 @@ type AuthState = {
   signOut: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthState | null>(null);
+export const AuthContext = createContext<AuthState | null>(null);
 
 export function useSession(): AuthState {
   const ctx = useContext(AuthContext);
@@ -48,7 +50,7 @@ export function useApi(): Api {
   return useMemo(() => createApi(() => ref.current()), []);
 }
 
-const devState: AuthState = {
+export const devState: AuthState = {
   isLoaded: true,
   isSignedIn: true,
   user: { id: null, name: "Local dev", email: "dev@localhost", imageUrl: null },
@@ -62,50 +64,55 @@ const devState: AuthState = {
   },
 };
 
-function ClerkBridge({ children }: { children: ReactNode }) {
-  const { isLoaded, isSignedIn, getToken } = useAuth();
-  const { user } = useUser();
-  const clerk = useClerk();
-  const state = useMemo<AuthState>(
-    () =>
-      devBypass
-        ? devState
-        : {
-            isLoaded,
-            isSignedIn: Boolean(isSignedIn),
-            user: user
-              ? {
-                  id: user.id,
-                  name: user.fullName ?? user.firstName ?? null,
-                  email: user.primaryEmailAddress?.emailAddress ?? null,
-                  imageUrl: user.imageUrl ?? null,
-                }
-              : null,
-            getToken: () => getToken(),
-            signOut: () => clerk.signOut({ redirectUrl: "/sign-in" }),
-          },
-    [isLoaded, isSignedIn, user, getToken, clerk],
-  );
-  return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>;
+const signedOut: AuthState = {
+  isLoaded: true,
+  isSignedIn: false,
+  user: null,
+  getToken: async () => null,
+  signOut: async () => {},
+};
+const checking: AuthState = { ...signedOut, isLoaded: false };
+
+/**
+ * Clerk's "this browser has signed in here" cookie: __client_uat (or a suffixed variant) holds the time of the
+ * last sign-in and is "0" after signing out. Readable on this host, so it tells the landing page whether
+ * loading Clerk can change anything.
+ */
+function maybeSignedIn(): boolean {
+  try {
+    return document.cookie.split(";").some((c) => {
+      const [name, value] = c.trim().split("=");
+      return /^__client_uat(_|$)/.test(name ?? "") && Boolean(value) && value !== "0";
+    });
+  } catch {
+    return true;
+  }
 }
 
-/** Must sit inside the router (Clerk navigates with React Router). */
+/**
+ * Must sit inside the router (Clerk navigates with React Router). On the landing and pricing pages a visitor without
+ * Clerk's session cookie is simply signed out, and Clerk (its SDK and its scripts) is not loaded. Every other
+ * page, or a visitor who may be signed in, loads it; once loaded it stays.
+ */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  // Public marketing pages: the landing and /pricing.
+  const landing = pathname === "/" || pathname === "/pricing";
+  const [clerkNeeded, setClerkNeeded] = useState(() => !landing || maybeSignedIn());
+  if (!clerkNeeded && !landing) setClerkNeeded(true);
+
   if (CLERK_PUBLISHABLE_KEY) {
+    if (!clerkNeeded) return <AuthContext.Provider value={devBypass ? devState : signedOut}>{children}</AuthContext.Provider>;
+    // While Clerk's code loads, the landing page renders as "checking" (it only redirects once signed in is
+    // known); other pages may use Clerk's hooks directly, so they wait.
+    const loading = landing ? <AuthContext.Provider value={checking}>{children}</AuthContext.Provider> : <FullPageSpinner />;
     return (
-      <ClerkProvider
-        publishableKey={CLERK_PUBLISHABLE_KEY}
-        routerPush={(to) => navigate(to)}
-        routerReplace={(to) => navigate(to, { replace: true })}
-        signInUrl="/sign-in"
-        signUpUrl="/sign-up"
-        signInFallbackRedirectUrl="/app"
-        signUpFallbackRedirectUrl="/onboarding/1"
-        afterSignOutUrl="/sign-in"
-      >
-        <ClerkBridge>{children}</ClerkBridge>
-      </ClerkProvider>
+      <Suspense fallback={loading}>
+        <ClerkAuth publishableKey={CLERK_PUBLISHABLE_KEY} navigate={navigate}>
+          {children}
+        </ClerkAuth>
+      </Suspense>
     );
   }
   if (devBypass) return <AuthContext.Provider value={devState}>{children}</AuthContext.Provider>;

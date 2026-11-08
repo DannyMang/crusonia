@@ -23,6 +23,10 @@ const media = (name: string) => ({
   poster: `/media/${name}_poster.jpg`,
 });
 
+// Portrait phones get hero_bloom_small: a 640x960 crop of the 1920x1080 clip around the tree. With the hero's
+// object-[72%_50%] it frames exactly what the full clip shows there, at about a third of the bytes.
+const smallHero = { ...media("hero_bloom_small"), media: "(max-width: 639px) and (max-aspect-ratio: 2/3)" };
+
 export default function Landing() {
   const { isLoaded, isSignedIn } = useSession();
 
@@ -61,7 +65,7 @@ const shade = { backgroundImage: "linear-gradient(in oklab 180deg, #FFFFFF00 0%,
 function Hero() {
   return (
     <section id="top" aria-labelledby="hero-title" className="relative flex h-[clamp(640px,100svh,900px)] flex-col justify-end overflow-hidden bg-[#2E4A2A] px-5 sm:px-6">
-      <PlayOnceVideo {...media("hero_bloom")} play="load" className="absolute inset-0 size-full object-cover object-[72%_50%] lg:object-center" />
+      <PlayOnceVideo {...media("hero_bloom")} small={smallHero} play="load" className="absolute inset-0 size-full object-cover object-[72%_50%] lg:object-center" />
       <div aria-hidden className="absolute inset-x-0 bottom-0 h-[78%] sm:h-[520px]" style={shade} />
       <div className="relative flex flex-col items-start gap-7 pb-12 sm:px-8 sm:pb-18 lg:px-14 min-[1320px]:flex-row min-[1320px]:items-end min-[1320px]:justify-between">
         <h1 id="hero-title" className="text-balance text-[42px]/[46px] font-semibold tracking-[-1px] sm:text-[64px]/[68px] lg:text-[76px]/20 lg:tracking-[-1.6px]">
@@ -69,7 +73,7 @@ function Hero() {
         </h1>
         <div className="flex w-full flex-col gap-3.5 pb-1.5 sm:w-auto">
           <WebsiteForm variant="hero" />
-          <p className="text-[15px]/4.5 font-[525] text-[#200D0D99] sm:pl-5.5">
+          <p className="text-[15px]/4.5 font-[525] text-muted sm:pl-5.5">
             No website yet?{" "}
             <Link to="/sign-up" className="underline decoration-1 [text-underline-position:from-font] hover:text-ink">
               Tell us what you're building
@@ -91,13 +95,13 @@ function ClosingCta() {
         <h2 id="closing-title" className="text-balance text-[44px]/[48px] font-semibold tracking-[-1px] sm:text-[64px]/[68px] lg:text-[80px]/21 lg:tracking-[-1.8px]">
           Grow your company offline.
         </h2>
-        <p className="max-w-140 text-[18px]/[27px] font-[525] text-[#200D0D99] sm:text-xl/7.25">
+        <p className="max-w-140 text-[18px]/[27px] font-[525] text-muted sm:text-xl/7.25">
           Your agent researches, drafts and follows up overnight. You wake up to replies, and nothing goes out without your yes.
         </p>
       </div>
       <div className="flex w-full flex-col items-center gap-3.5">
         <WebsiteForm variant="closing" />
-        <p className="text-[15px]/4.5 font-[525] text-[#200D0D99]">
+        <p className="text-[15px]/4.5 font-[525] text-muted">
           Or{" "}
           <a
             href={`#${SECTIONS.connect}`}

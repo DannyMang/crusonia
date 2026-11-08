@@ -128,7 +128,7 @@ export function ConnectAgent() {
         <h2 id="connect-title" className="text-[40px]/[46px] font-semibold tracking-[-1px] sm:text-[60px]/16.5 sm:tracking-[-1.2px]">
           Set-up fast.
         </h2>
-        <p className="text-[18px]/[27px] font-[525] text-[#200D0D99] sm:text-[20.2px]/[29.2px]">Connect your agent in one click, then run your whole GTM from it.</p>
+        <p className="text-[18px]/[27px] font-[525] text-muted sm:text-[20.2px]/[29.2px]">Connect your agent in one click, then run your whole GTM from it.</p>
       </div>
       <div className="flex flex-col gap-3.5 sm:flex-row sm:flex-wrap sm:items-center">
         <a href={CURSOR_INSTALL_URL} className={button} title="Opens Cursor to install the crusonia MCP server">

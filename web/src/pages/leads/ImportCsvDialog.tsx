@@ -140,27 +140,27 @@ export function ImportCsvDialog({ open, onClose }: { open: boolean; onClose: () 
             )}
           >
             <input type="file" accept=".csv,text/csv" className="sr-only" onChange={onInput} />
-            <UploadIcon className="text-[#200D0D8C]" />
+            <UploadIcon className="text-muted" />
             {file ? (
               <>
                 <span className="max-w-full truncate text-[13px]/4 font-semibold text-ink">{file.name}</span>
-                <span className="text-xs/4 font-medium text-[#200D0D8C]">
+                <span className="text-xs/4 font-medium text-muted">
                   {plural(file.rows, "row")} · choose another file
                 </span>
               </>
             ) : (
               <>
                 <span className="text-[13px]/4 font-semibold text-ink">Choose a CSV file</span>
-                <span className="text-xs/4 font-medium text-[#200D0D8C]">or drop it here · up to 5 MB, 10,000 rows</span>
+                <span className="text-xs/4 font-medium text-muted">or drop it here · up to 5 MB, 10,000 rows</span>
               </>
             )}
           </label>
           {pickError ? <div className="text-[13px]/5 font-medium text-[#B42318]">{pickError}</div> : null}
-          {preview.isPending ? <div className="text-[13px]/5 font-medium text-[#200D0D8C]">Checking the file… nothing is imported yet.</div> : null}
+          {preview.isPending ? <div className="text-[13px]/5 font-medium text-muted">Checking the file… nothing is imported yet.</div> : null}
           {preview.isError ? <ImportError error={preview.error} /> : null}
           {p ? <ImportCounts result={p} /> : null}
           {run.isError ? <ImportError error={run.error} /> : null}
-          <p className="text-xs/4.5 font-medium text-[#200D0D8C]">
+          <p className="text-xs/4.5 font-medium text-muted">
             Rows without consent are added as leads but never emailed. Existing leads are matched by email, then by domain, and only
             empty fields are filled in.
           </p>
@@ -175,7 +175,7 @@ function ImportError({ error }: { error: unknown }) {
     return (
       <div role="alert" className="rounded-[10px] border border-[#B4231829] bg-[#FDECEB80] px-3.5 py-3 text-[13px]/5">
         <div className="font-semibold text-ink">This file can't be imported</div>
-        <div className="font-medium text-[#200D0D99]">{error.message}</div>
+        <div className="font-medium text-muted">{error.message}</div>
       </div>
     );
   }
@@ -196,14 +196,14 @@ function ImportCounts({ result, final }: { result: ImportResult; final?: boolean
       <div className="flex rounded-[10px] border border-panel-line bg-panel py-3">
         {cells.map(([label, n], i) => (
           <div key={label} className={cx("flex grow basis-0 flex-col gap-1 px-3.5", i > 0 && "border-l border-l-panel-line")}>
-            <div className="text-xs/4 font-medium text-[#200D0D8C]">{label}</div>
+            <div className="text-xs/4 font-medium text-muted">{label}</div>
             <div className="text-xl/6 font-semibold tabular-nums text-ink">{num(n ?? 0)}</div>
           </div>
         ))}
       </div>
       {reasons.length ? (
         <div className="flex flex-col gap-1">
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">Skipped because</div>
+          <div className="text-xs/4 font-medium text-muted">Skipped because</div>
           {reasons.map(([reason, n]) => (
             <div key={reason} className="flex justify-between gap-3 text-[13px]/4.5 font-medium text-ink">
               <span>{SKIP_REASONS[reason] ?? reason.replace(/_/g, " ")}</span>
@@ -214,7 +214,7 @@ function ImportCounts({ result, final }: { result: ImportResult; final?: boolean
       ) : null}
       {!final && columns.length ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs/4 font-medium text-[#200D0D8C]">Matched columns</span>
+          <span className="text-xs/4 font-medium text-muted">Matched columns</span>
           {columns.map(([field, header]) => (
             <span key={field} className="flex h-5 items-center rounded-md bg-pill px-1.75 text-[11px]/3.5 font-medium text-[#200D0DB3]">
               {field === header ? field : `${header} → ${field}`}

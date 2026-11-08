@@ -11,6 +11,7 @@ import { ChevronRight } from "../../components/icons.tsx";
 import { QueryError } from "../../components/ui.tsx";
 import {
   ensureStarted,
+  hasValidInput,
   isComingOnline,
   patchOnboarding,
   siteHost,
@@ -32,7 +33,8 @@ export default function Step2Reading() {
   const api = useApi();
   const navigate = useNavigate();
   const s = useOnboarding();
-  const [hasInput] = useState(() => Boolean(s.url || s.description));
+  // Nothing paid starts without a valid website or a description; anything else goes back to step 1.
+  const [hasInput] = useState(() => hasValidInput(s));
 
   // Start (or resume) the run once. ensureStarted marks each call as started before it goes out, so
   // StrictMode's second effect run and later remounts do not start another paid run.
@@ -142,7 +144,7 @@ export default function Step2Reading() {
           </div>
         </div>
 
-        <div className="text-[13px]/4.5 font-medium text-[#200D0D8C]">
+        <div className="text-[13px]/4.5 font-medium text-muted">
           {slow ? (
             <>
               This is taking longer than usual. You can keep waiting, or{" "}
@@ -172,7 +174,7 @@ function PagesCard({ s }: { s: Onboarding }) {
     <section className="flex w-full min-w-0 grow basis-0 flex-col rounded-xl border border-[#200D0D1A] bg-white px-6 pb-2.5 pt-6" aria-label="Pages read">
       <div className="flex items-center justify-between pb-3.5">
         <h2 className="text-[15px]/4.5 font-medium text-ink">Pages read</h2>
-        <div className="text-[13px]/4 font-medium tabular-nums text-[#200D0D99]">
+        <div className="text-[13px]/4 font-medium tabular-nums text-muted">
           {read?.status === "done" ? `${count} of ${count}` : read?.status === "pending" || !read ? "Starting" : null}
         </div>
       </div>
@@ -231,13 +233,13 @@ function PageRow({ icon, path, url, title, first, active }: { icon: ReactNode; p
       ) : (
         <span className="w-50 shrink-0 truncate text-[13px]/4.5 font-medium text-ink">{path}</span>
       )}
-      <span className={cx("min-w-0 grow basis-0 truncate text-[13px]/4 font-medium", active ? "text-ink" : "text-[#200D0D8C]")}>{title}</span>
+      <span className={cx("min-w-0 grow basis-0 truncate text-[13px]/4 font-medium", active ? "text-ink" : "text-muted")}>{title}</span>
     </div>
   );
 }
 
 function Note({ children }: { children: ReactNode }) {
-  return <p className="py-3 text-[13px]/5 font-medium text-[#200D0D8C]">{children}</p>;
+  return <p className="py-3 text-[13px]/5 font-medium text-muted">{children}</p>;
 }
 
 function DescriptionCard({ text }: { text: string }) {
@@ -245,14 +247,14 @@ function DescriptionCard({ text }: { text: string }) {
     <section className="flex w-full min-w-0 grow basis-0 flex-col gap-3 rounded-xl border border-[#200D0D1A] bg-white px-6 py-6" aria-label="Your description">
       <h2 className="text-[15px]/4.5 font-medium text-ink">Your description</h2>
       <p className="whitespace-pre-wrap text-sm/5.25 font-medium text-[#200D0DB3]">{text}</p>
-      <p className="text-[13px]/4.5 font-medium text-[#200D0D8C]">No website to read, so the agent works from this.</p>
+      <p className="text-[13px]/4.5 font-medium text-muted">No website to read, so the agent works from this.</p>
     </section>
   );
 }
 
 // ---------- right: what the agent proposes ----------
 
-const eyebrow = "text-xs/4 font-medium uppercase tracking-[0.08em] text-[#200D0D8C]";
+const eyebrow = "text-xs/4 font-medium uppercase tracking-[0.08em] text-muted";
 
 function sourcesFor(profile: Profile | null, test: (field: string) => boolean) {
   return (profile?.sources ?? []).filter((x) => test(x.field)).map((x) => x.url);
@@ -281,17 +283,17 @@ function FoundPanel({
         {running ? (
           <div className="flex items-center gap-1.5" role="status">
             <span className="size-1.5 shrink-0 rounded-full bg-green [animation:crusonia-pulse_1.6s_ease-in-out_infinite]" />
-            <span className="text-xs/4 font-medium text-green">Updating</span>
+            <span className="text-xs/4 font-medium text-green-dark">Updating</span>
           </div>
         ) : done ? (
           <div className="flex items-center gap-1.5">
             <span className="size-1.5 shrink-0 rounded-full bg-green" />
-            <span className="text-xs/4 font-medium text-green">Done</span>
+            <span className="text-xs/4 font-medium text-green-dark">Done</span>
           </div>
         ) : null}
       </div>
       {problem}
-      {note ? <p className="-mt-2 text-[13px]/5 font-medium text-[#200D0D8C]">{note}</p> : null}
+      {note ? <p className="-mt-2 text-[13px]/5 font-medium text-muted">{note}</p> : null}
       <Found label="What you sell" value={profile?.sells} running={running} sources={sourcesFor(profile, (f) => f === "sells")} site={site} />
       <div className="h-px shrink-0 bg-panel-line" />
       <Found label="Who buys" value={profile?.icp_description} running={running} sources={sourcesFor(profile, (f) => f === "icp_description" || f.startsWith("segments"))} site={site} />
@@ -347,7 +349,7 @@ function Bars() {
 }
 
 function Missing() {
-  return <p className="text-[13px]/5 font-medium text-[#200D0D8C]">Nothing found. You can add it on the next step.</p>;
+  return <p className="text-[13px]/5 font-medium text-muted">Nothing found. You can add it on the next step.</p>;
 }
 
 /** The agent paused on the owner (a tool approval or a question): answering it lets the run continue. */
@@ -356,7 +358,7 @@ function WaitingOnYou({ kind, approvals }: { kind: "approval" | "answer"; approv
     <div role="status" className="flex flex-col gap-2.5 rounded-[10px] border border-[#200D0D1A] bg-white px-4 py-3.5">
       <div className="flex flex-col gap-0.5 text-[13px]/5">
         <div className="font-semibold text-ink">{kind === "answer" ? "The agent has a question for you" : "The agent is waiting for your OK"}</div>
-        <div className="font-medium text-[#200D0D99]">It continues as soon as you answer. This page keeps checking.</div>
+        <div className="font-medium text-muted">It continues as soon as you answer. This page keeps checking.</div>
       </div>
       {approvals.length ? (
         <ul className="flex flex-col gap-1.5">
@@ -364,7 +366,7 @@ function WaitingOnYou({ kind, approvals }: { kind: "approval" | "answer"; approv
             <li key={a.code}>
               <Link to={`/app/approvals/${encodeURIComponent(a.code)}`} className="flex items-center gap-2 text-[13px]/4.5 font-medium text-ink hover:underline">
                 <span className="shrink-0 font-semibold tabular-nums">{a.code}</span>
-                <span className="min-w-0 truncate text-[#200D0D99]">{a.summary}</span>
+                <span className="min-w-0 truncate text-muted">{a.summary}</span>
                 <ChevronRight className="ml-auto text-green" />
               </Link>
             </li>
@@ -385,7 +387,7 @@ function Problem({ title, body, onRetry, onFill }: { title: string; body: string
     <div role="alert" className="flex flex-col gap-3 rounded-[10px] border border-[#B4231829] bg-white px-4 py-3.5">
       <div className="flex flex-col gap-0.5 text-[13px]/5">
         <div className="font-semibold text-ink">{title}</div>
-        <div className="font-medium text-[#200D0D99]">{body}</div>
+        <div className="font-medium text-muted">{body}</div>
       </div>
       <div className="flex flex-wrap gap-2">
         {/* Starts a new paid session, so it only ever happens on this click. */}
@@ -408,7 +410,7 @@ function ComingOnline({ onFill }: { onFill: () => void }) {
         <span className="size-1.5 shrink-0 rounded-full bg-green" />
         <h2 className="text-[15px]/4.5 font-medium text-ink">Finding leads needs the Naive agent; coming online</h2>
       </div>
-      <p className="text-[13px]/5 font-medium text-[#200D0D99]">
+      <p className="text-[13px]/5 font-medium text-muted">
         The agent that reads your site and proposes who to sell to is still being set up. Nothing is lost: fill in your profile yourself now, or
         connect your own agent over MCP and set up from there.
       </p>

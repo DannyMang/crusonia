@@ -80,11 +80,18 @@ export default function Workflows() {
     .map((key) => ({ key, items: visible.filter((v) => GROUP_OF(v.w) === key) }))
     .filter((g) => g.items.length);
 
-  const totalRuns = workflows.reduce((n, w) => n + w.run_count, 0);
-  const totalLeads = workflows.reduce((n, w) => n + w.leads_processed, 0);
+  // The summary line describes what the status filter and search leave on screen.
+  const filtered = Boolean(status || s);
+  const shown = filtered ? visible.map((v) => v.w) : workflows;
+  const totalRuns = shown.reduce((n, w) => n + w.run_count, 0);
+  const totalLeads = shown.reduce((n, w) => n + w.leads_processed, 0);
   const counts = q.data
     ? [
-        workflows.length === 1 ? "1 workflow" : `${workflows.length} workflows`,
+        filtered
+          ? `${shown.length} of ${workflows.length} ${workflows.length === 1 ? "workflow" : "workflows"}`
+          : workflows.length === 1
+            ? "1 workflow"
+            : `${workflows.length} workflows`,
         `${num(totalRuns)} ${totalRuns === 1 ? "run" : "runs"}`,
         `${num(totalLeads)} leads processed`,
         updatedAgo(q.dataUpdatedAt, now),
@@ -105,7 +112,7 @@ export default function Workflows() {
               onChange={setSearch}
               placeholder="Search workflows"
               className="h-9 w-55"
-              hint={<kbd className="flex rounded-[5px] border border-[#200D0D1F] px-1.25 py-px text-[11px]/3.5 text-[#200D0D73]">/</kbd>}
+              hint={<kbd className="flex rounded-[5px] border border-[#200D0D1F] px-1.25 py-px text-[11px]/3.5 text-faint">/</kbd>}
             />
           ) : null}
           <NewWorkflowButton />
@@ -117,7 +124,7 @@ export default function Workflows() {
           <div className="flex items-center gap-2">
             <FilterChip label="Status" value={status} options={STATUS_OPTIONS} onChange={setStatus} />
           </div>
-          <div className="text-[13px]/4 tabular-nums text-[#200D0D73]">{counts.join(" · ")}</div>
+          <div className="text-[13px]/4 tabular-nums text-faint">{counts.join(" · ")}</div>
         </div>
       ) : null}
 
@@ -157,15 +164,16 @@ export default function Workflows() {
         <div className="overflow-clip rounded-xl border border-[#200D0D1A]">
           <table className="w-full table-fixed border-collapse text-left text-xs/4">
             <colgroup>
-              <col className="w-72" />
+              {/* Narrower Workflow and Leads columns below 1280px so Activity stays readable. */}
+              <col className="w-52 xl:w-72" />
               <col className="w-32" />
               <col />
-              <col className="w-24" />
+              <col className="w-16 xl:w-24" />
               <col className="w-22" />
               <col className="w-8" />
             </colgroup>
             <thead>
-              <tr className="h-9 bg-[#200D0D06] text-xs/4 text-[#200D0D80]">
+              <tr className="h-9 bg-[#200D0D06] text-xs/4 text-faint">
                 <th scope="col" className="pl-4 pr-3 font-medium">
                   Workflow
                 </th>
@@ -211,9 +219,9 @@ export default function Workflows() {
                             <path d="M6 9l6 6 6-6" fill="none" stroke="#200D0D" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
                           <span className="text-[13px]/4 font-semibold text-ink">{g.key === "running" ? "Running" : g.key === "paused" ? "Paused" : "Finished"}</span>
-                          <span className="text-[13px]/4 text-[#200D0D8C]">{groupNote(g.key, g.items.map((i) => i.w))}</span>
+                          <span className="text-[13px]/4 text-muted">{groupNote(g.key, g.items.map((i) => i.w))}</span>
                         </button>
-                        {cost !== null ? <span className="text-xs/4 tabular-nums text-[#200D0D8C]">{usd(cost)} spent</span> : null}
+                        {cost !== null ? <span className="text-xs/4 tabular-nums text-muted">{usd(cost)} spent</span> : null}
                       </div>
                     </th>
                   </tr>
@@ -265,7 +273,7 @@ export default function Workflows() {
             <circle cx="12" cy="12" r="9" fill="none" stroke="rgb(32 13 13 / 55%)" strokeWidth="2" />
             <path d="M12 11v5M12 8v.01" fill="none" stroke="rgb(32 13 13 / 55%)" strokeWidth="2" strokeLinecap="round" />
           </svg>
-          <p className="text-xs/4 font-medium text-[#200D0D8C]">Each run is one agent session. Open a run to see every step it took, its input and output, and what it cost.</p>
+          <p className="text-xs/4 font-medium text-muted">Each run is one agent session. Open a run to see every step it took, its input and output, and what it cost.</p>
         </div>
       ) : null}
     </Page>
@@ -338,7 +346,7 @@ function WorkflowRows({
               onToggle();
             }} className="flex max-w-full flex-col items-start gap-0.5 text-left">
             <span className="max-w-full truncate text-sm/4.5 font-medium text-ink">{w.name}</span>
-            <span className="max-w-full truncate text-[11px]/3.5 text-[#200D0D73]">
+            <span className="max-w-full truncate text-[11px]/3.5 text-faint">
               {w.id} · {w.runs.length < w.run_count ? `${w.runs.length} most recent runs` : `${w.runs.length} ${w.runs.length === 1 ? "run" : "runs"}`}
             </span>
           </button>
@@ -347,11 +355,11 @@ function WorkflowRows({
           <StatusPill spec={workflowPill(w.status)} />
         </td>
         <td className="pr-7">
-          <div className={cx("truncate text-xs/4", red ? "text-[#B42318]" : "text-[#200D0D99]")}>{line1}</div>
-          <div className="truncate text-[11px]/3.5 text-[#200D0D73]">{line2}</div>
+          <div className={cx("truncate text-xs/4", red ? "text-[#B42318]" : "text-muted")}>{line1}</div>
+          <div className="truncate text-[11px]/3.5 text-faint">{line2}</div>
         </td>
-        <td className={cx("pr-3 text-right text-[13px]/4 tabular-nums", w.leads_processed ? "text-ink" : "text-[#200D0D66]")}>{num(w.leads_processed)}</td>
-        <td className={cx("pr-3 text-right text-[13px]/4 font-medium tabular-nums", w.cost_usd ? "text-ink" : "text-[#200D0D66]")}>{usd(w.cost_usd)}</td>
+        <td className={cx("pr-3 text-right text-[13px]/4 tabular-nums", w.leads_processed ? "text-ink" : "text-faint")}>{num(w.leads_processed)}</td>
+        <td className={cx("pr-3 text-right text-[13px]/4 font-medium tabular-nums", w.cost_usd ? "text-ink" : "text-faint")}>{usd(w.cost_usd)}</td>
         <td className="pr-4 text-center">
           <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden className={cx("inline-block transition-transform", expanded && "rotate-90")}>
             <path d="M9 6l6 6-6 6" fill="none" stroke={expanded ? "#200D0D" : "rgb(32 13 13 / 35%)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -363,7 +371,7 @@ function WorkflowRows({
         : null}
       {expanded && !runs.length ? (
         <tr className="border-t border-t-[#200D0D0F] bg-[#200D0D03]">
-          <td colSpan={6} className="py-3 pl-8 text-xs/4 font-medium text-[#200D0D8C]">
+          <td colSpan={6} className="py-3 pl-8 text-xs/4 font-medium text-muted">
             No runs listed yet.
           </td>
         </tr>
@@ -391,18 +399,18 @@ function RunRow({ run, ctx, onOpen }: { run: Run; ctx: Ctx; onOpen: () => void }
       <td className="pl-8 pr-3">
         <Link to={href} onClick={(e) => e.stopPropagation()} className="flex max-w-full flex-col gap-0.5">
           <span className="truncate text-[13px]/4 font-medium text-ink">{runLabel(run, ctx)}</span>
-          <span className="truncate text-[11px]/3.5 text-[#200D0D73]">{run.id}</span>
+          <span className="truncate text-[11px]/3.5 text-faint">{run.id}</span>
         </Link>
       </td>
       <td className="pr-3">
         <StatusPill spec={runPill(run)} small />
       </td>
       <td className="pr-7">
-        <div className={cx("truncate text-xs/4", run.status === "error" ? "text-[#B42318]" : "text-[#200D0D99]")}>{line1}</div>
-        <div className="truncate text-[11px]/3.5 text-[#200D0D73]">{line2}</div>
+        <div className={cx("truncate text-xs/4", run.status === "error" ? "text-[#B42318]" : "text-muted")}>{line1}</div>
+        <div className="truncate text-[11px]/3.5 text-faint">{line2}</div>
       </td>
-      <td className={cx("pr-3 text-right text-xs/4 tabular-nums", run.leads_processed ? "text-ink" : "text-[#200D0D66]")}>{num(run.leads_processed)}</td>
-      <td className={cx("pr-3 text-right text-xs/4 font-medium tabular-nums", run.cost_usd ? "text-ink" : "text-[#200D0D66]")}>{usd(run.cost_usd)}</td>
+      <td className={cx("pr-3 text-right text-xs/4 tabular-nums", run.leads_processed ? "text-ink" : "text-faint")}>{num(run.leads_processed)}</td>
+      <td className={cx("pr-3 text-right text-xs/4 font-medium tabular-nums", run.cost_usd ? "text-ink" : "text-faint")}>{usd(run.cost_usd)}</td>
       <td className="pr-4 text-center">{CHEVRON}</td>
     </tr>
   );

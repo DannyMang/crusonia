@@ -40,7 +40,7 @@ export function FilterChip({ label, value, options, onChange }: { label: string;
   const current = options.find((o) => o.value === value)?.label ?? "Any";
   return (
     <label className="relative flex h-7.5 shrink-0 cursor-pointer items-center gap-1.25 rounded-full bg-lime px-3 hover:bg-[#b3de7a] focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-green">
-      <span className="text-[13px]/4 text-[#200D0D99]">{label}</span>
+      <span className="text-[13px]/4 text-muted">{label}</span>
       <span className="text-[13px]/4 font-medium text-ink">{current}</span>
       <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} className="absolute inset-0 cursor-pointer appearance-none opacity-0">
         {options.map((o) => (
@@ -102,7 +102,7 @@ export function Kbd({ children, tone = "plain" }: { children: ReactNode; tone?: 
         "flex size-5 shrink-0 items-center justify-center rounded-[5px] tabular-nums text-[11px]/3.5",
         tone === "onLime" && "bg-[#FFFFFF99] font-semibold text-ink",
         tone === "onInk" && "bg-[#FFFFFF2E] font-semibold text-white",
-        tone === "plain" && "border border-[#200D0D1F] font-medium text-[#200D0D99]",
+        tone === "plain" && "border border-[#200D0D1F] font-medium text-muted",
       )}
     >
       {children}

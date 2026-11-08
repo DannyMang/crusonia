@@ -13,7 +13,7 @@ function Column({ art, title, children }: { art: ReactNode; title: string; child
         {art}
       </div>
       <h3 className="text-[21px]/6.5 font-semibold tracking-[-0.315px]">{title}</h3>
-      <p className="text-[16.5px]/[24.75px] font-[525] text-[#200D0D99]">{children}</p>
+      <p className="text-[16.5px]/[24.75px] font-[525] text-muted">{children}</p>
     </div>
   );
 }
@@ -28,10 +28,10 @@ const Row = ({ label, children }: { label: string; children: ReactNode }) => (
 const workflowArt = (
   <div className="flex flex-col gap-2.5">
     <Row label="Research account">
-      <span className="text-xs/4 text-green">done</span>
+      <span className="text-xs/4 text-green-dark">done</span>
     </Row>
     <Row label="Score fit">
-      <span className="text-xs/4 text-green tabular-nums">92</span>
+      <span className="text-xs/4 text-green-dark tabular-nums">92</span>
     </Row>
     <Row label="Write draft">
       <span className={`h-5.5 px-2.25 text-xs/4 font-medium ${chip}`}>ready</span>
@@ -61,7 +61,7 @@ const stackArt = (
 const Field = ({ label, value, tone }: { label: string; value: string; tone?: "green" }) => (
   <div className="flex justify-between gap-2 text-[11px]/3.5">
     <span>{label}</span>
-    <span className={tone === "green" ? "text-green" : "text-[#200D0D99]"}>{value}</span>
+    <span className={tone === "green" ? "text-green-dark" : "text-muted"}>{value}</span>
   </div>
 );
 
@@ -70,12 +70,12 @@ const dataArt = (
     <div className={`flex w-full flex-col gap-2.5 p-4 ${card}`}>
       <div className="flex flex-col gap-0.5">
         <span className="text-sm/4.5 font-semibold">Maya Chen</span>
-        <span className="text-xs/4 font-medium text-[#200D0D99]">Head of Sales · Fieldnote</span>
+        <span className="text-xs/4 font-medium text-muted">Head of Sales · Fieldnote</span>
       </div>
       <div className="h-px shrink-0 bg-[#200D0D0F]" />
       <div className="flex justify-between gap-2 text-[11px]/3.5">
         <span>maya@fieldnote.io</span>
-        <span className="text-green">verified</span>
+        <span className="text-green-dark">verified</span>
       </div>
       <Field label="source" value="fieldnote.io/team" />
       <Field label="checked" value="today" />
@@ -89,7 +89,7 @@ function Bar({ label, value, width, winner }: { label: string; value: string; wi
     <div className="flex flex-col gap-1.5">
       <div className="flex justify-between text-[11px]/3.5">
         <span>{label}</span>
-        <span className={winner ? "text-green" : undefined}>{value}</span>
+        <span className={winner ? "text-green-dark" : undefined}>{value}</span>
       </div>
       <div className="h-2 shrink-0 rounded-full bg-[#200D0D0F]">
         <div className={`h-2 rounded-full ${winner ? "bg-green" : "bg-[#200D0D33]"}`} style={{ width }} />
@@ -103,7 +103,7 @@ const experimentsArt = (
     <div className={`flex flex-col gap-3.5 p-4 ${card}`}>
       <div className="flex justify-between">
         <span className="text-[13px]/4 font-semibold">Reply rate</span>
-        <span className="text-[11px]/3.5 text-[#200D0D99]">40 sent each</span>
+        <span className="text-[11px]/3.5 text-muted">40 sent each</span>
       </div>
       <Bar label="A · funding angle" value="5%" width="25%" />
       <Bar label="B · hiring angle" value="15%" width="75%" winner />

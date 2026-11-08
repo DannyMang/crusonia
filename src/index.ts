@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { api } from "./api/index.ts";
 import { webhooks } from "./api/webhooks.ts";
@@ -10,25 +10,44 @@ import { runScheduled } from "./services/cron.ts";
 const app = new Hono<{ Bindings: Env }>();
 
 // ---------------------------------------------------------------------------------------------------------
-// Web app (static assets) and this Worker share one origin, so there is no CORS. The frontend PR adds the
-// `assets` block to wrangler.jsonc. It must keep these paths on the Worker, e.g.:
+// Web app (static assets) and this Worker share one origin, so there is no CORS. wrangler.jsonc:
 //
 //   "assets": {
-//     "directory": "./web/dist",            // wherever the SPA build lands
+//     "directory": "./web/dist",
 //     "binding": "ASSETS",
-//     "not_found_handling": "single-page-application",
+//     "not_found_handling": "none",
 //     "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/webhooks/*", "/health"]
 //   }
 //
-// Why run_worker_first: in SPA mode a browser navigation (Sec-Fetch-Mode: navigate) that matches no file is
-// answered with index.html before the Worker runs, so opening /health or /api/me in a tab would show the app.
-// Listing the paths also opts out of that header heuristic. fetch() calls, MCP clients and provider webhooks
-// are not navigations, but they stay correct either way. Do not ship asset files under api/, mcp/,
-// webhooks/ or health: assets that match a path win over the Worker unless the path is listed above.
-// If the Worker does get a non-API request (run_worker_first: true, or a path not listed), "/" and the
-// not-found handler below hand it to ASSETS when the binding exists.
+// Files that exist (index.html at "/", hashed /assets/*, /media/*) are served by Cloudflare without running
+// this Worker. Every other path reaches the Worker: API paths are routed below; a missing file under /assets/
+// or /media/ is a real 404 (not the app's HTML with a 200, which breaks caches and hides broken links); any
+// other path is a client-side route (/app/*, /onboarding/*, /sign-in), so it gets the SPA shell (index.html).
+// run_worker_first keeps the API paths on the Worker even where a static file could match, and opts out of
+// Cloudflare's Sec-Fetch-Mode navigation heuristic. Do not ship asset files under api/, mcp/, webhooks/ or health.
+// Caching for the files themselves is in web/public/_headers.
 // ---------------------------------------------------------------------------------------------------------
 const API_PATH = /^\/(api|mcp|webhooks|health)(\/|$)/;
+// Build output and media: a miss here is a missing file, never an app route.
+const STATIC_PATH = /^\/(assets|media)\//;
+
+/** Production is the host in PUBLIC_URL; previews (version and alias URLs) and local dev are everything else. */
+function isProductionHost(requestUrl: string, publicUrl: string | undefined) {
+  try {
+    return new URL(requestUrl).host === new URL(publicUrl ?? "").host;
+  } catch {
+    return false;
+  }
+}
+
+/** index.html for a client-side route. Only production is indexed by search engines. */
+async function spaShell(c: Context<{ Bindings: Env }>, assets: Fetcher) {
+  const res = await assets.fetch(new Request(new URL("/", c.req.url).href, { method: c.req.method === "HEAD" ? "HEAD" : "GET", headers: c.req.raw.headers }));
+  if (isProductionHost(c.req.url, c.env.PUBLIC_URL)) return res;
+  const out = new Response(res.body, res);
+  out.headers.set("X-Robots-Tag", "noindex");
+  return out;
+}
 
 app.get("/", async (c) => {
   if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw);
@@ -52,9 +71,12 @@ app.route("/webhooks", webhooks);
 
 app.notFound((c) => {
   const path = new URL(c.req.url).pathname;
-  // Unknown API paths are JSON 404s; anything else belongs to the web app when it is deployed (SPA routes).
-  if (c.env.ASSETS && !API_PATH.test(path)) return c.env.ASSETS.fetch(c.req.raw);
-  return c.json(errorBody("not_found", `No route for ${c.req.method} ${path}`), 404);
+  const assets = c.env.ASSETS;
+  // Unknown API paths are JSON 404s. Without the web app deployed, so is everything else.
+  if (!assets || API_PATH.test(path)) return c.json(errorBody("not_found", `No route for ${c.req.method} ${path}`), 404);
+  if (STATIC_PATH.test(path)) return c.text("Not found", 404, { "Cache-Control": "no-store" });
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") return c.json(errorBody("not_found", `No route for ${c.req.method} ${path}`), 404);
+  return spaShell(c, assets);
 });
 
 // Every error is JSON: { error: { code, message, details? } }.

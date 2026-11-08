@@ -50,13 +50,13 @@ export function Dialog({
               <h2 id={titleId} className="text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink">
                 {title}
               </h2>
-              {description ? <div className="text-[13px]/5 font-medium text-[#200D0D8C]">{description}</div> : null}
+              {description ? <div className="text-[13px]/5 font-medium text-muted">{description}</div> : null}
             </div>
             <button
               type="button"
               aria-label="Close"
               onClick={onClose}
-              className="-mr-1.5 flex size-7 shrink-0 items-center justify-center rounded-full text-[#200D0D80] hover:bg-[#200D0D0A]"
+              className="-mr-1.5 flex size-7 shrink-0 items-center justify-center rounded-full text-faint hover:bg-[#200D0D0A]"
             >
               <XIcon />
             </button>
@@ -145,7 +145,7 @@ export function MenuItem({
     >
       <span className="flex min-w-0 grow flex-col items-start gap-0.5">
         <span className="text-[13px]/4 font-medium text-ink">{children}</span>
-        {hint ? <span className="text-xs/4 font-medium text-[#200D0D8C]">{hint}</span> : null}
+        {hint ? <span className="text-xs/4 font-medium text-muted">{hint}</span> : null}
       </span>
       {checked ? <CheckIcon className="mt-0.5 text-green" /> : null}
     </button>
@@ -158,10 +158,10 @@ export function Field({ label, hint, children, required }: { label: string; hint
     <label className="flex flex-col gap-1.5">
       <span className="text-[13px]/4 font-medium text-ink">
         {label}
-        {required ? <span className="text-[#200D0D8C]"> · required</span> : null}
+        {required ? <span className="text-muted"> · required</span> : null}
       </span>
       {children}
-      {hint ? <span className="text-xs/4 font-medium text-[#200D0D8C]">{hint}</span> : null}
+      {hint ? <span className="text-xs/4 font-medium text-muted">{hint}</span> : null}
     </label>
   );
 }

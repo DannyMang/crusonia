@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import type { Reply } from "../api.ts";
 import { Page } from "../components/AppShell.tsx";
 import { RepliesIcon } from "../components/icons.tsx";
-import { ButtonLink, Card, EmptyState, QueryError, ReplyLabel, Skeleton } from "../components/ui.tsx";
+import { ButtonLink, Card, EmptyState, QueryError, ReplyLabel, Skeleton, tabListKeys } from "../components/ui.tsx";
 import { cx, timeAgo } from "../lib/format.ts";
 import { useReplies } from "../queries.ts";
 
@@ -31,10 +31,19 @@ export default function Replies() {
     <Page className="gap-6 px-12 pb-14 pt-10">
       <div className="flex items-baseline gap-3">
         <h1 className="text-2xl/7.5 font-semibold tracking-[-0.02em]">Replies</h1>
-        <div className="text-sm/5 font-medium text-[#200D0D8C]">Real inbound email only. Each one stops that lead's follow-ups.</div>
+        <div className="text-sm/5 font-medium text-muted">Real inbound email only. Each one stops that lead's follow-ups.</div>
       </div>
 
-      <div className="flex items-center gap-1 self-start rounded-full border border-[#200D0D1A] bg-[#200D0D0A] p-1" role="tablist">
+      <div
+        className="flex items-center gap-1 self-start rounded-full border border-[#200D0D1A] bg-[#200D0D0A] p-1"
+        role="tablist"
+        aria-label="Reply labels"
+        onKeyDown={tabListKeys(
+          FILTERS.map((f) => f.id),
+          filter,
+          setFilter,
+        )}
+      >
         {FILTERS.map((f) => {
           const on = f.id === filter;
           return (
@@ -43,11 +52,12 @@ export default function Replies() {
               type="button"
               role="tab"
               aria-selected={on}
+              tabIndex={on ? 0 : -1}
               onClick={() => setFilter(f.id)}
               className={cx("flex h-7 items-center gap-2 rounded-full pr-2", on ? "bg-lime pl-3.5" : "pl-3 hover:bg-[#200D0D08]")}
             >
-              <span className={cx("text-[13px]/4 font-medium", on ? "text-ink" : "text-[#200D0D94]")}>{f.label}</span>
-              <span className={cx("flex h-4 items-center rounded-full px-1.5 tabular-nums text-xs/3 font-medium", on ? "bg-[#BDE6893D] text-ink" : "bg-[#200D0D14] text-[#200D0D94]")}>
+              <span className={cx("text-[13px]/4 font-medium", on ? "text-ink" : "text-faint")}>{f.label}</span>
+              <span className={cx("flex h-4 items-center rounded-full px-1.5 tabular-nums text-xs/3 font-medium", on ? "bg-[#BDE6893D] text-ink" : "bg-[#200D0D14] text-muted")}>
                 {counts[f.id] ?? 0}
               </span>
             </button>
@@ -58,8 +68,8 @@ export default function Replies() {
       {replies.isError ? <QueryError error={replies.error} what="replies" onRetry={() => void replies.refetch()} /> : null}
 
       <Card className="overflow-clip">
-        <div className="flex items-center gap-4 border-b border-b-[#200D0D14] bg-[#200D0D06] px-4.5 py-2.5 text-xs/4 font-medium text-[#200D0D8C]">
-          <div className="w-56 shrink-0">From</div>
+        <div className="flex items-center gap-4 border-b border-b-[#200D0D14] bg-[#200D0D06] px-4.5 py-2.5 text-xs/4 font-medium text-muted">
+          <div className="w-40 shrink-0 xl:w-56">From</div>
           <div className="grow">Reply</div>
           <div className="w-28 shrink-0">Label</div>
           <div className="w-24 shrink-0 text-right">Received</div>
@@ -82,7 +92,7 @@ export default function Replies() {
           />
         )}
       </Card>
-      {replies.data?.next_cursor ? <div className="text-xs/4 font-medium text-[#200D0D8C]">Showing the newest 100 replies.</div> : null}
+      {replies.data?.next_cursor ? <div className="text-xs/4 font-medium text-muted">Showing the newest 100 replies.</div> : null}
     </Page>
   );
 }
@@ -90,18 +100,18 @@ export default function Replies() {
 function Row({ r }: { r: Reply }) {
   const content = (
     <>
-      <div className="flex w-56 shrink-0 flex-col gap-0.5">
+      <div className="flex w-40 shrink-0 flex-col gap-0.5 xl:w-56">
         <div className="truncate text-sm/4.5 font-medium text-ink">{r.lead?.name ?? r.from ?? "Unknown sender"}</div>
-        <div className="truncate text-[11px]/3.5 text-[#200D0D8C]">{r.lead?.company ?? (r.lead?.name ? r.from : "") ?? ""}</div>
+        <div className="truncate text-[11px]/3.5 text-muted">{r.lead?.company ?? (r.lead?.name ? r.from : "") ?? ""}</div>
       </div>
       <div className="flex min-w-0 grow flex-col gap-0.5">
         <div className="truncate text-[13px]/4 font-medium text-ink">{r.subject ?? "(no subject)"}</div>
-        <div className="truncate text-xs/4 font-medium text-[#200D0D99]">{r.preview ?? ""}</div>
+        <div className="truncate text-xs/4 font-medium text-muted">{r.preview ?? ""}</div>
       </div>
       <div className="w-28 shrink-0">
         <ReplyLabel label={r.label} />
       </div>
-      <div className="w-24 shrink-0 text-right text-[13px]/4 font-medium text-[#200D0D8C]">{timeAgo(r.received_at)}</div>
+      <div className="w-24 shrink-0 text-right text-[13px]/4 font-medium text-muted">{timeAgo(r.received_at)}</div>
     </>
   );
   const cls = "flex items-center gap-4 border-t border-t-[#200D0D0F] px-4.5 py-3.5 first:border-t-0";

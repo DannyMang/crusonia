@@ -13,7 +13,7 @@ export function CrumbBar({ here, parent }: { here: string; parent?: { label: str
   return (
     <div className="shrink-0 border-b border-b-[#200D0D1A]">
       <nav aria-label="Breadcrumb" className="mx-auto flex h-12.5 w-full max-w-[1200px] items-center gap-2 px-12 text-sm/4.5">
-        <Link to="/app" className="text-[#200D0D66] hover:text-ink">
+        <Link to="/app" className="text-faint hover:text-ink">
           {workspace}
         </Link>
         <span aria-hidden className="font-medium text-[#200D0D66]">
