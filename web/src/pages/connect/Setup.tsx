@@ -60,7 +60,7 @@ const clients = (url: string): { name: string; where?: string; text: string; sho
 export function SetupCard({ token, mcpUrl = MCP_URL, keysShipped = true }: { token: string | null; mcpUrl?: string; keysShipped?: boolean }) {
   const exportLine = `export CRUSONIA_MCP_TOKEN=${token ?? "<your key>"}`;
   return (
-    <Card className="flex flex-col gap-5 p-6">
+    <Card className="flex flex-col gap-5 p-4 sm:p-6">
       <div className="flex flex-col gap-2.5">
         <h2 className="text-[15px]/4.5 font-medium text-ink">Setup</h2>
         <p className="text-[13px]/4.5 font-medium text-muted">
@@ -140,7 +140,8 @@ function TestConnection() {
   return (
     <div
       className={cx(
-        "flex items-center gap-3 rounded-[10px] border py-3.5 pl-4 pr-3.5",
+        // Phones: the button drops under the status, lined up with its text.
+        "flex flex-wrap items-center gap-3 rounded-[10px] border py-3.5 pl-4 pr-3.5 sm:flex-nowrap",
         failed ? "border-[#B4231829] bg-[#FDECEB80]" : passed ? "border-panel-line bg-panel" : "border-[#200D0D14] bg-[#200D0D05]",
       )}
     >
@@ -161,7 +162,7 @@ function TestConnection() {
           </svg>
         ) : null}
       </span>
-      <div role="status" aria-live="polite" className="flex min-w-0 grow basis-0 flex-col gap-0.5">
+      <div role="status" aria-live="polite" className="flex min-w-0 grow basis-[calc(100%-2rem)] flex-col gap-0.5 sm:basis-0">
         <div className="text-[13px]/4.5 font-medium tabular-nums text-ink">{title}</div>
         <div className="text-xs/4 font-medium text-muted">{body}</div>
       </div>
@@ -169,7 +170,7 @@ function TestConnection() {
         type="button"
         onClick={() => void run()}
         disabled={check.kind === "running"}
-        className="flex h-8 shrink-0 items-center rounded-lg border border-[#200D0D26] bg-white px-3.5 text-[13px]/4 font-medium text-ink hover:bg-[#200D0D08] disabled:opacity-60"
+        className="ml-8 flex h-8 shrink-0 items-center rounded-lg border border-[#200D0D26] bg-white px-3.5 text-[13px]/4 font-medium text-ink hover:bg-[#200D0D08] disabled:opacity-60 sm:ml-0"
       >
         Test connection
       </button>

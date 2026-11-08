@@ -328,10 +328,15 @@ export type Me = {
   key?: { id: string; name: string };
 };
 
-/** Where leads are now; each lead is in at most one bucket (unsubscribed leads in none). */
+/**
+ * `pipeline` is cumulative (how many leads got at least this far: found >= researched >= drafted >= sent >= replied
+ * >= meetings); `pipeline_now` is where leads are now, each in at most one bucket. `awaiting_approval` is not a step:
+ * it is how many leads have an email waiting for the owner. `qualified` (asked of the backend) is optional.
+ */
 export type Pipeline = {
   found: number;
   researched: number;
+  qualified?: number;
   drafted: number;
   awaiting_approval: number;
   sent: number;
@@ -394,6 +399,10 @@ export type SummaryApproval = ApprovalListItem & { lead_name: string | null; com
 
 export type Summary = {
   pipeline: Pipeline;
+  /** Where leads are now (the old `pipeline`). Absent on older deployments. */
+  pipeline_now?: Pipeline;
+  /** Open manual tasks. Absent on older deployments. */
+  tasks_open?: number;
   pipeline_by_stage: Record<string, number>;
   total_leads: number;
   /** The 5 newest pending approvals; `pending_approvals_total` counts all of them. */

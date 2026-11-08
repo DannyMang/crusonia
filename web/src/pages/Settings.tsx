@@ -14,13 +14,15 @@ import { SettingsTabs } from "./settings/SettingsTabs.tsx";
 
 const cardTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
 const muted = "text-[13px]/5 font-medium text-muted";
+/** Text beside its action from `sm`; phones put the action under the text. */
+const rowCard = "flex flex-col items-start gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-6 sm:py-5";
 
 export default function Settings() {
   return (
     <>
       <CrumbBar here="Settings" />
       <Page>
-        <div className="flex w-240 max-w-full flex-col gap-4 px-12 pb-14 pt-8">
+        <div className="flex w-240 max-w-full flex-col gap-4 px-4 pb-14 pt-6 sm:px-12 sm:pt-8">
           <SettingsTabs />
           <div className="flex flex-col gap-2 pb-2 pt-3">
             <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">General</h1>
@@ -43,7 +45,7 @@ function PauseCard() {
   const setPause = useSetPause();
   const paused = pause.data?.paused ?? false;
   return (
-    <Card className="flex items-center justify-between gap-6 px-6 py-5">
+    <Card className={rowCard}>
       <div className="flex flex-col gap-1">
         <h2 className={cardTitle}>{paused ? "Sends are paused" : "Sends are on"}</h2>
         <p className={muted}>
@@ -65,7 +67,7 @@ function ProfileCard() {
   const profile = useProfile();
   const p = profile.data;
   return (
-    <Card className="flex items-center justify-between gap-6 px-6 py-5">
+    <Card className={rowCard}>
       <div className="flex min-w-0 flex-col gap-1">
         <h2 className={cardTitle}>Ideal customer</h2>
         {profile.isPending ? (
@@ -107,19 +109,19 @@ function Suppressions() {
   const rows = list.data?.data ?? [];
   return (
     <Card className="flex flex-col overflow-clip">
-      <div className="flex flex-col gap-1 px-6 pb-4 pt-5">
+      <div className="flex flex-col gap-1 px-4 pb-4 pt-5 sm:px-6">
         <h2 className={cardTitle}>Do-not-contact list</h2>
         <p className={muted}>Nobody on this list is stored again or emailed, whoever finds them. Unsubscribes and complaints are added automatically.</p>
       </div>
-      <div className="flex items-center gap-3 border-t border-t-[#200D0D14] px-6 py-3.5">
-        <form onSubmit={submit} className="flex grow items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3 border-t border-t-[#200D0D14] px-4 py-3.5 sm:flex-nowrap sm:px-6">
+        <form onSubmit={submit} className="flex min-w-0 grow basis-full items-center gap-2 sm:basis-auto">
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="name@company.com"
             aria-label="Email to suppress"
-            className="h-9 grow rounded-lg border border-[#200D0D24] px-3 tabular-nums text-[13px]/4 text-ink outline-none placeholder:text-[#200D0D73] focus:border-ink"
+            className="h-9 min-w-0 grow rounded-lg border border-[#200D0D24] px-3 tabular-nums text-[13px]/4 text-ink outline-none placeholder:text-[#200D0D73] focus:border-ink"
           />
           <Button type="submit" variant="outline" size="md" loading={add.isPending} disabled={!email.trim()}>
             Add
@@ -131,22 +133,27 @@ function Suppressions() {
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search"
           aria-label="Search the list"
-          className="h-9 w-48 rounded-lg border border-[#200D0D1A] px-3 text-[13px]/4 outline-none placeholder:text-[#200D0D73] focus:border-ink"
+          className="h-9 w-full rounded-lg border border-[#200D0D1A] px-3 text-[13px]/4 outline-none placeholder:text-[#200D0D73] focus:border-ink sm:w-48"
         />
       </div>
-      {add.isError ? <QueryError className="mx-6 mb-3" error={add.error} /> : null}
+      {add.isError ? <QueryError className="mx-4 mb-3 sm:mx-6" error={add.error} /> : null}
       {list.isError ? (
-        <QueryError className="mx-6 mb-5" error={list.error} what="the do-not-contact list" onRetry={() => void list.refetch()} />
+        <QueryError className="mx-4 mb-5 sm:mx-6" error={list.error} what="the do-not-contact list" onRetry={() => void list.refetch()} />
       ) : list.isPending ? (
-        <div className="border-t border-t-[#200D0D14] px-6 py-4">
-          <Skeleton className="h-5 w-64" />
+        <div className="border-t border-t-[#200D0D14] px-4 py-4 sm:px-6">
+          <Skeleton className="h-5 w-64 max-w-full" />
         </div>
       ) : rows.length ? (
         rows.map((r) => (
-          <div key={r.email} className="flex items-center gap-4 border-t border-t-[#200D0D0F] px-6 py-3">
-            <div className="grow truncate tabular-nums text-[13px]/4 text-ink">{r.email}</div>
-            <div className="w-28 text-xs/4 font-medium text-muted">{r.reason}</div>
-            <div className="w-28 text-xs/4 font-medium text-muted">{longDate(r.created_at)}</div>
+          <div key={r.email} className="flex items-center gap-4 border-t border-t-[#200D0D0F] px-4 py-3 sm:px-6">
+            {/* Phones: reason and date go under the address; from `sm` the three sit in one row. */}
+            <div className="flex min-w-0 grow flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-4">
+              <div className="truncate tabular-nums text-[13px]/4 text-ink sm:grow">{r.email}</div>
+              <div className="flex gap-2 sm:contents">
+                <div className="text-xs/4 font-medium text-muted sm:w-28">{r.reason}</div>
+                <div className="text-xs/4 font-medium text-muted sm:w-28">{longDate(r.created_at)}</div>
+              </div>
+            </div>
             <Button variant="danger" size="sm" onClick={() => window.confirm(`Allow ${r.email} to be contacted again?`) && remove.mutate(r.email)}>
               Remove
             </Button>
@@ -164,8 +171,8 @@ function Suppressions() {
 function AccountCard() {
   const { user, signOut } = useSession();
   return (
-    <Card className="flex items-center justify-between gap-6 px-6 py-5">
-      <div className="flex flex-col gap-1">
+    <Card className={rowCard}>
+      <div className="flex min-w-0 flex-col gap-1">
         <h2 className={cardTitle}>Account</h2>
         <p className={muted}>
           Signed in as <span className="tabular-nums text-ink">{user?.email ?? "—"}</span>

@@ -37,3 +37,36 @@ export function hostOf(url: string | null | undefined): string | null {
     return null;
   }
 }
+
+export type BodyPart = { t: "text"; v: string } | { t: "cite"; n: number; url: string };
+
+/**
+ * A draft body with its citations ([{text, source_url}]) marked: each cited phrase gets "[n]" after its first
+ * occurrence, n being the number of the lead's evidence item with that source (numbered by `sources` order, oldest
+ * first); a source that is not among the evidence gets the next free number.
+ */
+export function citeBody(body: string, citations: { text: string; source_url: string }[], sources: string[] = []): BodyPart[] {
+  const numbers = new Map(sources.map((url, i) => [url, i + 1] as const));
+  let next = sources.length + 1;
+  const marks: { at: number; n: number; url: string }[] = [];
+  for (const c of citations) {
+    const i = c.text ? body.indexOf(c.text) : -1;
+    if (i < 0) continue;
+    let n = numbers.get(c.source_url);
+    if (n === undefined) {
+      n = next++;
+      numbers.set(c.source_url, n);
+    }
+    marks.push({ at: i + c.text.length, n, url: c.source_url });
+  }
+  marks.sort((a, b) => a.at - b.at);
+  const parts: BodyPart[] = [];
+  let last = 0;
+  for (const m of marks) {
+    if (m.at > last) parts.push({ t: "text", v: body.slice(last, m.at) });
+    parts.push({ t: "cite", n: m.n, url: m.url });
+    last = Math.max(last, m.at);
+  }
+  if (last < body.length) parts.push({ t: "text", v: body.slice(last) });
+  return parts;
+}

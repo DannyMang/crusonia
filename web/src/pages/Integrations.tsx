@@ -69,9 +69,9 @@ export default function Integrations() {
     <>
       <CrumbBar here="Integrations" />
       <Page>
-        <div className="flex w-240 max-w-full flex-col gap-4 px-12 pb-14 pt-8">
+        <div className="flex w-240 max-w-full flex-col gap-4 px-4 pb-14 pt-6 sm:px-12 sm:pt-8">
           <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-2">
-            <div className="flex flex-col gap-2">
+            <div className="flex min-w-0 max-w-full flex-col gap-2">
               <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Integrations</h1>
               <p className="w-140 max-w-full text-[13px]/4.5 font-medium text-muted">
                 The tools your Crusonia agent works through. Keys are stored encrypted and only used for the job listed on each card.
@@ -179,8 +179,8 @@ function ProviderCard({
   children?: ReactNode;
 }) {
   return (
-    <Card className="flex flex-col gap-3 p-6">
-      <div className="flex h-8 shrink-0 items-center gap-2.5">
+    <Card className="flex flex-col gap-3 p-4 sm:p-6">
+      <div className="flex min-h-8 shrink-0 flex-wrap items-center gap-2.5 sm:h-8 sm:flex-nowrap">
         <Tile>{tile}</Tile>
         <h2 className="text-[15px]/4.5 font-medium text-ink">{name}</h2>
         <StatusPill state={state} />
@@ -204,8 +204,8 @@ function MissingSecrets({ secrets }: { secrets: string[] }) {
       <div className="flex flex-col gap-1.5 pt-1">
         <div className={fieldLabel}>{secrets.length === 1 ? "Missing secret" : "Missing secrets"}</div>
         {secrets.map((k) => (
-          <div key={k} className="flex items-center gap-3">
-            <div className="flex h-9.25 w-90 min-w-0 shrink-0 items-center gap-2 rounded-lg border border-[#200D0D1A] px-3.5">
+          <div key={k} className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+            <div className="flex h-9.25 w-full min-w-0 shrink-0 items-center gap-2 rounded-lg border border-[#200D0D1A] px-3.5 sm:w-90">
               <span className="grow truncate text-[13px]/4.5 font-medium text-ink">{k}</span>
               <span className="shrink-0 text-xs/4 font-medium text-faint">not set</span>
             </div>
@@ -216,7 +216,7 @@ function MissingSecrets({ secrets }: { secrets: string[] }) {
       {commands.length ? (
         <div className="flex flex-col gap-1.5 pt-1">
           <div className={fieldLabel}>Add {commands.length === 1 ? "it" : "them"} to the Worker</div>
-          <CodeWell display={commands.join("\n")} className="w-fit min-w-90 max-w-full py-2.5" />
+          <CodeWell display={commands.join("\n")} className="w-fit max-w-full py-2.5 sm:min-w-90" />
           <div className="text-xs/4 font-medium text-faint">
             Or put {commands.length === 1 ? "it" : "them"} in <code className="font-medium text-ink">.dev.vars</code> and run{" "}
             <code className="font-medium text-ink">bun run secrets</code> (see the README). This card turns Connected on the next status check.
@@ -241,8 +241,14 @@ function renderTicks(text: string) {
 }
 
 function Fact({ title, value, first }: { title: string; value: ReactNode; first?: boolean }) {
+  // Phones share the row equally; from `sm` the facts keep the design's fixed widths.
   return (
-    <div className={cx("flex shrink-0 flex-col gap-1", first ? "w-42.5" : "w-32.5 border-l border-l-[#200D0D1A] pl-4.75")}>
+    <div
+      className={cx(
+        "flex min-w-0 grow basis-0 flex-col gap-1 sm:shrink-0 sm:grow-0 sm:basis-auto",
+        first ? "sm:w-42.5" : "border-l border-l-[#200D0D1A] pl-3 sm:w-32.5 sm:pl-4.75",
+      )}
+    >
       <div className="text-[13px]/4 font-medium text-faint">{title}</div>
       <div className="text-[15px]/4.5 font-semibold text-ink">{value}</div>
     </div>
@@ -297,8 +303,8 @@ function AgentMailCard({ status, known }: CardProps) {
       description="Email inbox for outreach and replies. Crusonia only sends to contacts who opted in or that you approved."
     >
       {state === "connected" ? (
-        <div className="flex gap-4 pt-1">
-          <div className="flex w-90 min-w-0 flex-col gap-1.5">
+        <div className="flex flex-col gap-4 pt-1 sm:flex-row">
+          <div className="flex w-full min-w-0 flex-col gap-1.5 sm:w-90">
             <div className={fieldLabel}>Inbox</div>
             <div className="flex h-9.25 shrink-0 items-center gap-2 rounded-lg border border-[#200D0D1A] pl-3.5 pr-1.5">
               {inbox ? (
@@ -311,7 +317,7 @@ function AgentMailCard({ status, known }: CardProps) {
               )}
             </div>
           </div>
-          <div className="flex w-90 min-w-0 flex-col gap-1.5">
+          <div className="flex w-full min-w-0 flex-col gap-1.5 sm:w-90">
             <div className={fieldLabel}>Sending</div>
             <div className="flex h-9.25 shrink-0 items-center gap-2 rounded-lg border border-[#200D0D1A] px-3.5">
               <span className="grow truncate text-sm/4.5 font-medium text-ink">Opted-in contacts only</span>
@@ -422,17 +428,18 @@ function PlatformRow({
   last?: boolean;
 }) {
   return (
-    <div className={cx("flex min-h-15 shrink-0 items-center gap-2.5 py-3", !last && "border-b border-b-[#200D0D1A]")}>
+    // Phones: tile, name, status and action on one line, the description under them.
+    <div className={cx("flex min-h-15 shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 py-3 sm:flex-nowrap", !last && "border-b border-b-[#200D0D1A]")}>
       <Tile muted={state === "soon"}>{tile}</Tile>
-      <div className="w-33 shrink-0 text-sm/4.5 font-medium text-ink">{name}</div>
-      <div className="flex min-w-0 grow basis-0 flex-col gap-1.5">
+      <div className="min-w-0 grow text-sm/4.5 font-medium text-ink sm:w-33 sm:shrink-0 sm:grow-0">{name}</div>
+      <div className="order-1 flex min-w-0 grow basis-full flex-col gap-1.5 pl-9.5 sm:order-none sm:basis-0 sm:pl-0">
         <div className="text-[13px]/4 font-medium text-muted">{description}</div>
         {extra}
       </div>
-      <div className="flex w-29 shrink-0">
+      <div className="flex shrink-0 sm:w-29">
         <StatusPill state={state} />
       </div>
-      <div className="flex w-23 shrink-0 justify-end">{action}</div>
+      <div className="flex shrink-0 justify-end sm:w-23">{action}</div>
     </div>
   );
 }
@@ -440,8 +447,8 @@ function PlatformRow({
 function PlatformCard({ status, known }: CardProps) {
   const { state: naiveState, missing: naiveMissing } = naiveInfo(status, known);
   return (
-    <Card className="flex flex-col px-6 pb-2 pt-6">
-      <div className="flex items-baseline gap-2.5 pb-2">
+    <Card className="flex flex-col px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 pb-2">
         <h2 className="text-[15px]/4.5 font-medium text-ink">Platform</h2>
         <div className="text-[13px]/4 font-medium text-faint">Runs the agent, signs you in, and (soon) asks for approvals by text</div>
       </div>
@@ -480,14 +487,14 @@ function PlatformCard({ status, known }: CardProps) {
 
 function CardSkeleton() {
   return (
-    <Card className="flex flex-col gap-3 p-6">
+    <Card className="flex flex-col gap-3 p-4 sm:p-6">
       <div className="flex h-8 items-center gap-2.5">
         <Skeleton className="size-7 rounded-[7px]" />
         <Skeleton className="h-4.5 w-24" />
         <Skeleton className="h-5.5 w-20 rounded-full" />
       </div>
       <Skeleton className="h-4.5 w-3/4" />
-      <Skeleton className="h-9.25 w-90" />
+      <Skeleton className="h-9.25 w-90 max-w-full" />
     </Card>
   );
 }

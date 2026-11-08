@@ -2,7 +2,7 @@
 // author names (web/src/lib/authors.ts) and citation splitting (web/src/lib/citations.ts).
 import { describe, expect, test } from "bun:test";
 import { describeAuthor } from "../web/src/lib/authors.ts";
-import { citedParts, sourceLabel } from "../web/src/lib/citations.ts";
+import { citeBody, citedParts, sourceLabel } from "../web/src/lib/citations.ts";
 import { parseInline, parseMarkdown, safeHref } from "../web/src/lib/markdown-parse.ts";
 
 describe("parseMarkdown", () => {
@@ -70,5 +70,33 @@ describe("citedParts", () => {
   test("source labels drop the scheme and www", () => {
     expect(sourceLabel("https://www.techcrunch.com/2026/09/16/x")).toBe("techcrunch.com/2026/09/16/x");
     expect(sourceLabel("https://jobs.lever.co/")).toBe("jobs.lever.co");
+  });
+});
+
+describe("citeBody", () => {
+  test("marks each cited phrase with its evidence number", () => {
+    const body = "Saw Harbor Labs is hiring a founding AE, right after the Series A. Congrats.";
+    const parts = citeBody(
+      body,
+      [
+        { text: "hiring a founding AE", source_url: "https://jobs.lever.co/harborlabs" },
+        { text: "the Series A", source_url: "https://techcrunch.com/a" },
+      ],
+      ["https://harborlabs.dev", "https://harborlabs.dev/about", "https://techcrunch.com/a", "https://jobs.lever.co/harborlabs"],
+    );
+    expect(parts).toEqual([
+      { t: "text", v: "Saw Harbor Labs is hiring a founding AE" },
+      { t: "cite", n: 4, url: "https://jobs.lever.co/harborlabs" },
+      { t: "text", v: ", right after the Series A" },
+      { t: "cite", n: 3, url: "https://techcrunch.com/a" },
+      { t: "text", v: ". Congrats." },
+    ]);
+  });
+  test("a source outside the evidence gets the next number; missing phrases are ignored", () => {
+    expect(citeBody("Hi there.", [{ text: "there", source_url: "https://x.com/a" }, { text: "nope", source_url: "https://y.com" }], ["https://a.com"])).toEqual([
+      { t: "text", v: "Hi there" },
+      { t: "cite", n: 2, url: "https://x.com/a" },
+      { t: "text", v: "." },
+    ]);
   });
 });

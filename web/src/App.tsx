@@ -12,7 +12,8 @@ type Loader = () => Promise<{ default: ComponentType }>;
 
 const pages = {
   AppShell: () => import("./components/AppShell.tsx").then((m) => ({ default: m.AppShell })),
-  Approvals: () => import("./pages/Approvals.tsx"),
+  Outreach: () => import("./pages/Outreach.tsx"),
+  ApprovalsRedirect: () => import("./pages/Outreach.tsx").then((m) => ({ default: m.ApprovalsRedirect })),
   SignIn: () => import("./pages/auth/SignIn.tsx"),
   SignUp: () => import("./pages/auth/SignUp.tsx"),
   SsoCallback: () => import("./pages/auth/SsoCallback.tsx"),
@@ -21,6 +22,8 @@ const pages = {
   Integrations: () => import("./pages/Integrations.tsx"),
   LeadDetail: () => import("./pages/LeadDetail.tsx"),
   Leads: () => import("./pages/Leads.tsx"),
+  FindLeads: () => import("./pages/leads/Find.tsx"),
+  ReviewLeads: () => import("./pages/leads/Review.tsx"),
   NotFound: () => import("./pages/NotFound.tsx"),
   OnboardingLayout: () => import("./pages/onboarding/Layout.tsx"),
   Step1Company: () => import("./pages/onboarding/Step1Company.tsx"),
@@ -33,7 +36,10 @@ const pages = {
   SettingsBilling: () => import("./pages/settings/Billing.tsx"),
   SettingsCompany: () => import("./pages/settings/CompanySummary.tsx"),
   WorkflowRun: () => import("./pages/WorkflowRun.tsx"),
-  Workflows: () => import("./pages/Workflows.tsx"),
+  Workflows: () => import("./pages/workflows/List.tsx"),
+  WorkflowBuilder: () => import("./pages/workflows/Builder.tsx"),
+  WorkflowRuns: () => import("./pages/workflows/Runs.tsx"),
+  ImportCsv: () => import("./pages/import/ImportCsv.tsx"),
 } satisfies Record<string, Loader>;
 
 const L = {} as Record<keyof typeof pages, LazyExoticComponent<ComponentType>>;
@@ -161,11 +167,23 @@ export function App() {
                 <Route path="app" element={screen(L.AppShell)}>
                   <Route index element={page(L.Home)} />
                   <Route path="leads" element={page(L.Leads)} />
+                  <Route path="leads/find" element={page(L.FindLeads)} />
+                  <Route path="leads/review" element={page(L.ReviewLeads)} />
+                  <Route path="leads/review/:id" element={page(L.ReviewLeads)} />
+                  <Route path="leads/import" element={page(L.ImportCsv)} />
                   <Route path="leads/:id" element={page(L.LeadDetail)} />
-                  <Route path="approvals" element={page(L.Approvals)} />
-                  <Route path="approvals/:code" element={page(L.Approvals)} />
+                  <Route path="outreach" element={page(L.Outreach)} />
+                  <Route path="outreach/tasks" element={page(L.Outreach)} />
+                  <Route path="outreach/tasks/:id" element={page(L.Outreach)} />
+                  <Route path="outreach/:code" element={page(L.Outreach)} />
+                  {/* Older links, iMessage texts and emails point at /app/approvals(/:code). */}
+                  <Route path="approvals" element={page(L.ApprovalsRedirect)} />
+                  <Route path="approvals/:code" element={page(L.ApprovalsRedirect)} />
                   <Route path="workflows" element={page(L.Workflows)} />
                   <Route path="workflows/runs/:id" element={page(L.WorkflowRun)} />
+                  <Route path="workflows/new" element={page(L.WorkflowBuilder)} />
+                  <Route path="workflows/:id" element={page(L.WorkflowBuilder)} />
+                  <Route path="workflows/:id/runs" element={page(L.WorkflowRuns)} />
                   {/* Experiments were removed (owner, Nov 8); old links land on Home. */}
                   <Route path="experiments/*" element={<Navigate to="/app" replace />} />
                   <Route path="replies" element={page(L.Replies)} />

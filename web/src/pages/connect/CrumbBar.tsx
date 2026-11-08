@@ -12,7 +12,7 @@ export function CrumbBar({ here, parent }: { here: string; parent?: { label: str
   const workspace = profile.data?.company?.trim() || "Home";
   return (
     <div className="shrink-0 border-b border-b-[#200D0D1A]">
-      <nav aria-label="Breadcrumb" className="mx-auto flex h-12.5 w-full max-w-[1200px] items-center gap-2 px-12 text-sm/4.5">
+      <nav aria-label="Breadcrumb" className="mx-auto flex h-12.5 w-full max-w-[1200px] items-center gap-2 px-4 text-sm/4.5 sm:px-12">
         <Link to="/app" className="text-faint hover:text-ink">
           {workspace}
         </Link>
@@ -21,7 +21,7 @@ export function CrumbBar({ here, parent }: { here: string; parent?: { label: str
         </span>
         {parent ? (
           <>
-            <Link to={parent.to} className="text-[#200D0D66] hover:text-ink">
+            <Link to={parent.to} className="text-faint hover:text-ink">
               {parent.label}
             </Link>
             <span aria-hidden className="font-medium text-[#200D0D66]">
