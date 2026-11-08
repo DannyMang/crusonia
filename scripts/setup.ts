@@ -1,10 +1,10 @@
 // Registers Crusonia with its providers. Idempotent: safe to re-run.
 //   bun run setup                 print the values to add to .dev.vars
 //   bun run setup --write         also write them into .dev.vars
-//   bun run setup --naive-credential   re-add the MCP credential to an existing Naive vault
+//   bun run setup --naive-credential   re-add the MCP credentials to an existing Naive vault
 //
 // Needs: PUBLIC_URL (wrangler.jsonc, after the first deploy), MCP_TOKEN, and the API key of each
-// provider to set up (AGENTMAIL_API_KEY, NAIVE_API_KEY). Providers without a key are skipped.
+// provider to set up (AGENTMAIL_API_KEY, NAIVE_API_KEY, APIFY_TOKEN). Providers without a key are skipped.
 // Prints secrets to the terminal on purpose (some are shown only once by the provider).
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { AgentMailClient } from "agentmail";
@@ -99,6 +99,12 @@ async function setupAgentMail(baseUrl: string) {
 
 const NAIVE_BASE = "https://api.vetta.sh";
 
+// Apify's hosted MCP server, limited to the tools Crusonia uses: Actor search/calls (people and company
+// scrapers), web search + browsing, and the crawler that reads a customer's site during onboarding.
+// The agent's mcp_servers[].url must equal this string exactly for Naive to inject the token.
+export const APIFY_MCP_URL =
+  "https://mcp.apify.com?tools=actors,apify/rag-web-browser,apify/website-content-crawler,apify/google-search-scraper";
+
 class NaiveError extends Error {}
 
 function naiveClient(apiKey: string, redact: string[]) {
@@ -129,7 +135,8 @@ async function setupNaive(baseUrl: string) {
     return;
   }
   const mcpToken = requireVar("MCP_TOKEN", "Generate one with `openssl rand -hex 32` and add it to .dev.vars.");
-  const post = naiveClient(apiKey, [apiKey, mcpToken]);
+  const apifyToken = getVar("APIFY_TOKEN");
+  const post = naiveClient(apiKey, [apiKey, mcpToken, ...(apifyToken ? [apifyToken] : [])]);
 
   // Webhook: the secret is shown once, so skip if we already have it.
   const webhookUrl = `${baseUrl}/webhooks/naive`;
@@ -150,7 +157,7 @@ async function setupNaive(baseUrl: string) {
   let vaultId = getVar("NAIVE_VAULT_ID");
   let addCredential = args.has("--naive-credential");
   if (vaultId) {
-    if (!addCredential) notes.push("Naive vault: already configured (NAIVE_VAULT_ID set), skipped. Use --naive-credential to re-add the MCP credential.");
+    if (!addCredential) notes.push("Naive vault: already configured (NAIVE_VAULT_ID set), skipped. Use --naive-credential to re-add the MCP credentials.");
   } else {
     const vault = await post<{ id: string }>("/v1/vaults", { display_name: "Crusonia" }, "naive-vault");
     vaultId = vault.id;
@@ -169,6 +176,20 @@ async function setupNaive(baseUrl: string) {
     } catch (err) {
       notes.push(`Naive credential failed. Save NAIVE_VAULT_ID, then re-run with --naive-credential. ${(err as Error).message}`);
     }
+    if (!apifyToken) {
+      notes.push("Apify MCP credential skipped: APIFY_TOKEN not set. Add it, then re-run with --naive-credential.");
+    } else {
+      try {
+        await post(
+          `/v1/vaults/${vaultId}/credentials`,
+          { kind: "static_bearer", key: "Apify MCP", mcp_server_url: APIFY_MCP_URL, value: apifyToken },
+          `naive-credential:${vaultId}:${APIFY_MCP_URL}:${await sha256Hex(apifyToken)}`,
+        );
+        console.log(`Naive vault credential: Apify MCP -> ${APIFY_MCP_URL}`);
+      } catch (err) {
+        notes.push(`Apify MCP credential failed. Re-run with --naive-credential. ${(err as Error).message}`);
+      }
+    }
   }
 
   // Agent creation waits for the playbook and MCP tools: see createNaiveAgent below.
@@ -179,9 +200,10 @@ async function setupNaive(baseUrl: string) {
 // Not called yet. Reference request (verified against the Naive REST API):
 //   POST /v1/agents
 //   { name, model: "vetta/auto", system,
-//     mcp_servers: [{ type: "url", name: "crusonia", url: `${PUBLIC_URL}/mcp` }],
+//     mcp_servers: [{ type: "url", name: "crusonia", url: `${PUBLIC_URL}/mcp` },
+//                   { type: "url", name: "apify", url: APIFY_MCP_URL }],
 //     tools: { default_config: { permission: "ask" },
-//              configs: { "crusonia.<tool>": { permission: "allow" } } },
+//              configs: { "crusonia.<tool>": { permission: "allow" }, "apify.<tool>": { permission: "allow" } } },
 //     budget: { cap_micro_usd, max_task_micro_usd, period: "day" } }
 // The mcp_servers url must equal the vault credential's mcp_server_url exactly for the token to be injected.
 // Store the returned agent id as NAIVE_AGENT_ID (add it to .dev.vars.example and src/env.ts then).

@@ -9,7 +9,7 @@ export interface Env {
   DATABASE_URL?: string;
   NAIVE_API_KEY?: string;
   AGENTMAIL_API_KEY?: string;
-  MONID_API_KEY?: string;
+  APIFY_TOKEN?: string;
   HUBSPOT_ACCESS_TOKEN?: string;
   NOTION_API_TOKEN?: string;
   CLERK_SECRET_KEY?: string;

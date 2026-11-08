@@ -1,8 +1,8 @@
 # Crusonia
 
 GTM engine (a Clay/Apollo alternative run by AI agents). API-only Cloudflare Worker (Hono) + Neon Postgres.
-Naive runs the agents and calls our MCP tools; AgentMail handles email (opted-in leads only); Monid is the data
-provider gateway; HubSpot and Notion are synced; Clerk handles users.
+Naive runs the agents and calls our MCP tools; AgentMail handles email (opted-in leads only); Apify supplies web
+and lead data through its hosted MCP server; HubSpot and Notion are synced; Clerk handles users.
 
 Live: https://crusonia.veri-web.workers.dev/health
 
