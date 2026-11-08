@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { describeAuthor } from "../web/src/lib/authors.ts";
 import { citeBody, citedParts, sourceLabel, uniqueSources } from "../web/src/lib/citations.ts";
+import { findProgress } from "../web/src/lib/find-progress.ts";
 import { creditsLabel, plainStep, replyBody } from "../web/src/lib/format.ts";
 import { sourceLabel as leadSource } from "../web/src/pages/leads/shared.ts";
 import { parseInline, parseMarkdown, safeHref } from "../web/src/lib/markdown-parse.ts";
@@ -164,5 +165,24 @@ describe("a reply's body", () => {
   });
   test("nothing there is empty", () => {
     expect(replyBody(null)).toBe("");
+  });
+});
+
+describe("onboarding step 4's progress", () => {
+  test("while the agent works it says how many so far", () => {
+    expect(findProgress(0, 25, "running", true)).toMatchObject({ complete: false, title: "Your first leads are coming in", status: "Found 0 of 25", hint: "waiting for the first lead" });
+    expect(findProgress(3, 25, "running", true)).toMatchObject({ complete: false, status: "Found 3 of 25", hint: "looking for more" });
+  });
+  test("once the agent has finished it stops waiting, and says it found fewer", () => {
+    expect(findProgress(5, 25, "done", true)).toMatchObject({ finished: true, complete: true, title: "Your first leads are in", status: "Found 5", hint: "This search found 5 of the 25 it looked for" });
+    expect(findProgress(5, 25, "error", true).complete).toBe(true);
+  });
+  test("a search that found nothing doesn't say the leads are in", () => {
+    const p = findProgress(0, 25, "done", true);
+    expect(p.title).toBe("No leads from this search");
+    expect(p.hint).toBe("This search found none of the 25 it looked for");
+  });
+  test("reaching the target is complete, even before the session ends", () => {
+    expect(findProgress(25, 25, "running", true)).toMatchObject({ complete: true, status: "Found 25", hint: null });
   });
 });

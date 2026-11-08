@@ -427,3 +427,25 @@ describe("lead finding", () => {
     expect(findLeadsMessage(10, summary, "run_plain")).not.toContain("companies like");
   });
 });
+
+describe("buildSteps: a parked call that ran under another id", () => {
+  const ev = (seq: number, type: string, data: Record<string, unknown>) => ({ seq, type, data, created_at: `2026-11-08T15:23:${String(seq).padStart(2, "0")}Z` });
+  const events = [
+    ev(1, "tool.started", { name: "crusonia.create_draft", tool_call_id: "a", args: { lead_id: "lead_1" } }),
+    ev(2, "tool.completed", { name: "crusonia.create_draft", tool_call_id: "a", is_error: true, output: "crusonia.create_draft is waiting for approval" }),
+    ev(3, "session.idle", { stop_reason: "awaiting_approval" }),
+    ev(4, "tool.started", { name: "crusonia.create_draft", tool_call_id: "b", args: { lead_id: "lead_1" } }),
+    ev(5, "tool.completed", { name: "crusonia.create_draft", tool_call_id: "b", output: "{\"ok\":true}" }),
+  ];
+  test("shows one step, and no wait for the owner", () => {
+    const steps = buildSteps(events, [{ id: 1, kind: "naive_tool_auto_allowed", data: { tool_call_id: "b" }, created_at: "2026-11-08T15:23:03Z" }]);
+    expect(steps.filter((s) => s.tool === "create_draft")).toHaveLength(1);
+    expect(steps.some((s) => /Needs approval|Waiting for the owner/.test(s.summary))).toBe(false);
+  });
+  test("a call really waiting on the owner still says so", () => {
+    const parked = events.slice(0, 3);
+    const steps = buildSteps(parked, [], [{ code: "ABCD", kind: "tool", tool_call_id: "a", status: "pending", decided_via: null } as never]);
+    expect(steps.some((s) => s.summary.startsWith("Needs approval"))).toBe(true);
+    expect(steps.some((s) => s.summary === "Waiting for the owner to approve a tool call")).toBe(true);
+  });
+});

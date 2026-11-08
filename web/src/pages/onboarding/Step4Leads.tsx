@@ -9,7 +9,8 @@ import { ButtonLink, QueryError, Skeleton, stageLabel } from "../../components/u
 import { useOnboarding } from "../../components/onboarding/store.ts";
 import { ArrowIcon, bigButton, DoneDot, Ring, StepTitle } from "../../components/onboarding/ui.tsx";
 import { cx, hostOf, leadTitle } from "../../lib/format.ts";
-import { keys } from "../../queries.ts";
+import { findProgress } from "../../lib/find-progress.ts";
+import { keys, useFindRun } from "../../queries.ts";
 
 const DEFAULT_TARGET = 25;
 const SHOWN = 9;
@@ -26,6 +27,9 @@ export default function Step4Leads() {
   const run = useOnboarding().leads;
   const target = run?.target ?? DEFAULT_TARGET;
 
+  // The session says when no more are coming: the page mustn't wait for 25 after the agent has stopped.
+  const session = useFindRun(run?.sessionId, true);
+  const sessionStatus = session.data?.run.status;
   const q = useQuery({
     queryKey: keys.leads(FILTERS),
     queryFn: ({ signal }) => api.leads(FILTERS, signal),
@@ -37,10 +41,9 @@ export default function Step4Leads() {
   });
 
   const leads = inRun(q.data?.data ?? [], run?.startedAt);
-  const researched = leads.filter((l) => phaseOf(l.stage) === "researched").length;
   const researching = leads.filter((l) => phaseOf(l.stage) === "researching").length;
-  const queued = leads.filter((l) => phaseOf(l.stage) === "queued").length;
-  const complete = leads.length >= target && researched === leads.length;
+  const progress = findProgress(leads.length, target, sessionStatus, Boolean(run));
+  const complete = progress.complete;
   const shown = leads.slice(0, SHOWN);
 
   return (
@@ -49,7 +52,7 @@ export default function Step4Leads() {
         <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
           <StepTitle
             step={4}
-            title={complete ? "Your first leads are in" : run || leads.length ? "Your first leads are coming in" : "Your first leads"}
+            title={progress.title}
             subtitle="Each one is checked against your profile, with the evidence attached."
           />
           <Link to="/app" className={bigButton}>
@@ -66,14 +69,12 @@ export default function Step4Leads() {
               <div className="flex items-center gap-2.5">
                 {complete ? <DoneDot size={16} check={9} /> : <Ring size={14} />}
                 <div className="text-[15px]/4.5 font-semibold tabular-nums text-ink" role="status">
-                  Researched {Math.min(researched, target)} of {target}
+                  {progress.status}
                 </div>
               </div>
               <div className="flex items-center gap-3 text-[13px]/4 font-medium text-muted">
                 <span className="tabular-nums">
-                  {[researching ? `${researching} in progress` : null, queued ? `${queued} queued` : null, !researching && !queued && !complete ? (leads.length ? "waiting for the next lead" : "waiting for the first lead") : null]
-                    .filter(Boolean)
-                    .join(" · ")}
+                  {[researching ? `${researching} in progress` : null, progress.hint].filter(Boolean).join(" · ")}
                 </span>
                 {run ? (
                   <Link to={`/app/workflows/runs/${encodeURIComponent(run.sessionId)}`} className="text-ink underline decoration-[#200D0D4D] underline-offset-[3px] hover:decoration-ink">
@@ -82,8 +83,8 @@ export default function Step4Leads() {
                 ) : null}
               </div>
             </div>
-            <div className="flex h-2 shrink-0 overflow-hidden rounded-full bg-[#200D0D0F]" role="progressbar" aria-valuemin={0} aria-valuemax={target} aria-valuenow={Math.min(researched, target)} aria-label="Leads researched">
-              <div className="h-2 rounded-full bg-lime transition-[width] duration-500" style={{ width: `${Math.min(100, (researched / target) * 100)}%` }} />
+            <div className="flex h-2 shrink-0 overflow-hidden rounded-full bg-[#200D0D0F]" role="progressbar" aria-valuemin={0} aria-valuemax={target} aria-valuenow={Math.min(leads.length, target)} aria-label="Leads found">
+              <div className="h-2 rounded-full bg-lime transition-[width] duration-500" style={{ width: `${complete ? 100 : Math.min(100, (leads.length / target) * 100)}%` }} />
             </div>
           </div>
         ) : null}
@@ -95,8 +96,7 @@ export default function Step4Leads() {
             <LeadsTable leads={shown} />
             <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
               <div className="text-[13px]/4.5 font-medium text-muted">
-                Showing the latest {shown.length} · {researched} researched, {researching} in progress, {queued} queued. Drafts for the top leads will wait in
-                Outreach.
+                Showing the latest {shown.length}. Drafts for the top leads will wait in Outreach.
               </div>
               <Link to="/app/leads" className="text-[13px]/4 font-medium text-ink underline decoration-[#200D0D4D] underline-offset-[3px] hover:decoration-ink">
                 View all {leads.length} {leads.length === 1 ? "lead" : "leads"}
@@ -104,7 +104,7 @@ export default function Step4Leads() {
             </div>
           </>
         ) : q.data ? (
-          <Waiting running={Boolean(run)} />
+          <Waiting running={Boolean(run) && !progress.finished} />
         ) : null}
       </div>
     </div>
