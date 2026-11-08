@@ -400,7 +400,12 @@ suite("billing (database, faked Stripe and Naive)", () => {
       expect(s.params.metadata).toMatchObject({ app: "crusonia", crusonia_workspace_id: o });
       expect(s.params.success_url).toBe("https://example.test/app/settings/billing?checkout=success");
       expect(s.params.cancel_url).toBe("https://example.test/app/settings/billing?checkout=cancelled");
+      expect(s.params).toMatchObject({ ui_mode: "hosted_page", billing_address_collection: "auto", allow_promotion_codes: "false", submit_type: "auto", integration_identifier: "hosted_web_0001", origin_context: "web" });
+      expect(s.params.phone_number_collection).toEqual({ enabled: "false" });
+      expect(s.params.automatic_tax).toEqual({ enabled: "false" });
     }
+    expect(sessions[0]!.params.payment_method_collection).toBeUndefined();
+    expect(sessions[1]!.params.payment_method_collection).toBe("always");
     expect(sessions[0]!.params.payment_intent_data.metadata).toEqual({ app: "crusonia", crusonia_workspace_id: o, crusonia_kind: "pack", crusonia_key: "small" });
     expect(sessions[1]!.params.subscription_data.metadata).toEqual({ app: "crusonia", crusonia_workspace_id: o, crusonia_kind: "subscription", crusonia_key: "pro" });
     for (const r of mine) expect(r.raw).not.toContain("clerk_" + "user_id");
