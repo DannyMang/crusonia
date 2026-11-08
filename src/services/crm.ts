@@ -54,9 +54,15 @@ const likePattern = (q: string) => `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
 export async function searchLeads(sql: Sql, ws: string, f: LeadFilters) {
   const [cursorTs, cursorId] = f.cursor ? decodeCursor(f.cursor) : [null, null];
   const pattern = f.q ? likePattern(f.q) : null;
+  // notes_count and rating (the latest thumbs note: "up" | "down" | null) save the list one request per row.
   const rows = await sql`
-    select *, consent_at is not null as has_consent, created_at::text as _cursor_ts from leads
-    where workspace_id = ${ws}
+    select l.*, l.consent_at is not null as has_consent, l.created_at::text as _cursor_ts,
+           (select count(*)::int from lead_notes n where n.lead_id = l.id) as notes_count,
+           (select case n.kind when 'thumbs_up' then 'up' when 'thumbs_down' then 'down' end
+              from lead_notes n where n.lead_id = l.id and n.kind in ('thumbs_up', 'thumbs_down')
+              order by n.id desc limit 1) as rating
+    from leads l
+    where l.workspace_id = ${ws}
       and (${f.stage ?? null}::text is null or stage = ${f.stage ?? null})
       and (${f.min_score ?? null}::int is null or score >= ${f.min_score ?? null})
       and (${f.source ?? null}::text is null or source = ${f.source ?? null})

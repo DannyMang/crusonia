@@ -154,6 +154,24 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     expect(bridge!.value).toMatchObject({ state: "connected", connected: true });
   });
 
+  test("GET /api/approvals shows texted_at once the notice was delivered, null before", async () => {
+    const list = async (code: string) => {
+      const res = await worker.fetch(
+        new Request("https://example.test/api/approvals?limit=200", { headers: { Authorization: "Bearer it" } }),
+        { ...env, MCP_TOKEN: "it" },
+        {} as ExecutionContext,
+      );
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { data: { code: string; texted_at: string | null }[] }).data.find((a) => a.code === code)!;
+    };
+    const { code } = await newSendApproval("texted");
+    expect((await list(code)).texted_at).toBeNull();
+    await pollFor([`approval:${code}`]);
+    const row = await list(code);
+    const [db] = await sql`select delivered_at from imessage_outbox where id = ${`approval:${code}`}`;
+    expect(new Date(row.texted_at!).getTime()).toBe(new Date(db!.delivered_at).getTime());
+  });
+
   test("a failed delivery is released and retried; an unacked lease is not handed to a second poll", async () => {
     await pollFor([]); // drain whatever is queued on the shared branch (acked), then create ours
     const { code } = await newSendApproval("retry");

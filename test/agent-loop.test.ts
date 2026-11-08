@@ -11,7 +11,7 @@ import { checkChannel, citationProblems, openUrl, taskTitle, type ChannelLead } 
 import { draftInputSchema } from "../src/services/drafts.ts";
 import { normalizeDomain, registrableDomain, whyNoDomain } from "../src/services/domains.ts";
 import { leadInputSchema, linkKind, renumberCitations, researchInputSchema } from "../src/services/leads.ts";
-import { buildSteps, type AuditEvent, type StoredEvent } from "../src/services/runs.ts";
+import { buildSteps, findLeadsMessage, findStatusesFromEvents, type AuditEvent, type StoredEvent } from "../src/services/runs.ts";
 import { missingEvidenceQuestion, missingRequirements, qualificationWorkflowSchema, workflowBrief } from "../src/services/qualification.ts";
 import { LANDING_LINES, siteCopy } from "../src/services/site-copy.ts";
 import { researchMessage } from "../src/services/workflows.ts";
@@ -398,5 +398,30 @@ describe("qualification workflow: pause on missing evidence", () => {
     expect(researchInputSchema.safeParse({ lead_id: "l", review_question: "Which Acme is it?" }).success).toBe(true);
     expect(researchInputSchema.safeParse({ lead_id: "l" }).success).toBe(false);
     expect(checkChannel(lead({ stage: "needs_review" }), { channel: "intro" })).toMatchObject({ ok: false, message: expect.stringContaining("waiting for review") });
+  });
+});
+
+describe("lead finding", () => {
+  test("a find run's leads and dedupe status come from its add_leads results; the strongest status wins", () => {
+    const out = (results: unknown[]) => JSON.stringify({ results, counts: {} });
+    const ev = (seq: number, output: unknown, name = "crusonia.add_leads", is_error = false): StoredEvent => ({ seq, type: "tool.completed", data: { name, output, is_error }, created_at: "2026-11-08T00:00:00Z" });
+    const statuses = findStatusesFromEvents([
+      ev(1, out([{ id: "a", status: "created" }, { id: "b", status: "known" }, { status: "skipped", reason: "no domain" }])),
+      ev(2, [{ type: "text", text: out([{ id: "b", status: "merged" }, { id: "a", status: "merged" }]) }]),
+      ev(3, out([{ id: "c", status: "added" }, { id: "d", status: "updated" }])), // older results
+      ev(4, out([{ id: "x", status: "created" }]), "crusonia.add_leads", true),
+      ev(5, out([{ id: "y", status: "created" }]), "crusonia.list_leads"),
+      ev(6, "{ truncated"),
+    ]);
+    expect(Object.fromEntries(statuses)).toEqual({ a: "created", b: "merged", c: "created", d: "merged" });
+  });
+
+  test("find companies like a lead: the brief names the lead by id only and asks the agent to read it", () => {
+    const summary = { markdown: "# Acme\n\n## Who buys\nSeed-stage SaaS.", version: 1, updated_at: null, updated_by: null, change_note: null };
+    const msg = findLeadsMessage(10, summary, "run_like", { likeLeadId: "lead_abc" });
+    expect(msg).toStartWith("Find up to 10 new leads");
+    expect(msg).toContain("companies like lead lead_abc");
+    expect(msg).toContain("get_lead");
+    expect(findLeadsMessage(10, summary, "run_plain")).not.toContain("companies like");
   });
 });

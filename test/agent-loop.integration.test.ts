@@ -10,12 +10,14 @@ import type { Env } from "../src/env.ts";
 import worker from "../src/index.ts";
 import type { FetchFn } from "../src/providers/http.ts";
 import { approveAndSend } from "../src/services/send.ts";
+import { writeCompanySummary } from "../src/services/company-summary.ts";
 import { createLead } from "../src/services/crm.ts";
 import { createDraft } from "../src/services/drafts.ts";
 import { addLeads, getLeadDetail, saveResearch, scoreLead } from "../src/services/leads.ts";
 import { addNote, deleteNote, editNote, excludeLead, recentOwnerNotes, unexcludeLead } from "../src/services/notes.ts";
 import { getQualificationWorkflow, saveQualificationWorkflow } from "../src/services/qualification.ts";
-import { getRunDetail } from "../src/services/runs.ts";
+import { getFindRun, getRunDetail, startFindLeads } from "../src/services/runs.ts";
+import { searchLeads } from "../src/services/crm.ts";
 import { listTasks, markTaskSent, skipTask } from "../src/services/tasks.ts";
 import { exportTrace, getTrace, pruneTraces } from "../src/services/traces.ts";
 import { handleSessionIdle, startResearch } from "../src/services/workflows.ts";
@@ -397,6 +399,53 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
       // The agent's own question pauses a lead too, even with every requirement met.
       const asked = await saveResearch(sql, WS, { lead_id: id, review_question: "Is acme.io the same company?", contacts: [], links: [], evidence: [] });
       expect(asked).toMatchObject({ needs_review: true, lead: { stage: "needs_review", review_question: "Is acme.io the same company?" } });
+    }
+  });
+
+  test("leads list: notes_count and the latest rating per row", async () => {
+    const { results } = await addLeads(sql, WS, [found("rated"), found("plain")]);
+    const [rated, plain] = results.map((r) => r.id!);
+    await addNote(sql, WS, { leadId: rated!, author: "user:owner", body: "Agency", kind: "thumbs_down" });
+    await addNote(sql, WS, { leadId: rated!, author: "user:owner", body: "Actually a product company", kind: "thumbs_up" });
+    await addNote(sql, WS, { leadId: rated!, author: "user:owner", body: "Call next week" });
+    const page = await searchLeads(sql, WS, { q: `-${run}-itloop.dev`, limit: 200 });
+    const row = (id: string) => page.data.find((l) => l.id === id) as { notes_count: number; rating: string | null } | undefined;
+    expect(row(rated!)).toMatchObject({ notes_count: 3, rating: "up" });
+    expect(row(plain!)).toMatchObject({ notes_count: 0, rating: null });
+  });
+
+  test("find runs: like_lead_id shapes the brief; GET /api/leads/find/:id lists the leads the run touched with their status", async () => {
+    {
+      await writeCompanySummary(sql, WS, { markdown: "# IT\n\n## What we sell\nx\n\n## Who buys\ny", author: "user:test", note: "test" });
+      const { results } = await addLeads(sql, WS, [found("like")]);
+      const likeId = results[0]!.id!;
+      const nv = provider((c) => (c.method === "POST" && c.url.endsWith("/v1/sessions") ? Response.json({ id: sid("find"), status: "running" }) : undefined));
+      expect(await failure(startFindLeads(sql, env, WS, 5, "test", nv.fn, { likeLeadId: "lead_missing" }))).toBe("404 not_found");
+      const { session_id } = await startFindLeads(sql, env, WS, 5, "test", nv.fn, { likeLeadId: likeId });
+      expect(session_id).toBe(sid("find"));
+      expect(nv.calls[0]!.body.message).toContain(`companies like lead ${likeId}`);
+      expect((await sql`select input from naive_sessions where id = ${session_id}`)[0]!.input).toMatchObject({ count: 5, like_lead_id: likeId });
+
+      // The run's add_leads call, as the trace stores it.
+      const added = await addLeads(sql, WS, [found("found1"), found("like")]);
+      const output = JSON.stringify(added, null, 2);
+      const events = provider((c) =>
+        c.url.includes(`/sessions/${session_id}/events`)
+          ? Response.json({
+              data: Number(new URL(c.url).searchParams.get("after_seq")) > 0 ? [] : [
+                { seq: 1, type: "tool.completed", data: { tool_call_id: "a1", name: "crusonia.add_leads", output, is_error: false }, created_at: new Date().toISOString() },
+              ],
+              has_more: false,
+              next_cursor: null,
+            })
+          : undefined,
+      );
+      const res = await getFindRun(sql, env, WS, session_id, events.fn);
+      expect(res.run).toMatchObject({ id: session_id, purpose: "find_leads" });
+      expect(Object.fromEntries(res.leads.map((l) => [l.domain, l.find_status]))).toEqual({ [domain("found1")]: "created", [domain("like")]: "known" });
+      await expect(getFindRun(sql, env, WS, sid("nope"))).rejects.toMatchObject({ status: 404 });
+      // Another workspace cannot read the run.
+      await expect(getFindRun(sql, env, "ws_owner", session_id, events.fn)).rejects.toMatchObject({ status: 404 });
     }
   });
 

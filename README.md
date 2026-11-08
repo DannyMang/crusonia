@@ -189,7 +189,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 
 | Method | Path | What |
 | --- | --- | --- |
-| GET | `/api/leads` | List, newest first. Filters `stage`, `min_score`, `source`, `q` (email/name/company/domain); `limit` + `cursor` |
+| GET | `/api/leads` | List, newest first. Filters `stage`, `min_score`, `source`, `q` (email/name/company/domain); `limit` + `cursor`. Each row has `notes_count` and `rating` (`up` / `down` / null: the latest thumbs note) |
 | POST | `/api/leads` | Create an opted-in contact (`email`, optional `consent: {text, at?}`) |
 | POST | `/api/leads/import` | CSV import: JSON `{csv, mapping?, source?, dry_run?}` or a `text/csv` body. Dedupes by email, then company domain + name; reports created/updated/skipped per row |
 | GET | `/api/leads/:id` | Lead (with `contacts`, `links`, `why_summary`, `next_step`) with evidence (numbered `n`), drafts, approvals, notes, messages, Naive sessions and the event timeline |
@@ -204,7 +204,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/tasks/:id/sent` | `{body?, note?}`: the owner sent it (`body` = the text actually sent). Records an outbound message on the task's channel and moves the lead to `sent`; once |
 | POST | `/api/tasks/:id/skip` | `{reason?}`: not sending it; the stage is unchanged |
 | POST | `/api/tasks/:id/regenerate` | `{instructions?}` -> `{session_id}`: a Naive session writes a new version on the same channel (paid like research) |
-| GET | `/api/approvals` | `status` (default `pending`), `kind`, `lead_id` |
+| GET | `/api/approvals` | `status` (default `pending`), `kind`, `lead_id`. Rows carry `texted_at` (when the iMessage notice went out, else null) |
 | GET | `/api/approvals/:code` | One approval |
 | POST | `/api/approvals/:code/approve` | send: re-checks every rule, then sends via AgentMail. tool: allow (`scope`) |
 | POST | `/api/approvals/:code/reject` | send: reject the draft. tool: deny |
@@ -216,7 +216,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | DELETE | `/api/suppressions/:email` | Remove |
 | GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token", workspace: {id, name, owner}}` |
 | GET | `/api/summary` | Home: `pipeline` (cumulative: how many leads got at least to found, researched, drafted, sent, replied, meetings; plus `awaiting_approval` now), `pipeline_now` (where leads are now, one bucket each), `tasks_open`, top 5 `pending_approvals`, `pending_approvals_total`, `pending_sends_total` (send approvals only), `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` and `week_credits`: credits charged in the last 7 days; `provider_usd`: the raw Naive + Apify cost behind them; `budget_usd` from `WEEKLY_BUDGET_USD`; `day_usd` and `daily_cap_usd` for the workspace's daily cap), `paused` |
-| GET | `/api/status` | `get_status` data plus `workspace_id`, `inbox_address`, `naive_agent_configured`, `mcp_url`, `agent_mcp_url` (the workspace's Naive agent URL), `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error), `imessage` (owner workspace only: `enabled`, `active`, `missing`, `bridge` as last reported with `online`, `undeliverable_notices`) |
+| GET | `/api/status` | `get_status` data plus `workspace_id`, `inbox_address`, `naive_agent_configured`, `mcp_url`, `agent_mcp_url` (the workspace's Naive agent URL), `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error), `imessage` (owner workspace only: `enabled`, `active`, `missing`, `owner_phone_hint` (last 4 digits only), `bridge` as last reported with `online`, `undeliverable_notices`) |
 | GET | `/api/company-summary` | `{markdown, version, updated_at, updated_by, change_note}` (version 0 and a suggested `template` before the first save) |
 | PUT | `/api/company-summary` | `{markdown, note?, base_version?}`: a new version (409 `version_conflict` if `base_version` is stale; 413 over 20,000 characters; an unchanged document saves nothing) |
 | GET | `/api/company-summary/versions` | Versions newest first, without bodies: `{version, author, change_note, created_at, chars}` (`limit`, `before`) |
@@ -226,7 +226,8 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/onboarding/read-website` | `{url, max_pages?, render_js?}` -> `{pages: [{url, title, text}], mode, rendered?, note?}`. Synchronous; Apify crawler with `APIFY_TOKEN` (a few cents, metered), retried with JavaScript rendering when it finds no text, else a plain fetch |
 | POST | `/api/onboarding/propose` | `{url?, description?}` -> `{session_id}`: a Naive session reads the site / description and writes the Company summary (author `onboarding`; a description is also saved as v1 right away) |
 | GET | `/api/onboarding/propose/:session_id` | `{status: "running" \| "done" \| "error", profile?}`; poll it (refreshes from Naive while active) |
-| POST | `/api/leads/find` | `{count?}` (25, max 50) -> `{session_id}`: a Naive session finds leads matching the Company summary, adds and scores them |
+| POST | `/api/leads/find` | `{count?, like_lead_id?}` (25, max 50) -> `{session_id}`: a Naive session finds leads matching the Company summary (or companies like that lead), adds and scores them |
+| GET | `/api/leads/find/:session_id` | `{run, leads}`: the leads that find run touched, each with `find_status` `created` / `merged` / `known` (from its add_leads results in the stored trace) |
 | GET | `/api/workflows` | Naive sessions grouped by purpose: `{id, name, purpose, status, started_at, leads_processed, cost_usd, last_event_at, runs}` |
 | GET | `/api/workflows/runs/:session_id` | `{run, steps, lead, approvals}`: the clean timeline. Steps from Naive's events and our audit events, sorted by time; a tool call that waited for a confirmation is one step with `approval: {decision, via, code?, waited_ms}`, and pauses only the auto-confirm policy resolved are left out |
 | GET | `/api/workflows/runs/:session_id/trace` | The full trace: stored Naive events (`after_seq`, `limit` up to 1000; `has_more`, `next_after_seq`), plus the run, our audit events, approvals and `spend` (Naive cost, credits debited, Apify runs). Kept `TRACE_RETENTION_DAYS` (180) |
@@ -601,6 +602,10 @@ Codes are the approvals' 4-character short codes, and case doesn't matter. Other
    - It also writes the five settings to a root-only env file and, with `SEND_TEST_MESSAGE=1`, texts the owner once.
    - There is no SSH. Check the conversation read-only with
      `cd bridge && bun --env-file=<creds> deploy/check-history.ts`.
+   - Before a real `up`, validate the first-boot script locally: `bridge/deploy/test-bootstrap.sh` runs it in a privileged
+     `ubuntu:24.04` container (Docker in Docker) and can never text anyone.
+   - `WORKER_URL` picks the Worker the bridge serves (for example a staging Worker for a rehearsal; production later). Each
+     Worker has its own `BRIDGE_SECRET`. There is one bridge, so point it at one Worker at a time.
    - Ship a new commit or rotate secrets with `bridge/deploy/aws.sh recreate` (the bridge keeps no state), and remove
      everything with `bridge/deploy/aws.sh down --yes`.
    - The settings travel in the instance's launch script, which AWS keeps as instance data, and processes on the box can

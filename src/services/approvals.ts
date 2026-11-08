@@ -42,11 +42,15 @@ export type DecisionChannel = "api" | "imessage";
 
 export const APPROVAL_STATUSES = ["pending", "approved", "rejected", "answered", "expired"] as const;
 
-/** Approvals with their draft and lead. `pending` hides rows past expiry that the cron has not closed yet. */
+/**
+ * Approvals with their draft and lead. `pending` hides rows past expiry that the cron has not closed yet.
+ * `texted_at`: when the bridge confirmed the iMessage notice for this approval went out (null if it was not texted).
+ */
 export async function listApprovals(sql: Sql, ws: string, f: { status: string; kind?: string; lead_id?: string; limit: number }) {
   return sql`
     select a.code, a.kind, a.status, a.summary, a.recipient, a.lead_id, a.draft_id, a.naive_session_id,
            a.tool_call_id, a.payload, a.answer, a.expires_at, a.decided_at, a.decided_via, a.created_at,
+           (select o.delivered_at from imessage_outbox o where o.id = 'approval:' || a.code and o.workspace_id = a.workspace_id) as texted_at,
            case when d.id is null then null else jsonb_build_object(
              'id', d.id, 'version', d.version, 'variant', d.variant, 'subject', d.subject, 'body', d.body, 'status', d.status
            ) end as draft,

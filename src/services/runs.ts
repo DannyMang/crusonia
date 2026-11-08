@@ -3,7 +3,7 @@
 // cached in naive_session_events, merged with our own audit events for the session.
 // Also starts the owner-triggered sessions: onboarding proposals and lead finding. Everything is per workspace:
 // runs are the workspace's sessions, and a session runs on the workspace's own Naive agent (./naive-agents.ts).
-import type { Sql } from "../db.ts";
+import type { Lead, Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { newId } from "../ids.ts";
 import { ApiError } from "../lib/errors.ts";
@@ -647,9 +647,16 @@ export function onboardingMessage(input: { url?: string; description?: string },
   return lines.join("\n");
 }
 
-export function findLeadsMessage(count: number, summary: SummaryView, runId: string): string {
+export function findLeadsMessage(count: number, summary: SummaryView, runId: string, opts: { likeLeadId?: string | null } = {}): string {
+  // The example lead is named by id only: its fields came from the web, so the agent reads them as data (get_lead).
+  const like = opts.likeLeadId
+    ? [
+        `The owner wants companies like lead ${opts.likeLeadId}. Read it with get_lead in your first turn: its why_summary, links, evidence and the owner's notes say why it fits. Find lookalikes: same segment, size and buying signals. Don't add that lead itself.`,
+      ]
+    : [];
   return [
     `Find up to ${count} new leads that match the Crusonia Company summary.`,
+    ...like,
     "1. Read the Company summary below (the owner's recent notes and excluded companies come with get_profile): segments, buying signals, who to avoid.",
     "2. Search with search_web (a segment plus a buying signal per query; run 2-3 searches in the same turn), then read the promising company sites with read_website, several in the same turn.",
     `3. Save the leads with one add_leads call (with the run id), each with the source_url of the page you found it on, 1-3 evidence items and its score, qualified and rationale. Stop after ${count} leads.`,
@@ -716,14 +723,99 @@ export async function startOnboardingProposal(
 }
 
 /** POST /api/leads/find: the agent searches for leads matching the Company summary, adds and scores them. */
-export async function startFindLeads(sql: Sql, env: Env, ws: string, count: number, actor: string, fetchFn?: FetchFn) {
+export async function startFindLeads(
+  sql: Sql,
+  env: Env,
+  ws: string,
+  count: number,
+  actor: string,
+  fetchFn?: FetchFn,
+  opts: { likeLeadId?: string | null } = {},
+) {
   naiveAgent(env, fetchFn);
   const summary = await getCompanySummary(sql, ws);
   if (!summary.markdown) {
     throw new ApiError(409, "profile_missing", "Write the Company summary first (PUT /api/company-summary or POST /api/onboarding/propose): lead finding searches for it");
   }
+  if (opts.likeLeadId && !(await sql`select 1 from leads where workspace_id = ${ws} and id = ${opts.likeLeadId}`)[0]) {
+    throw new ApiError(404, "not_found", `No lead with id ${opts.likeLeadId} to find lookalikes of`);
+  }
   const n = Math.min(Math.max(Math.trunc(count), 1), MAX_FIND_LEADS);
-  return startOwnerSession(sql, env, ws, { purpose: "find_leads", message: (runId) => findLeadsMessage(n, summary, runId), data: { count: n }, actor }, fetchFn);
+  return startOwnerSession(
+    sql,
+    env,
+    ws,
+    {
+      purpose: "find_leads",
+      message: (runId) => findLeadsMessage(n, summary, runId, { likeLeadId: opts.likeLeadId }),
+      data: { count: n, ...(opts.likeLeadId ? { like_lead_id: opts.likeLeadId } : {}) },
+      actor,
+    },
+    fetchFn,
+  );
+}
+
+export type FindStatus = "created" | "merged" | "known";
+const FIND_STATUS_RANK: Record<FindStatus, number> = { created: 3, merged: 2, known: 1 };
+
+/**
+ * The leads a find run touched, from its add_leads results in the stored trace: lead id -> the strongest status the
+ * run gave it (created > merged > known). Older results said added/updated. Skipped entries have no lead. Pure.
+ */
+export function findStatusesFromEvents(events: (NaiveEvent | StoredEvent)[]): Map<string, FindStatus> {
+  const out = new Map<string, FindStatus>();
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (e.type !== "tool.completed" || e.data?.is_error === true) continue;
+    const name = typeof e.data?.name === "string" ? e.data.name : "";
+    if (!/(^|[._])add_leads$/.test(name)) continue;
+    let results: { id?: string; status?: string }[] = [];
+    try {
+      results = (JSON.parse(outputText(e.data?.output)) as { results?: { id?: string; status?: string }[] }).results ?? [];
+    } catch {
+      continue; // a truncated or non-JSON output
+    }
+    for (const r of results) {
+      const status: FindStatus | null =
+        r.status === "created" || r.status === "added" ? "created" : r.status === "merged" || r.status === "updated" ? "merged" : r.status === "known" ? "known" : null;
+      if (!r.id || !status) continue;
+      const prev = out.get(r.id);
+      if (!prev || FIND_STATUS_RANK[status] > FIND_STATUS_RANK[prev]) out.set(r.id, status);
+    }
+  }
+  return out;
+}
+
+/**
+ * GET /api/leads/find/:session_id: the run and the leads it touched with their dedupe status, read from the run's
+ * durable trace (refreshed from Naive first when it may be behind).
+ */
+export async function getFindRun(sql: Sql, env: Env, ws: string, sessionId: string, fetchFn?: FetchFn) {
+  let row = await loadSession(sql, ws, sessionId);
+  if (!row || row.purpose !== "find_leads") throw new ApiError(404, "not_found", `No lead-finding run with session id ${sessionId}`);
+  let sync: { ok: boolean; error?: string; skipped?: string } = { ok: true };
+  if (!env.NAIVE_API_KEY) sync = { ok: true, skipped: "NAIVE_API_KEY is not set; showing stored events only" };
+  else if (needsSync(row)) {
+    try {
+      await syncSessionEvents(sql, new NaiveClient(env.NAIVE_API_KEY, fetchFn), row, { maxPages: MAX_PAGES_FULL_SYNC });
+      row = (await loadSession(sql, ws, sessionId)) ?? row;
+    } catch (err) {
+      sync = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  const events = (await sql`
+    select seq, type, data, created_at from naive_session_events
+    where workspace_id = ${ws} and session_id = ${sessionId} and type = 'tool.completed' and data->>'name' like '%add_leads'
+    order by seq`) as StoredEvent[];
+  const statuses = findStatusesFromEvents(events);
+  const ids = [...statuses.keys()];
+  const leads = ids.length
+    ? await sql`select *, consent_at is not null as has_consent from leads where workspace_id = ${ws} and id = any(${ids}::text[]) order by created_at desc, id`
+    : [];
+  return {
+    run: toRun(row, await isPaused(sql, ws)),
+    leads: (leads as (Lead & { has_consent: boolean })[]).map((l) => ({ ...l, find_status: statuses.get(l.id)! })),
+    sync,
+  };
 }
 
 const REFRESH_AFTER_MS = 3000;

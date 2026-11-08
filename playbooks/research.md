@@ -164,7 +164,9 @@ The owner asked for a first Company summary and reviews and edits it in the Crus
 The message says how many leads to find (at most 50).
 
 1. The Company summary is in the message (none: stop and report that onboarding is needed); skip what its Avoid
-   section rules out. Call `get_profile` for `owner_notes` (steer by them) and `excluded_companies` (skip them).
+   section rules out. Call `get_profile` for `owner_notes` (steer by them) and `excluded_companies` (skip them). If
+   the message names a lead to find companies like, `get_lead` it in the same turn and look for lookalikes (same
+   segment, size and signals as its why_summary, links and notes describe).
 2. Run 2 or 3 `search_web` queries together (a segment plus a buying signal each, `max_results: 10`), then read the
    promising company sites together with `read_website` (`max_pages: 2`). Look for companies that match a segment,
    and the person in one of its roles when a public page names them.

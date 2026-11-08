@@ -51,12 +51,27 @@ export type IMessageConfig = {
   active: boolean;
   missing: string[];
   owner_phone_set: boolean;
+  /** "···0142": the last 4 digits of OWNER_PHONE for the UI, never the full number. Null when unset. */
+  owner_phone_hint: string | null;
 };
+
+/** The last 4 digits of a phone number behind middle dots ("···0142"); null without at least 4 digits. */
+export function phoneHint(phone: string | undefined | null): string | null {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  return digits.length >= 4 ? `\u00B7\u00B7\u00B7${digits.slice(-4)}` : null;
+}
 
 export function imessageConfig(env: Env): IMessageConfig {
   const enabled = env.IMESSAGE_ENABLED?.trim().toLowerCase() === "true";
   const missing = (env.BRIDGE_SECRET?.length ?? 0) >= 32 ? [] : ["BRIDGE_SECRET"];
-  return { enabled, configured: missing.length === 0, active: enabled && missing.length === 0, missing, owner_phone_set: Boolean(env.OWNER_PHONE) };
+  return {
+    enabled,
+    configured: missing.length === 0,
+    active: enabled && missing.length === 0,
+    missing,
+    owner_phone_set: Boolean(env.OWNER_PHONE),
+    owner_phone_hint: phoneHint(env.OWNER_PHONE),
+  };
 }
 
 /** E.164 digits with a leading + (formatting stripped), or a lowercased email; undefined otherwise. */
@@ -297,7 +312,14 @@ export async function handleBridgePoll(getSql: () => Sql, env: Env, poll: Bridge
 /** For /api/status: switches, what the bridge last reported, and notices that could not be delivered. Never throws. */
 export async function imessageStatus(sql: Sql | null, env: Env) {
   const cfg = imessageConfig(env);
-  const base = { enabled: cfg.enabled, configured: cfg.configured, active: cfg.active, missing: cfg.missing, owner_phone_set: cfg.owner_phone_set };
+  const base = {
+    enabled: cfg.enabled,
+    configured: cfg.configured,
+    active: cfg.active,
+    missing: cfg.missing,
+    owner_phone_set: cfg.owner_phone_set,
+    owner_phone_hint: cfg.owner_phone_hint,
+  };
   if (!sql) return { ...base, bridge: null };
   try {
     const [row] = await sql`
