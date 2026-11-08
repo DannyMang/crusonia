@@ -106,14 +106,14 @@ function explicitMap(header: string[], explicit: Partial<Record<ImportField, str
   return map;
 }
 
-async function existingFor(sql: Sql, candidates: ImportCandidate[]) {
+async function existingFor(sql: Sql, ws: string, candidates: ImportCandidate[]) {
   const emails = [...new Set(candidates.flatMap((c) => (c.email ? [c.email] : [])))];
   const domains = [...new Set(candidates.flatMap((c) => (c.domain ? [c.domain] : [])))];
   const [existing, suppressed] = await sql.transaction(
     [
       sql`select id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, consent_at, created_at from leads
-          where lower(email) = any(${emails}::text[]) or domain = any(${domains}::text[])`,
-      sql`select email from suppressions where email = any(${emails}::text[])`,
+          where workspace_id = ${ws} and (lower(email) = any(${emails}::text[]) or domain = any(${domains}::text[]))`,
+      sql`select email from suppressions where workspace_id = ${ws} and email = any(${emails}::text[])`,
     ],
     { readOnly: true },
   );
@@ -124,11 +124,10 @@ async function existingFor(sql: Sql, candidates: ImportCandidate[]) {
 }
 
 /** POST /api/import/preview: the mapped rows with their status, nothing written. */
-// TODO(workspaces): scope the duplicate lookup to `ws`.
-export async function previewImport(sql: Sql, _ws: string, body: ImportBody) {
+export async function previewImport(sql: Sql, ws: string, body: ImportBody) {
   const now = new Date().toISOString();
   const { header, candidates, rowSource } = parse(body, now);
-  const { existing, suppressed } = await existingFor(sql, candidates);
+  const { existing, suppressed } = await existingFor(sql, ws, candidates);
   const plan = planImport(candidates, existing, suppressed);
   const byId = new Map(existing.map((l) => [l.id, l]));
   // Company-level match for rows that create a new contact: any existing lead at the same normalized domain.
@@ -188,11 +187,12 @@ export async function previewImport(sql: Sql, _ws: string, body: ImportBody) {
  * POST /api/import/commit: creates the new rows (cohort = `source`), fills blank fields and grants consent on matching
  * leads (never overwrites), skips invalid and suppressed rows.
  */
-export async function commitImport(sql: Sql, _ws: string, body: ImportBody, actor: string) {
+export async function commitImport(sql: Sql, ws: string, body: ImportBody, actor: string) {
   const now = new Date().toISOString();
   const { candidates, rowSource } = parse(body, now);
   const batch = newId("imp");
-  const results = await applyImportCandidates(sql, candidates, { source: body.source, actor, via: "csv_import" });
+  // The import's source is the cohort of the leads it creates.
+  const results = await applyImportCandidates(sql, ws, candidates, { source: body.source, actor, via: "csv_import", cohort: body.source });
   const summary = summarizeImport(results);
   const created = new Set(results.filter((r) => r.status === "created").map((r) => r.row));
   const meta = candidates
@@ -204,15 +204,15 @@ export async function commitImport(sql: Sql, _ws: string, body: ImportBody, acto
       meta: { file: body.file_name?.trim() || null, row: c.row, batch, source: rowSource.get(c.row) ?? null },
     }));
   if (meta.length) {
-    // The leads this commit created: record the cohort and where each came from.
+    // The leads this commit created: record where each came from.
     await sql`
-      update leads l set cohort = ${body.source}, import_meta = x.meta
+      update leads l set import_meta = x.meta
       from jsonb_to_recordset(${JSON.stringify(meta)}::jsonb) as x(email text, domain text, name text, meta jsonb)
-      where l.import_meta is null and l.created_at >= ${now}::timestamptz - interval '1 minute'
+      where l.workspace_id = ${ws} and l.cohort = ${body.source} and l.import_meta is null and l.created_at >= ${now}::timestamptz - interval '1 minute'
         and ((x.email is not null and lower(l.email) = x.email)
-          or (x.email is null and l.email is null and l.domain = x.domain and coalesce(lower(l.name), '') = coalesce(lower(x.name), '')))`;
+          or (x.email is null and l.email is null and l.domain = x.domain))`;
   }
-  await sql`insert into events (lead_id, kind, data) values (null, 'leads_imported', ${JSON.stringify({
+  await sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, null, 'leads_imported', ${JSON.stringify({
     via: "csv_import",
     batch,
     cohort: body.source,

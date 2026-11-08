@@ -1,8 +1,49 @@
--- Idempotent: runs on every boot.
+-- Idempotent: safe to re-run (`bun run migrate`). Tenant tables get their `workspace_id` in the "Workspaces"
+-- section at the end of this file, after every table exists.
+
+-- A workspace is one customer's private space: its Company summary, leads, approvals, budget and credits.
+-- 'ws_owner' is the instance owner's workspace (MCP_TOKEN, OWNER_CLERK_USER_ID, and every row that existed
+-- before workspaces). Per-workspace settings are columns here: `paused` (the kill switch), `daily_cap_micro_usd`
+-- (Naive spend cap per rolling day; null = WORKSPACE_DAILY_CAP_USD) and the workspace's own Naive agent.
+create table if not exists workspaces (
+  id         text primary key,
+  name       text not null,
+  created_at timestamptz not null default now()
+);
+alter table workspaces add column if not exists paused boolean not null default false;
+alter table workspaces add column if not exists daily_cap_micro_usd bigint;
+-- The workspace's Naive agent (src/services/naive-agents.ts): a copy of the owner's template agent whose crusonia
+-- MCP server URL is /mcp?ws=<id>, with a vault credential bound to that agent holding a workspace API key.
+-- Null for the owner workspace, which uses NAIVE_AGENT_ID and the MCP_TOKEN credential.
+alter table workspaces add column if not exists naive_agent_id text;
+alter table workspaces add column if not exists naive_credential_id text;
+alter table workspaces add column if not exists naive_api_key_id text;
+alter table workspaces add column if not exists naive_mcp_url text;
+alter table workspaces add column if not exists naive_template_version int;
+alter table workspaces add column if not exists naive_synced_at timestamptz;
+alter table workspaces add column if not exists naive_provisioning_at timestamptz;
+insert into workspaces (id, name) values ('ws_owner', 'Owner') on conflict (id) do nothing;
+
+-- Who belongs to a workspace. One user per workspace for now (unique clerk_user_id); teams come later.
+create table if not exists workspace_members (
+  workspace_id  text not null references workspaces(id),
+  clerk_user_id text not null,
+  role          text not null default 'owner' check (role in ('owner', 'member')),
+  created_at    timestamptz not null default now(),
+  primary key (workspace_id, clerk_user_id)
+);
+create unique index if not exists workspace_members_user_uq on workspace_members (clerk_user_id);
+-- scripts/migrate.ts passes OWNER_CLERK_USER_ID as the session setting crusonia.owner_clerk_user_id (never in
+-- this file: it stays out of the repo). Without it the owner joins on first sign-in (src/services/workspaces.ts).
+insert into workspace_members (workspace_id, clerk_user_id, role)
+select 'ws_owner', current_setting('crusonia.owner_clerk_user_id', true), 'owner'
+where coalesce(current_setting('crusonia.owner_clerk_user_id', true), '') <> ''
+on conflict do nothing;
 
 create table if not exists leads (
   id             text primary key,
-  email          text not null unique,
+  -- Unique per workspace (leads_ws_email_uq, Workspaces section).
+  email          text,
   name           text,
   company        text,
   website        text,
@@ -33,8 +74,8 @@ alter table leads add column if not exists domain       text;
 alter table leads add column if not exists title        text;
 alter table leads add column if not exists linkedin_url text;
 alter table leads add column if not exists source_url   text;
-create unique index if not exists leads_no_email_uq
-  on leads (domain, (coalesce(lower(name), ''))) where email is null;
+-- (A company, a lead without an email, is unique per workspace on its domain: leads_ws_company_uq in the Workspaces
+-- section.)
 create index if not exists leads_stage_idx on leads (stage, updated_at desc);
 
 create table if not exists evidence (
@@ -144,7 +185,7 @@ create table if not exists settings (
   key   text primary key,
   value jsonb not null
 );
-insert into settings (key, value) values ('paused', 'false') on conflict do nothing;
+-- Instance-wide keys only (CRM sync state). Per-workspace settings are columns on `workspaces`.
 
 -- ---------------------------------------------------------------------------
 -- Core loop (REST API). Additive and idempotent: safe to re-run on an existing database.
@@ -202,7 +243,8 @@ create table if not exists naive_session_events (
   primary key (session_id, seq)
 );
 
--- A/B experiments. Arms are the lead variants A and B (stable per lead). Leads are enrolled explicitly
+-- A/B experiments: no longer used by the code (the feature was removed); the table and columns are kept as they are.
+-- Arms are the lead variants A and B (stable per lead). Leads are enrolled explicitly
 -- (leads.experiment_id); drafts created while the lead's experiment is running carry its id, and the
 -- per-arm stats are computed from those drafts, their replies and reply labels.
 create table if not exists experiments (
@@ -304,6 +346,11 @@ begin
   if tg_op = 'DELETE' and current_setting('crusonia.allow_ledger_delete', true) = 'on' then
     return old;
   end if;
+  -- The one-time workspaces backfill: setting workspace_id on a row that has none, nothing else.
+  if tg_op = 'UPDATE' and (to_jsonb(old)->>'workspace_id') is null and (to_jsonb(new)->>'workspace_id') is not null
+     and (to_jsonb(new) - 'workspace_id') = (to_jsonb(old) - 'workspace_id') then
+    return new;
+  end if;
   raise exception 'credit_ledger is append-only: add a correcting row instead';
 end
 $$;
@@ -378,13 +425,17 @@ begin
   if coalesce(new.data->>'via', '') = 'hubspot_import' then
     return null;
   end if;
+  -- CRM sync uses the instance's own HubSpot / Notion (env), so it covers the owner workspace only.
+  if new.workspace_id is distinct from 'ws_owner' then
+    return null;
+  end if;
   select array(select jsonb_array_elements_text(value)) into targets
   from settings where key = 'crm_sync_targets' and jsonb_typeof(value) = 'array';
   if targets is null or cardinality(targets) = 0 then
     return null;
   end if;
-  insert into crm_sync_queue as q (target, entity, lead_id, reason)
-  select t, 'lead', new.lead_id, new.kind
+  insert into crm_sync_queue as q (workspace_id, target, entity, lead_id, reason)
+  select new.workspace_id, t, 'lead', new.lead_id, new.kind
   from unnest(targets) t
   where t in ('hubspot', 'notion') and exists (select 1 from leads where id = new.lead_id)
   on conflict (target, entity, (coalesce(lead_id, ''))) do update set
@@ -427,7 +478,7 @@ create unique index if not exists imessage_outbox_message_uq on imessage_outbox 
 
 -- ---------------------------------------------------------------------------
 -- Agent loop v2: outreach channels and the manual task queue, batched research, Apify metering.
--- Additive and idempotent. TODO(workspaces): scope apify_runs (and the task queries) by workspace.
+-- Additive and idempotent. Scoped by workspace in the Workspaces section below (apify_runs, lead_notes).
 -- ---------------------------------------------------------------------------
 
 -- A draft's channel. 'email' goes out through AgentMail only after a send approval, and only to opted-in leads
@@ -481,7 +532,8 @@ create index if not exists apify_runs_open_idx on apify_runs (updated_at) where 
 -- found_at}], merged by URL. No other enrichment (funding, headcount...) is stored unless a cited evidence item says it.
 -- `why_summary`: the agent's 2-4 sentence "why we picked this", citing the lead's evidence by number (oldest first).
 -- `excluded_at`: the owner excluded the company; like a disqualified lead it is remembered and skipped by future
--- runs until the owner un-excludes it. TODO(workspaces): a unique index on (workspace_id, domain) where email is null.
+-- runs until the owner un-excludes it. Per workspace, a company is unique on its normalized domain (leads_ws_company_uq
+-- in the Workspaces section).
 alter table leads add column if not exists contacts jsonb not null default '[]';
 alter table leads add column if not exists links jsonb not null default '[]';
 alter table leads add column if not exists why_summary text;
@@ -506,13 +558,308 @@ create index if not exists lead_notes_lead_idx on lead_notes (lead_id, id desc);
 create index if not exists lead_notes_author_idx on lead_notes (id desc) where author like 'user:%';
 
 -- Pause on missing evidence: evidence items name the qualification workflow requirement they satisfy (settings key
--- 'qualification_workflow', src/services/qualification.ts). A lead missing required evidence is never scored: it
+-- 'qualification_workflow:<workspace id>', src/services/qualification.ts). A lead missing required evidence is never scored: it
 -- goes to needs_review with `review_question` (a column that predates this).
 alter table evidence add column if not exists requirement text;
 
 -- ---------------------------------------------------------------------------
+-- Workspaces (multi-tenancy). Additive and idempotent. See "Workspaces" in README.md.
+-- Every tenant table gets a NOT NULL workspace_id; rows that existed before workspaces belong to 'ws_owner'.
+-- Uniqueness that used to be global is per workspace now (lead dedupe, suppressions, one billing account).
+-- Instance-wide tables stay global: settings (CRM sync state) and webhook_events (provider event ids).
+-- The experiments table (and leads/drafts.experiment_id) is no longer used by the code (the feature was removed);
+-- it is kept as it is, not scoped and not dropped.
+-- ---------------------------------------------------------------------------
+
+do $$
+declare
+  t text;
+begin
+  foreach t in array array[
+    'leads', 'evidence', 'lookalikes', 'drafts', 'approvals', 'messages', 'naive_sessions', 'naive_session_events',
+    'events', 'suppressions', 'api_keys', 'billing_accounts', 'credit_ledger', 'crm_sync_queue', 'imessage_outbox',
+    'apify_runs', 'lead_notes'
+  ] loop
+    execute format('alter table %I add column if not exists workspace_id text references workspaces(id)', t);
+    execute format('update %I set workspace_id = %L where workspace_id is null', t, 'ws_owner');
+    execute format('alter table %I alter column workspace_id set not null', t);
+  end loop;
+end
+$$;
+
+-- Company domains are normalized so a company is stored once per workspace: lowercase, no scheme, path, port or
+-- `www.`, reduced to the registrable domain ('blog.acme.co.uk' -> 'acme.co.uk'). Same rules as
+-- src/services/domains.ts (keep the suffix lists in sync). A trigger applies it to every leads write, whatever the
+-- code path; a value that doesn't parse as a domain is kept as written.
+create or replace function crusonia_registrable_domain(v text) returns text language plpgsql immutable as $$
+declare
+  h text;
+  labels text[];
+  n int;
+begin
+  if v is null then
+    return null;
+  end if;
+  h := lower(btrim(v));
+  h := regexp_replace(h, '^[a-z][a-z0-9+.-]*://', '');
+  h := split_part(split_part(split_part(h, '/', 1), '?', 1), '#', 1);
+  h := regexp_replace(h, '^.*@', '');
+  h := regexp_replace(h, ':[0-9]*$', '');
+  h := regexp_replace(h, '\.$', '');
+  h := regexp_replace(h, '^www[0-9]*\.', '');
+  if h !~ '^[a-z0-9-]+(\.[a-z0-9-]+)+$' then
+    return null;
+  end if;
+  labels := string_to_array(h, '.');
+  n := array_length(labels, 1);
+  if n <= 2 then
+    return h;
+  end if;
+  if (labels[n - 1] || '.' || labels[n]) = any (array[
+    'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'ltd.uk', 'plc.uk', 'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au',
+    'co.nz', 'org.nz', 'co.jp', 'ne.jp', 'or.jp', 'co.kr', 'or.kr', 'com.br', 'net.br', 'org.br', 'com.mx', 'com.ar',
+    'com.co', 'com.pe', 'co.in', 'net.in', 'org.in', 'co.za', 'org.za', 'com.sg', 'com.my', 'com.hk', 'com.tw',
+    'com.cn', 'net.cn', 'org.cn', 'com.tr', 'co.il', 'org.il', 'com.ua', 'co.id', 'com.ph', 'com.vn', 'com.pk',
+    'com.ng', 'com.eg', 'com.sa', 'co.th', 'co.ke',
+    'github.io', 'gitlab.io', 'vercel.app', 'netlify.app', 'herokuapp.com', 'workers.dev', 'pages.dev', 'web.app',
+    'firebaseapp.com', 'appspot.com', 'azurewebsites.net', 'cloudfront.net', 'blogspot.com', 'wordpress.com',
+    'substack.com', 'notion.site', 'webflow.io', 'framer.website', 'framer.app', 'myshopify.com', 'wixsite.com',
+    'squarespace.com', 'carrd.co', 'bubbleapps.io', 'replit.app', 'fly.dev', 'onrender.com', 'railway.app',
+    'glitch.me', 'readthedocs.io']) then
+    return array_to_string(labels[n - 2:n], '.');
+  end if;
+  return labels[n - 1] || '.' || labels[n];
+end
+$$;
+
+create or replace function leads_normalize_domain() returns trigger language plpgsql as $$
+begin
+  new.domain := coalesce(crusonia_registrable_domain(new.domain), new.domain);
+  return new;
+end
+$$;
+drop trigger if exists leads_normalize_domain on leads;
+create trigger leads_normalize_domain before insert or update of domain on leads
+  for each row execute function leads_normalize_domain();
+
+-- Backfill: a lead without an email is the company (one per normalized domain per workspace; named people at it are
+-- its `contacts`). Email-less leads that share a normalized domain in one workspace are merged into the oldest: their
+-- evidence, approvals, messages, sessions, notes and events move over, a named person becomes a contact, blank fields
+-- are filled, a 'lead_merged' event records it, and the duplicate is deleted. Then every domain is normalized.
+do $$
+declare
+  d record;
+begin
+  for d in
+    select id, keeper from (
+      select id, first_value(id) over (
+               partition by workspace_id, coalesce(crusonia_registrable_domain(domain), domain)
+               order by created_at, id) as keeper
+      from leads where email is null and domain is not null
+    ) r
+    where id <> keeper
+  loop
+    update evidence set lead_id = d.keeper where lead_id = d.id;
+    update lookalikes set lead_id = d.keeper where lead_id = d.id;
+    update approvals set lead_id = d.keeper where lead_id = d.id;
+    update messages set lead_id = d.keeper where lead_id = d.id;
+    update naive_sessions set lead_id = d.keeper where lead_id = d.id;
+    update drafts set lead_id = d.keeper,
+           version = version + (select coalesce(max(version), 0) from drafts where lead_id = d.keeper)
+    where lead_id = d.id;
+    update events set lead_id = d.keeper where lead_id = d.id;
+    update lead_notes set lead_id = d.keeper where lead_id = d.id;
+    delete from crm_sync_queue where lead_id = d.id;
+    update leads k set contacts = k.contacts || jsonb_build_array(jsonb_build_object(
+      'name', x.name, 'title', x.title, 'linkedin_url', x.linkedin_url, 'x_url', null, 'github_url', null,
+      'source_url', coalesce(x.source_url, x.website, ''), 'found_at', to_char(x.created_at, 'YYYY-MM-DD')))
+    from leads x
+    where k.id = d.keeper and x.id = d.id and coalesce(x.name, '') <> '' and lower(x.name) <> lower(coalesce(k.name, ''))
+      and not exists (select 1 from jsonb_array_elements(k.contacts) c where lower(c->>'name') = lower(x.name));
+    update leads k set
+      title = coalesce(k.title, x.title), company = coalesce(k.company, x.company), website = coalesce(k.website, x.website),
+      linkedin_url = coalesce(k.linkedin_url, x.linkedin_url), score = coalesce(k.score, x.score),
+      qualified = coalesce(k.qualified, x.qualified), rationale = coalesce(k.rationale, x.rationale),
+      hubspot_id = coalesce(k.hubspot_id, x.hubspot_id), hubspot_company_id = coalesce(k.hubspot_company_id, x.hubspot_company_id),
+      notion_page_id = coalesce(k.notion_page_id, x.notion_page_id), updated_at = now()
+    from leads x where k.id = d.keeper and x.id = d.id;
+    insert into events (workspace_id, lead_id, kind, data)
+    select workspace_id, d.keeper, 'lead_merged', jsonb_build_object('merged_lead_id', d.id, 'domain', domain, 'reason', 'domain_normalized')
+    from leads where id = d.id;
+    delete from leads where id = d.id;
+  end loop;
+end
+$$;
+update leads set domain = crusonia_registrable_domain(domain)
+where crusonia_registrable_domain(domain) is not null and domain is distinct from crusonia_registrable_domain(domain);
+
+-- Lead dedupe per workspace: a person by email; a company (a lead without an email) by its normalized domain, so the
+-- same company is never logged twice in a workspace. People at a company repeat freely (with their emails, or as the
+-- company's contacts).
+alter table leads drop constraint if exists leads_email_key;
+drop index if exists leads_no_email_uq;
+drop index if exists leads_ws_no_email_uq;
+create unique index if not exists leads_ws_email_uq on leads (workspace_id, email);
+create unique index if not exists leads_ws_company_uq on leads (workspace_id, domain) where email is null;
+create index if not exists leads_ws_created_idx on leads (workspace_id, created_at desc, id desc);
+create index if not exists leads_ws_stage_idx on leads (workspace_id, stage, updated_at desc);
+
+-- What the demo's run history reads (per workspace, like everything above): each lead keeps its A/B `variant`
+-- (deterministic from its email or domain + name, never reassigned) and its `cohort`, the batch that first brought it
+-- in ('import:<id>' for a CSV import, 'run:<session id>' for an agent run, 'hubspot_import:<time>', 'manual'); set
+-- once on insert, never changed. Leads from before cohorts get '<source>:<day added>'. Runs record the workflow
+-- version they ran (playbook and agent version), and a draft written in a run records that run and its version.
+alter table leads add column if not exists cohort text;
+update leads set cohort = source || ':' || to_char(created_at at time zone 'UTC', 'YYYY-MM-DD') where cohort is null;
+-- The qualification workflow is per workspace (settings key 'qualification_workflow:<workspace id>'); the owner keeps
+-- the one saved before workspaces.
+insert into settings (key, value)
+select 'qualification_workflow:ws_owner', value from settings where key = 'qualification_workflow'
+on conflict (key) do nothing;
+create index if not exists leads_ws_cohort_idx on leads (workspace_id, cohort);
+alter table naive_sessions add column if not exists workflow_version text;
+alter table drafts add column if not exists workflow_version text;
+alter table drafts add column if not exists session_id text;
+alter table workspaces add column if not exists naive_workflow_version text;
+
+-- The do-not-contact list is per workspace.
+alter table suppressions drop constraint if exists suppressions_pkey;
+create unique index if not exists suppressions_ws_email_uq on suppressions (workspace_id, email);
+
+create index if not exists approvals_ws_idx on approvals (workspace_id, status, created_at desc);
+create index if not exists drafts_ws_lead_idx on drafts (workspace_id, lead_id);
+create index if not exists messages_ws_inbound_idx on messages (workspace_id, id desc) where direction = 'in';
+create index if not exists naive_sessions_ws_idx on naive_sessions (workspace_id, purpose, created_at desc);
+create index if not exists events_ws_idx on events (workspace_id, id desc);
+create index if not exists events_ws_kind_idx on events (workspace_id, kind, created_at);
+create index if not exists credit_ledger_ws_idx on credit_ledger (workspace_id, id desc);
+create index if not exists lead_notes_ws_idx on lead_notes (workspace_id, id desc);
+create index if not exists drafts_ws_tasks_idx on drafts (workspace_id, status, created_at desc) where channel <> 'email';
+
+-- API keys: 'user' keys are made in "Connect your agent"; an 'agent' key is the one a workspace's Naive agent
+-- uses (held only in the Naive vault, see src/services/naive-agents.ts). Both act only on their workspace.
+alter table api_keys add column if not exists kind text not null default 'user';
+create index if not exists api_keys_ws_idx on api_keys (workspace_id, created_at desc);
+
+-- The pause switch moved from settings to workspaces.paused (copied once, then the old key is removed).
+update workspaces set paused = true
+where id = 'ws_owner' and exists (select 1 from settings where key = 'paused' and value = 'true'::jsonb);
+delete from settings where key = 'paused';
+
+-- Company summary: what Crusonia knows about the business, as one markdown document per workspace (like a GTM.md),
+-- one immutable row per version. The current summary is the latest version; a revert is a new version copied from
+-- an old one. Agents edit it directly, and every edit can be viewed and reverted. `author`: 'user:<clerk id>',
+-- 'agent:<naive session id>' (or 'agent:api_key:<id>' / 'agent:mcp_token' for an agent outside Naive), or
+-- 'onboarding'. Capped at 20,000 characters; the web app renders it as sanitized markdown.
+create table if not exists company_summary_versions (
+  id           bigserial primary key,
+  workspace_id text not null references workspaces(id),
+  version      int not null check (version > 0),
+  content_md   text not null check (char_length(content_md) <= 20000),
+  author       text not null,
+  change_note  text,
+  created_at   timestamptz not null default now(),
+  unique (workspace_id, version)
+);
+-- The owner's onboarding profile (settings 'profile') becomes v1 of the owner's summary, rendered as markdown under
+-- the same headings as src/services/company-summary.ts (profileToMarkdown). The settings row is kept for rollback.
+insert into company_summary_versions (workspace_id, version, content_md, author, change_note)
+select 'ws_owner', 1, left(md, 20000), 'onboarding', 'Imported from the onboarding profile'
+from (
+  select concat_ws(E'\n\n',
+    '# ' || coalesce(nullif(p->>'company', ''), nullif(p->>'company_name', ''), 'Company summary'),
+    'Website: ' || nullif(p->>'website', ''),
+    '## What we sell',
+    nullif(p->>'sells', ''),
+    '## Who buys',
+    coalesce(nullif(p->>'icp_description', ''), nullif(p->>'icp', '')),
+    case when segs is not null then E'### Segments\n\n' || segs end,
+    '## Buying signals',
+    sigs,
+    '## Proof points', '## Voice', '## Avoid', '## Pricing',
+    case when nullif(p->>'notes', '') is not null then E'## Notes\n\n' || (p->>'notes') end,
+    case when srcs is not null then E'## Sources\n\n' || srcs end
+  ) as md
+  from (
+    select value as p,
+      (select string_agg(case when jsonb_typeof(x) = 'string' then '- **' || (x #>> '{}') || '**'
+                              else '- **' || coalesce(x->>'name', 'Segment') || '**'
+                                   || coalesce(': ' || nullif(concat_ws('; ', nullif(x->>'company_size', ''), nullif(x->>'industry', ''),
+                                        case when jsonb_typeof(x->'roles') = 'array' and jsonb_array_length(x->'roles') > 0
+                                             then 'roles: ' || (select string_agg(r #>> '{}', ', ') from jsonb_array_elements(x->'roles') r) end), ''), '')
+                         end, E'\n')
+       from jsonb_array_elements(case when jsonb_typeof(value->'segments') = 'array' then value->'segments' else '[]'::jsonb end) x) as segs,
+      (select string_agg(case when jsonb_typeof(x) = 'string' then '- **' || (x #>> '{}') || '**'
+                              else '- **' || coalesce(x->>'name', 'Signal') || '**' || coalesce(': ' || nullif(x->>'description', ''), '') end, E'\n')
+       from jsonb_array_elements(case when jsonb_typeof(value->'signals') = 'array' then value->'signals'
+                                      when jsonb_typeof(value->'buying_signals') = 'array' then value->'buying_signals'
+                                      else '[]'::jsonb end) x) as sigs,
+      (select string_agg('- ' || (x->>'field') || ': ' || (x->>'url'), E'\n')
+       from jsonb_array_elements(case when jsonb_typeof(value->'sources') = 'array' then value->'sources' else '[]'::jsonb end) x
+       where x->>'field' is not null and x->>'url' is not null) as srcs
+    from settings where key = 'profile' and jsonb_typeof(value) = 'object'
+  ) prof
+) rendered
+where not exists (select 1 from company_summary_versions where workspace_id = 'ws_owner');
+
+-- Billing moves from owner id to workspace: one billing account per workspace (owner_id stays as the legacy key;
+-- new accounts use the workspace id). A workspace that had several accounts (the owner: 'owner' for MCP_TOKEN and
+-- API keys, plus the owner's Clerk user id) is merged into one: the account with a subscription, else a Stripe
+-- customer, else 'owner', else the oldest is kept; the others are deleted. Their ledger rows all stay (already
+-- moved to the workspace above, each with its original source). The free sample is granted once per workspace,
+-- so duplicate signup grants beyond the first are removed. Everything removed is recorded in a 'billing_merged'
+-- event. Idempotent: a merged workspace has one account and one signup grant.
+create or replace function crusonia_merge_billing(p_workspace text) returns jsonb language plpgsql as $$
+declare
+  keeper billing_accounts%rowtype;
+  r billing_accounts%rowtype;
+  merged jsonb := '[]'::jsonb;
+  removed jsonb := '[]'::jsonb;
+  prev text := current_setting('crusonia.allow_ledger_delete', true);
+begin
+  select * into keeper from billing_accounts where workspace_id = p_workspace
+  order by (stripe_subscription_id is not null) desc, (stripe_customer_id is not null) desc, (owner_id = 'owner') desc,
+           created_at, owner_id
+  limit 1;
+  if found then
+    for r in select * from billing_accounts where workspace_id = p_workspace and owner_id <> keeper.owner_id loop
+      merged := merged || jsonb_build_array(jsonb_build_object(
+        'owner_id', r.owner_id, 'stripe_customer_id', r.stripe_customer_id, 'stripe_subscription_id', r.stripe_subscription_id,
+        'plan', r.plan, 'subscription_status', r.subscription_status));
+      delete from billing_accounts where owner_id = r.owner_id;
+    end loop;
+  end if;
+
+  perform set_config('crusonia.allow_ledger_delete', 'on', true);
+  with g as (
+    select id, row_number() over (order by id) as rn from credit_ledger
+    where workspace_id = p_workspace and reason = 'grant' and source like 'signup:%'
+  ), d as (
+    delete from credit_ledger l using g where l.id = g.id and g.rn > 1
+    returning l.id, l.owner_id, l.amount, l.source, l.data, l.created_at
+  )
+  select coalesce(jsonb_agg(to_jsonb(d)), '[]'::jsonb) into removed from d;
+  perform set_config('crusonia.allow_ledger_delete', coalesce(prev, ''), true);
+
+  if jsonb_array_length(merged) > 0 or jsonb_array_length(removed) > 0 then
+    insert into events (workspace_id, lead_id, kind, data)
+    values (p_workspace, null, 'billing_merged', jsonb_build_object(
+      'kept_account', keeper.owner_id, 'stripe_customer_id', keeper.stripe_customer_id,
+      'merged_accounts', merged, 'removed_duplicate_grants', removed));
+  end if;
+  return jsonb_build_object('kept_account', keeper.owner_id, 'merged_accounts', merged, 'removed_duplicate_grants', removed);
+end
+$$;
+select crusonia_merge_billing(w.workspace_id)
+from (select workspace_id from billing_accounts group by workspace_id having count(*) > 1
+      union
+      select workspace_id from credit_ledger where reason = 'grant' and source like 'signup:%'
+      group by workspace_id having count(*) > 1) w;
+create unique index if not exists billing_accounts_ws_uq on billing_accounts (workspace_id);
+
+-- ---------------------------------------------------------------------------
 -- Demo backend: import cohorts, versioned workflow definitions, workflow runs, follow-ups. Additive and idempotent.
--- Workspace-scoped tables default to 'ws_owner' (the owner workspace) until the workspaces change scopes them.
+-- Per workspace like everything above (the run tables reach their workspace through workflow_runs).
 -- ---------------------------------------------------------------------------
 
 -- `cohort`: the batch a lead first came in with. A CSV import (POST /api/import/commit) records its `source` label;
@@ -521,7 +868,8 @@ alter table evidence add column if not exists requirement text;
 -- source column). The consent text and timestamp per contact stay in consent_text / consent_at.
 alter table leads add column if not exists cohort text;
 alter table leads add column if not exists import_meta jsonb;
-create index if not exists leads_cohort_idx on leads (cohort) where cohort is not null;
+-- leads_ws_cohort_idx (above) covers lookups by cohort.
+drop index if exists leads_cohort_idx;
 
 -- Qualification workflow definitions (src/services/workflow-defs.ts). A definition is a name, a trigger and a spend
 -- cap; its content lives in immutable versions: the ICP (the Company summary by default), research questions,
@@ -529,7 +877,7 @@ create index if not exists leads_cohort_idx on leads (cohort) where cohort is no
 -- (each an optional angle the drafting agent receives). Editing = a new version; runs pin the version they used.
 create table if not exists workflow_defs (
   id             text primary key,
-  workspace_id   text not null default 'ws_owner',
+  workspace_id   text not null references workspaces(id),
   name           text not null,
   source         text not null default 'user' check (source in ('user', 'claude_code', 'template')),
   enabled        boolean not null default true,
@@ -570,11 +918,27 @@ drop trigger if exists workflow_def_versions_no_update on workflow_def_versions;
 create trigger workflow_def_versions_no_update before update on workflow_def_versions
   for each row execute function workflow_def_versions_immutable();
 
+-- A workspace's single qualification workflow (settings 'qualification_workflow:<workspace id>', from before
+-- definitions) becomes its default definition, version 1, keeping the requirement ids. Runs once per workspace.
+insert into workflow_defs (id, workspace_id, name, is_default, created_by)
+select 'wf_q_' || substr(md5(s.key), 1, 16), w.id, coalesce(s.value->>'name', 'Qualification'), true, 'migration'
+from settings s join workspaces w on s.key = 'qualification_workflow:' || w.id
+where not exists (select 1 from workflow_defs d where d.workspace_id = w.id and d.is_default)
+on conflict (id) do nothing;
+insert into workflow_def_versions (workflow_id, version, label, research_questions, evidence_required, done_when, created_by)
+select d.id, 1, 'Qualification workflow v' || coalesce(s.value->>'version', '1'),
+       coalesce(s.value->'research_questions', '[]'), coalesce(s.value->'evidence_requirements', '[]'),
+       nullif(array_to_string(array(select jsonb_array_elements_text(coalesce(s.value->'completion_criteria', '[]'))), E'\n'), ''),
+       'migration'
+from settings s join workflow_defs d on d.id = 'wf_q_' || substr(md5(s.key), 1, 16)
+where s.key like 'qualification_workflow:%'
+on conflict do nothing;
+
 -- One run of a workflow version on a cohort or a set of leads. Each lead in it keeps the variant it had when the
 -- run started and the research session started for it.
 create table if not exists workflow_runs (
   id           text primary key,
-  workspace_id text not null default 'ws_owner',
+  workspace_id text not null references workspaces(id),
   workflow_id  text not null references workflow_defs(id) on delete cascade,
   version      int not null,
   cohort       text,

@@ -2,6 +2,7 @@
 // minute cron runs. The loop is written against the small QueueStore interface so its retry, backoff and
 // 429 rules are unit tested without a database; sqlQueueStore is the real one.
 import type { Sql } from "../db.ts";
+import { OWNER_WORKSPACE_ID } from "./workspaces.ts";
 import { ProviderError, RateLimitError } from "../providers/http.ts";
 import { missingScopes } from "../providers/hubspot.ts";
 import { ENGAGED_STAGES, REPLIED_SYNC_STAGES, type CrmTarget, type SyncScope } from "./crm-fields.ts";
@@ -258,9 +259,11 @@ export async function enqueueLeads(
   const force = "leadIds" in sel;
   const payload = JSON.stringify(force ? { force: true } : {});
   const filter = force ? sql`l.id = any(${sel.leadIds}::text[])` : scopeSql(sql, target, sel.scope);
+  // CRM sync uses the instance's own HubSpot / Notion, so only the owner workspace's leads are synced.
   const rows = await sql`
-    insert into crm_sync_queue as q (target, entity, lead_id, reason, payload)
-    select ${target}, 'lead', l.id, ${reason}, ${payload}::jsonb from leads l where ${filter}
+    insert into crm_sync_queue as q (workspace_id, target, entity, lead_id, reason, payload)
+    select l.workspace_id, ${target}, 'lead', l.id, ${reason}, ${payload}::jsonb from leads l
+    where l.workspace_id = ${OWNER_WORKSPACE_ID} and ${filter}
     on conflict (target, entity, (coalesce(lead_id, ''))) do update set
       reason = excluded.reason,
       payload = q.payload || excluded.payload,

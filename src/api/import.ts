@@ -2,13 +2,9 @@
 // commit creates and updates leads. The body's `source` is the cohort.
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { actorOf, parseJson, sqlFor, type AppEnv } from "../lib/context.ts";
+import { actorOf, parseJson, sqlFor, wsOf, type AppEnv } from "../lib/context.ts";
 import { errorBody } from "../lib/errors.ts";
 import { commitImport, importBodySchema, previewImport } from "../services/import-preview.ts";
-import { OWNER_WORKSPACE_ID } from "../services/workflow-defs.ts";
-
-// TODO(workspaces): the request's workspace (wsOf(c)).
-const wsOf = (_c: unknown) => OWNER_WORKSPACE_ID;
 
 export const importRoutes = new Hono<AppEnv>();
 

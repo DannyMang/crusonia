@@ -14,14 +14,12 @@
 //
 // The workspace's default definition (is_default) is what research follows for leads never run under a workflow,
 // and what GET/PUT /api/workflows/qualification read and write (./qualification.ts).
-// TODO(workspaces): callers pass OWNER_WORKSPACE_ID until requests carry their workspace.
 import { z } from "zod";
 import type { Sql } from "../db.ts";
 import { newId } from "../ids.ts";
 import { ServiceError } from "./errors.ts";
 import type { QualificationWorkflow } from "./qualification.ts";
 
-export const OWNER_WORKSPACE_ID = "ws_owner";
 
 export const STEP_KINDS = ["trigger", "find", "research", "condition", "draft", "tasks", "approval", "notify", "sync_crm", "send", "end"] as const;
 export const TRIGGER_KINDS = ["schedule", "csv_import", "reply", "manual"] as const;
@@ -228,7 +226,7 @@ export async function createDefinition(
         values (${id}, ${ws}, ${input.name}, ${source}, ${input.enabled ?? true}, ${JSON.stringify(trigger)}::jsonb,
                 ${input.spend?.cap_usd ?? null}, ${input.spend?.period ?? "week"}, 1, ${ctx.isDefault ?? false}, ${ctx.actor})`,
     versionInsert(sql, id, 1, content as z.infer<typeof versionInputSchema>, ctx.actor),
-    sql`insert into events (lead_id, kind, data) values (null, 'workflow_created', ${JSON.stringify({
+    sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, null, 'workflow_created', ${JSON.stringify({
       workflow_id: id,
       version: 1,
       name: input.name,
@@ -262,7 +260,7 @@ export async function createVersion(
         versionInsert(sql, def.id, version, content as z.infer<typeof versionInputSchema>, ctx.actor),
         sql`update workflow_defs set latest_version = greatest(latest_version, ${version}), name = coalesce(${name ?? null}, name), updated_at = now()
             where id = ${def.id}`,
-        sql`insert into events (lead_id, kind, data) values (null, 'workflow_version_created', ${JSON.stringify({
+        sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, null, 'workflow_version_created', ${JSON.stringify({
           workflow_id: def.id,
           version,
           actor: ctx.actor,
@@ -296,7 +294,7 @@ export async function patchDefinition(sql: Sql, ws: string, id: string, raw: z.i
           spend_period = coalesce(${patch.spend?.period ?? null}, spend_period),
           updated_at = now()
         where id = ${def.id}`,
-    sql`insert into events (lead_id, kind, data) values (null, 'workflow_updated', ${JSON.stringify({ workflow_id: def.id, ...patch, resume, actor })}::jsonb)`,
+    sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, null, 'workflow_updated', ${JSON.stringify({ workflow_id: def.id, ...patch, resume, actor })}::jsonb)`,
   ]);
   return getDefinition(sql, ws, def.id);
 }
@@ -434,14 +432,14 @@ const TRIGGER_LABEL: Record<(typeof TRIGGER_KINDS)[number], string> = {
   manual: "Run manually",
 };
 
-async function isPausedNow(sql: Sql): Promise<boolean> {
-  const [row] = await sql`select value from settings where key = 'paused'`;
-  return row?.value === true;
+async function isPausedNow(sql: Sql, ws: string): Promise<boolean> {
+  const [row] = await sql`select paused from workspaces where id = ${ws}`;
+  return row?.paused === true;
 }
 
 export async function listDefinitions(sql: Sql, ws: string): Promise<DefView[]> {
   const defs = (await sql`select * from workflow_defs where workspace_id = ${ws} order by is_default desc, updated_at desc`) as DefRow[];
-  const [stats, paused] = await Promise.all([statsFor(sql, defs.map((d) => d.id)), isPausedNow(sql)]);
+  const [stats, paused] = await Promise.all([statsFor(sql, defs.map((d) => d.id)), isPausedNow(sql, ws)]);
   return defs.map((d) => defView(d, stats.get(d.id), paused));
 }
 
@@ -450,7 +448,7 @@ export async function getDefinition(sql: Sql, ws: string, id: string): Promise<{
   const [versions, stats, paused] = await Promise.all([
     sql`select * from workflow_def_versions where workflow_id = ${def.id} order by version desc`,
     statsFor(sql, [def.id]),
-    isPausedNow(sql),
+    isPausedNow(sql, ws),
   ]);
   return { workflow: defView(def, stats.get(def.id), paused), versions: (versions as VersionRow[]).map(versionView) };
 }
@@ -479,10 +477,11 @@ export async function researchBriefs(sql: Sql, ws: string, leadIds: string[]): P
   const rows = (await sql`
     select l.id, l.variant, to_jsonb(d) as def, to_jsonb(v) as version
     from leads l
-    left join workflow_defs d on d.id = coalesce(l.workflow_id, (select id from workflow_defs where workspace_id = ${ws} and is_default))
+    left join workflow_defs d on d.workspace_id = l.workspace_id
+      and d.id = coalesce(l.workflow_id, (select id from workflow_defs where workspace_id = ${ws} and is_default))
     left join workflow_def_versions v on v.workflow_id = d.id
       and v.version = case when l.workflow_id is not null then l.workflow_version else d.latest_version end
-    where l.id = any(${leadIds}::text[])`) as { id: string; variant: string; def: DefRow | null; version: VersionRow | null }[];
+    where l.workspace_id = ${ws} and l.id = any(${leadIds}::text[])`) as { id: string; variant: string; def: DefRow | null; version: VersionRow | null }[];
   return new Map(
     rows.map((r) => {
       const has = Boolean(r.def && r.version);

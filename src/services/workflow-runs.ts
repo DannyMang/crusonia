@@ -31,14 +31,14 @@ export async function runWorkflow(
   workflowId: string,
   input: RunInput,
   actor: string,
-  opts: { billingOwnerId?: string | null; fetch?: FetchFn } = {},
+  opts: { fetch?: FetchFn } = {},
 ) {
   const { workflow } = await getDefinition(sql, ws, workflowId);
   if (!workflow.enabled) throw new ApiError(409, "workflow_disabled", "This workflow is turned off; enable it first");
   const version = input.version ?? workflow.latest_version;
   await loadVersion(sql, workflow.id, version); // 404 for an unknown version
   if (!env.NAIVE_API_KEY || !env.NAIVE_AGENT_ID) throw new ServiceError("config_missing", "NAIVE_API_KEY and NAIVE_AGENT_ID must be set to run a workflow.");
-  if (await isPaused(sql)) throw new ApiError(423, "paused", "Crusonia is paused; no new work starts (PUT /api/settings/pause to resume)");
+  if (await isPaused(sql, ws)) throw new ApiError(423, "paused", "Crusonia is paused; no new work starts (PUT /api/settings/pause to resume)");
   if (workflow.spend.cap_usd !== null && workflow.spend.usd >= workflow.spend.cap_usd) {
     throw new ApiError(409, "spend_cap_reached", `This workflow spent $${workflow.spend.usd} of its $${workflow.spend.cap_usd} ${workflow.spend.period === "week" ? "weekly" : "per-run"} cap`);
   }
@@ -46,13 +46,14 @@ export async function runWorkflow(
   const limit = Math.min(input.test_leads ?? MAX_RESEARCH_BATCH, input.test_leads ? MAX_TEST_LEADS : MAX_RESEARCH_BATCH);
   const candidates = (
     input.lead_ids?.length
-      ? await sql`select id, stage, variant, cohort, excluded_at from leads where id = any(${input.lead_ids}::text[]) order by created_at limit ${limit}`
+      ? await sql`select id, stage, variant, cohort, excluded_at from leads
+                  where workspace_id = ${ws} and id = any(${input.lead_ids}::text[]) order by created_at limit ${limit}`
       : input.cohort
-        ? await sql`select id, stage, variant, cohort, excluded_at from leads where cohort = ${input.cohort} order by created_at limit ${limit}`
+        ? await sql`select id, stage, variant, cohort, excluded_at from leads where workspace_id = ${ws} and cohort = ${input.cohort} order by created_at limit ${limit}`
         : // No cohort or leads given: new leads this workflow has never run on.
           await sql`
             select l.id, l.stage, l.variant, l.cohort, l.excluded_at from leads l
-            where l.stage in ('new', 'no_consent') and l.excluded_at is null
+            where l.workspace_id = ${ws} and l.stage in ('new', 'no_consent') and l.excluded_at is null
               and not exists (select 1 from workflow_run_leads rl join workflow_runs r on r.id = rl.run_id
                               where rl.lead_id = l.id and r.workflow_id = ${workflow.id})
             order by l.created_at desc limit ${limit}`
@@ -62,7 +63,7 @@ export async function runWorkflow(
   }
   const open = new Set(
     (
-      await sql`select lead_id from naive_sessions where purpose in ('research', 'redraft') and status in ('running', 'idle')
+      await sql`select lead_id from naive_sessions where workspace_id = ${ws} and purpose in ('research', 'redraft') and status in ('running', 'idle')
                 and lead_id = any(${candidates.map((c) => c.id)}::text[])`
     ).map((r) => r.lead_id as string),
   );
@@ -84,8 +85,8 @@ export async function runWorkflow(
         values (${runId}, ${ws}, ${workflow.id}, ${version}, ${cohort}, ${Boolean(input.test_leads)}, ${actor})`,
     // Research sessions and drafts created for these leads from now on record this run (see schema.sql).
     sql`update leads set workflow_id = ${workflow.id}, workflow_version = ${version}, workflow_run_id = ${runId}, updated_at = now()
-        where id = any(${ids}::text[])`,
-    sql`insert into events (lead_id, kind, data) values (null, 'workflow_run_started', ${JSON.stringify({
+        where workspace_id = ${ws} and id = any(${ids}::text[])`,
+    sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, null, 'workflow_run_started', ${JSON.stringify({
       run_id: runId,
       workflow_id: workflow.id,
       version,
@@ -96,7 +97,7 @@ export async function runWorkflow(
     })}::jsonb)`,
   ]);
 
-  const result = await startResearch(sql, env, { lead_ids: ids }, actor, opts.fetch, { billingOwnerId: opts.billingOwnerId });
+  const result = await startResearch(sql, env, ws, { lead_ids: ids }, actor, opts.fetch);
   const session = new Map(result.started.map((s) => [s.lead_id, s.session_id]));
   const failed = new Map(result.failed.map((f) => [f.lead_id, f.error]));
   const late = new Map(result.skipped.map((s) => [s.lead_id, s.reason]));
@@ -131,13 +132,13 @@ export async function runWorkflow(
  * PATCH { resume: true }: continue the latest run's leads that never finished research (no verdict, no open session),
  * under the same version. Nothing to continue: `resumed` is null.
  */
-export async function resumeWorkflow(sql: Sql, env: Env, ws: string, workflowId: string, actor: string, opts: { billingOwnerId?: string | null } = {}) {
+export async function resumeWorkflow(sql: Sql, env: Env, ws: string, workflowId: string, actor: string, opts: { fetch?: FetchFn } = {}) {
   const [last] = await sql`select id, version from workflow_runs where workflow_id = ${workflowId} and workspace_id = ${ws} order by started_at desc limit 1`;
   if (!last) return null;
   const leads = await sql`
     select rl.lead_id from workflow_run_leads rl join leads l on l.id = rl.lead_id
     where rl.run_id = ${last.id} and l.stage in ('new', 'no_consent', 'researching')
-      and not exists (select 1 from naive_sessions s where s.lead_id = l.id and s.status in ('running', 'idle'))`;
+      and not exists (select 1 from naive_sessions s where s.workspace_id = ${ws} and s.lead_id = l.id and s.status in ('running', 'idle'))`;
   if (!leads.length) return null;
   return runWorkflow(sql, env, ws, workflowId, { version: last.version as number, lead_ids: leads.map((r) => r.lead_id as string) }, actor, opts);
 }
@@ -227,7 +228,7 @@ const usd = (micro: string | number | null | undefined) => Math.round(Number(mic
 export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: { version?: number; limit?: number } = {}) {
   const { workflow } = await getDefinition(sql, ws, workflowId);
   const limit = Math.min(opts.limit ?? 20, 100);
-  const paused = await isPaused(sql);
+  const paused = await isPaused(sql, ws);
   const runs = (await sql`
     select r.id, r.version, r.cohort, r.test, r.started_at,
       count(rl.lead_id) filter (where rl.status = 'started')::int as found,
@@ -258,7 +259,7 @@ export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: {
         select rl.run_id, e.kind, e.data, e.created_at, coalesce(l.company, l.name, l.domain, l.email) as who
         from workflow_run_leads rl
         join workflow_runs r on r.id = rl.run_id
-        join events e on e.lead_id = rl.lead_id and e.created_at >= r.started_at
+        join events e on e.workspace_id = r.workspace_id and e.lead_id = rl.lead_id and e.created_at >= r.started_at
         left join leads l on l.id = rl.lead_id
         where rl.run_id = any(${runIds}::text[]) and rl.status = 'started' and e.kind = any(${TIMELINE_KINDS}::text[])
           -- Events after a later run of the same lead belong to that run.
@@ -266,7 +267,7 @@ export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: {
                           where rl2.lead_id = rl.lead_id and r2.started_at > r.started_at and r2.started_at <= e.created_at)
         union all
         select (e.data->>'run_id') as run_id, e.kind, e.data, e.created_at, null as who
-        from events e where e.kind = 'workflow_run_started' and e.data->>'run_id' = any(${runIds}::text[])
+        from events e where e.workspace_id = ${ws} and e.kind = 'workflow_run_started' and e.data->>'run_id' = any(${runIds}::text[])
         order by created_at`) as { run_id: string; kind: string; data: Record<string, unknown>; created_at: Date; who: string | null }[])
     : [];
   const timeline = new Map<string, { at: Date; text: string }[]>();
@@ -305,7 +306,7 @@ export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: {
     select l.id as lead_id, coalesce(l.company, l.name, l.domain, l.email) as company, l.review_question as question,
            coalesce((select max(e.created_at) from events e where e.lead_id = l.id and e.kind = 'lead_needs_review'), l.updated_at) as paused_at
     from leads l
-    where l.workflow_id = ${workflow.id} and l.stage = 'needs_review'
+    where l.workspace_id = ${ws} and l.workflow_id = ${workflow.id} and l.stage = 'needs_review'
     order by paused_at desc limit 50`) as { lead_id: string; company: string | null; question: string | null; paused_at: Date }[];
 
   const zero = { leads: 0, researched: 0, qualified: 0, drafted: 0, approved: 0, sent: 0, replied: 0 };

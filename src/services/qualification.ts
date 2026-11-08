@@ -14,7 +14,6 @@ import type { Sql } from "../db.ts";
 import { ServiceError } from "./errors.ts";
 import { getProfile, type Profile } from "./profile.ts";
 import {
-  OWNER_WORKSPACE_ID,
   createDefinition,
   createVersion,
   defaultDefinition,
@@ -51,17 +50,12 @@ export const qualificationWorkflowSchema = z
 export type QualificationWorkflowInput = z.input<typeof qualificationWorkflowSchema>;
 export type QualificationWorkflow = z.infer<typeof qualificationWorkflowSchema> & { version: number; updated_at: string };
 
-export async function getQualificationWorkflow(sql: Sql, ws: string = OWNER_WORKSPACE_ID): Promise<QualificationWorkflow | null> {
+export async function getQualificationWorkflow(sql: Sql, ws: string): Promise<QualificationWorkflow | null> {
   return defaultQualification(sql, ws);
 }
 
 /** Saves a new version of the default definition (creating it on the first save). Older versions stay. */
-export async function saveQualificationWorkflow(
-  sql: Sql,
-  input: QualificationWorkflowInput,
-  actor: string,
-  ws: string = OWNER_WORKSPACE_ID,
-): Promise<QualificationWorkflow> {
+export async function saveQualificationWorkflow(sql: Sql, ws: string, input: QualificationWorkflowInput, actor: string): Promise<QualificationWorkflow> {
   const def = qualificationWorkflowSchema.parse(input);
   const content = {
     research_questions: def.research_questions.map((q) => q.question),
@@ -112,12 +106,8 @@ export function workflowBrief(workflow: QualificationWorkflow | null): string | 
  * definition), or a given definition's version, with the ICP it scores against (from the Company summary) and, when
  * it comes from a definition, the definition itself. Without arguments: the default plus the list of definitions.
  */
-export async function getWorkflowForAgent(
-  sql: Sql,
-  opts: { lead_id?: string; workflow_id?: string; version?: number } = {},
-  ws: string = OWNER_WORKSPACE_ID,
-) {
-  const profile = await getProfile(sql);
+export async function getWorkflowForAgent(sql: Sql, ws: string, opts: { lead_id?: string; workflow_id?: string; version?: number } = {}) {
+  const profile = await getProfile(sql, ws);
   const icp: Pick<Profile, "sells" | "icp_description" | "segments" | "signals"> | null = profile
     ? { sells: profile.sells, icp_description: profile.icp_description, segments: profile.segments, signals: profile.signals }
     : null;

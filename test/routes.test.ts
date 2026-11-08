@@ -82,7 +82,7 @@ describe("web app routes without a database", () => {
   const code = async (res: Response) => ((await res.json()) as { error: { code: string; message: string } }).error;
 
   test("every new endpoint needs auth", async () => {
-    for (const path of ["/api/me", "/api/summary", "/api/status", "/api/profile", "/api/workflows", "/api/replies", "/api/experiments", "/api/keys"]) {
+    for (const path of ["/api/me", "/api/summary", "/api/status", "/api/profile", "/api/workflows", "/api/replies", "/api/keys"]) {
       expect((await call(path)).status).toBe(401);
     }
   });
@@ -90,7 +90,11 @@ describe("web app routes without a database", () => {
   test("/api/me with MCP_TOKEN", async () => {
     const res = await call("/api/me", { headers: auth });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ user: { id: "owner", name: "Owner (MCP_TOKEN)" }, auth: "token" });
+    expect(await res.json()).toEqual({
+      user: { id: "owner", name: "Owner (MCP_TOKEN)" },
+      auth: "token",
+      workspace: { id: "ws_owner", name: "Owner", owner: true },
+    });
   });
 
   test("/api/status works with no keys: get_status data plus inbox_address and the MCP URL", async () => {
@@ -124,17 +128,14 @@ describe("web app routes without a database", () => {
     expect((await call("/api/onboarding/propose", json({}))).status).toBe(400);
     expect((await call("/api/leads/find", json({ count: 51 }))).status).toBe(400);
     expect((await call("/api/keys", json({ name: "" }))).status).toBe(400);
-    expect((await call("/api/experiments", json({ hypothesis: "no name" }))).status).toBe(400);
     expect((await call("/api/onboarding/read-website", json({}))).status).toBe(400);
     expect((await call("/api/replies?limit=0", { headers: auth })).status).toBe(400);
-    const patch = await call("/api/experiments/exp_1", { ...json({ status: "running" }), method: "PATCH" });
-    expect(patch.status).toBe(400);
     const profile = await call("/api/profile", { ...json({ website: "not a url at all" }), method: "PUT" });
     expect(profile.status).toBe(400);
   });
 
   test("database-backed endpoints are a clean 503 without DATABASE_URL", async () => {
-    for (const path of ["/api/summary", "/api/profile", "/api/workflows", "/api/workflows/runs/ses_1", "/api/replies", "/api/experiments", "/api/keys"]) {
+    for (const path of ["/api/summary", "/api/profile", "/api/workflows", "/api/workflows/runs/ses_1", "/api/replies", "/api/keys"]) {
       const res = await call(path, { headers: auth });
       expect(res.status).toBe(503);
       expect((await code(res)).code).toBe("not_configured");

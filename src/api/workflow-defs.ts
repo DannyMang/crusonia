@@ -2,10 +2,9 @@
 // (src/services/workflow-runs.ts). Separate from GET /api/workflows, the per-purpose aggregates Home shows.
 import { Hono } from "hono";
 import { z } from "zod";
-import { billingOwnerOf, requireCredits } from "../billing/accounts.ts";
-import { actorOf, parseJson, parseQuery, sqlFor, type AppEnv, type Principal } from "../lib/context.ts";
+import { requireCredits } from "../billing/accounts.ts";
+import { actorOf, parseJson, parseQuery, sqlFor, wsOf, type AppEnv, type Principal } from "../lib/context.ts";
 import {
-  OWNER_WORKSPACE_ID,
   createDefinition,
   createVersion,
   definitionInputSchema,
@@ -20,9 +19,6 @@ import { MAX_TEST_LEADS, listRuns, resumeWorkflow, runWorkflow } from "../servic
 import { MAX_RESEARCH_BATCH } from "../services/workflows.ts";
 
 export const workflowDefs = new Hono<AppEnv>();
-
-// TODO(workspaces): the request's workspace (wsOf(c)) once requests carry one.
-const wsOf = (_c: unknown) => OWNER_WORKSPACE_ID;
 
 /** A person in the web app creates 'user' workflows; an agent (API key or the owner token) creates 'claude_code' ones. */
 const sourceOf = (p: Principal): WorkflowSource => (p.kind === "clerk" ? "user" : "claude_code");
@@ -44,8 +40,8 @@ workflowDefs.patch("/:id", async (c) => {
   const sql = sqlFor(c.env);
   const out = await patchDefinition(sql, wsOf(c), c.req.param("id"), body, actorOf(principal));
   if (!body.resume) return c.json(out);
-  await requireCredits(c.env, principal);
-  const resumed = await resumeWorkflow(sql, c.env, wsOf(c), out.workflow.id, actorOf(principal), { billingOwnerId: billingOwnerOf(principal) });
+  await requireCredits(c.env, principal, wsOf(c));
+  const resumed = await resumeWorkflow(sql, c.env, wsOf(c), out.workflow.id, actorOf(principal));
   return c.json({ ...(await getDefinition(sql, wsOf(c), out.workflow.id)), resumed });
 });
 
@@ -69,10 +65,8 @@ const RunBody = z
 workflowDefs.post("/:id/run", async (c) => {
   const body = await parseJson(c, RunBody);
   const principal = c.get("principal");
-  await requireCredits(c.env, principal);
-  const out = await runWorkflow(sqlFor(c.env), c.env, wsOf(c), c.req.param("id"), body, actorOf(principal), {
-    billingOwnerId: billingOwnerOf(principal),
-  });
+  await requireCredits(c.env, principal, wsOf(c)); // 402 insufficient_credits when the workspace's balance is <= 0
+  const out = await runWorkflow(sqlFor(c.env), c.env, wsOf(c), c.req.param("id"), body, actorOf(principal));
   return c.json(out, 202);
 });
 

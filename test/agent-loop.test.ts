@@ -418,10 +418,11 @@ describe("lead finding", () => {
   });
 
   test("find companies like a lead: the brief names the lead by id only and asks the agent to read it", () => {
-    const msg = findLeadsMessage(10, { likeLeadId: "lead_abc" });
+    const summary = { markdown: "# Acme\n\n## Who buys\nSeed-stage SaaS.", version: 1, updated_at: null, updated_by: null, change_note: null };
+    const msg = findLeadsMessage(10, summary, "run_like", { likeLeadId: "lead_abc" });
     expect(msg).toStartWith("Find up to 10 new leads");
     expect(msg).toContain("companies like lead lead_abc");
     expect(msg).toContain("get_lead");
-    expect(findLeadsMessage(10)).not.toContain("companies like");
+    expect(findLeadsMessage(10, summary, "run_plain")).not.toContain("companies like");
   });
 });

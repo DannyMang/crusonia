@@ -1,5 +1,7 @@
 // Provider webhooks. Not behind /api auth: each request is authenticated by its signature over the raw
 // body (checked before anything else, including the database), then deduped by the provider's event id.
+// Each event maps back to one workspace through the row it is about: AgentMail through the draft or thread
+// (src/services/inbound.ts), Naive through the session, Stripe through the customer (src/billing/webhook.ts).
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
@@ -21,6 +23,7 @@ import {
 import { AgentMailEventSchema, handleAgentMailEvent } from "../services/inbound.ts";
 import { claimWebhookEvent, releaseWebhookEvent } from "../services/webhook-events.ts";
 import { handleSessionIdle } from "../services/workflows.ts";
+import { OWNER_WORKSPACE_ID } from "../services/workspaces.ts";
 
 export const webhooks = new Hono<{ Bindings: Env }>();
 
@@ -103,8 +106,10 @@ webhooks.post("/naive", async (c) => {
       ),
     );
   } else {
-    await sql`insert into events (lead_id, kind, data)
-              values ((select lead_id from naive_sessions where id = ${sessionId ?? null}), 'naive_webhook',
+    // The session's workspace (deliveries for sessions we don't know are audited in the owner workspace).
+    await sql`insert into events (workspace_id, lead_id, kind, data)
+              values (coalesce((select workspace_id from naive_sessions where id = ${sessionId ?? null}), ${OWNER_WORKSPACE_ID}),
+                      (select lead_id from naive_sessions where id = ${sessionId ?? null}), 'naive_webhook',
                       ${JSON.stringify({ type: delivery.type, session_id: sessionId ?? null })}::jsonb)`;
   }
   return c.json({ ok: true });

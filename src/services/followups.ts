@@ -34,14 +34,13 @@ export type FollowUpInput = z.infer<typeof followupInputSchema>;
 type Parent = Draft & { email: string | null; name: string | null; stage: string; consent_at: Date | null; suppressed: boolean };
 
 /** POST /api/leads/:id/followups. */
-// TODO(workspaces): scope the lead, draft and approval to `ws`.
-export async function createFollowUp(sql: Sql, _ws: string, leadId: string, input: FollowUpInput, opts: { ttlMinutes: number; actor: string; now?: Date }) {
+export async function createFollowUp(sql: Sql, ws: string, leadId: string, input: FollowUpInput, opts: { ttlMinutes: number; actor: string; now?: Date }) {
   const parent = (
     (await sql`
       select d.*, l.email, l.name, l.stage, l.consent_at,
-             exists (select 1 from suppressions s where s.email = lower(l.email)) as suppressed
-      from drafts d join leads l on l.id = d.lead_id
-      where d.lead_id = ${leadId} and d.channel = 'email' and d.status in ('sent', 'sending', 'scheduled')
+             exists (select 1 from suppressions s where s.workspace_id = l.workspace_id and s.email = lower(l.email)) as suppressed
+      from drafts d join leads l on l.id = d.lead_id and l.workspace_id = d.workspace_id
+      where d.workspace_id = ${ws} and d.lead_id = ${leadId} and d.channel = 'email' and d.status in ('sent', 'sending', 'scheduled')
         and (${input.draft_id ?? null}::text is null or d.id = ${input.draft_id ?? null})
       order by d.version desc limit 1`) as Parent[]
   )[0];
@@ -60,31 +59,31 @@ export async function createFollowUp(sql: Sql, _ws: string, leadId: string, inpu
   for (let attempt = 1; ; attempt++) {
     try {
       const [row] = await sql`
-        with next as (select coalesce(max(version), 0) + 1 as version from drafts where lead_id = ${leadId}),
+        with next as (select coalesce(max(version), 0) + 1 as version from drafts where workspace_id = ${ws} and lead_id = ${leadId}),
         superseded as (
           -- An older follow-up still waiting for approval is replaced by this one.
           update drafts set status = 'superseded'
-          where lead_id = ${leadId} and status = 'pending_approval' and followup_of is not null
+          where workspace_id = ${ws} and lead_id = ${leadId} and status = 'pending_approval' and followup_of is not null
           returning id
         ),
         expired as (
           update approvals set status = 'expired', decided_at = now(), decided_via = 'superseded'
-          where status = 'pending' and draft_id in (select id from superseded)
+          where workspace_id = ${ws} and status = 'pending' and draft_id in (select id from superseded)
         ),
         draft as (
-          insert into drafts (id, lead_id, version, variant, subject, body, status, channel, followup_of, scheduled_for)
-          select ${newId("draft")}, l.id, next.version, l.variant, ${subject}, ${input.body}, 'pending_approval', 'email', ${parent.id}, ${sendAt.toISOString()}::timestamptz
-          from leads l, next where l.id = ${leadId}
+          insert into drafts (id, workspace_id, lead_id, version, variant, subject, body, status, channel, followup_of, scheduled_for)
+          select ${newId("draft")}, l.workspace_id, l.id, next.version, l.variant, ${subject}, ${input.body}, 'pending_approval', 'email', ${parent.id}, ${sendAt.toISOString()}::timestamptz
+          from leads l, next where l.workspace_id = ${ws} and l.id = ${leadId}
           returning *
         ),
         approval as (
-          insert into approvals (code, kind, lead_id, draft_id, recipient, summary, expires_at)
-          select ${shortCode()}, 'send', lead_id, id, ${parent.email}, ${summary}, now() + make_interval(mins => ${opts.ttlMinutes}::int)
+          insert into approvals (code, workspace_id, kind, lead_id, draft_id, recipient, summary, expires_at)
+          select ${shortCode()}, workspace_id, 'send', lead_id, id, ${parent.email}, ${summary}, now() + make_interval(mins => ${opts.ttlMinutes}::int)
           from draft returning *
         ),
         ev as (
-          insert into events (lead_id, kind, data)
-          select d.lead_id, 'draft_created', jsonb_build_object('via', 'api', 'draft_id', d.id, 'version', d.version, 'approval_code', a.code,
+          insert into events (workspace_id, lead_id, kind, data)
+          select d.workspace_id, d.lead_id, 'draft_created', jsonb_build_object('via', 'api', 'draft_id', d.id, 'version', d.version, 'approval_code', a.code,
                  'channel', 'email', 'followup_of', ${parent.id}::text, 'send_at', ${sendAt.toISOString()}::text, 'actor', ${opts.actor}::text)
           from draft d, approval a
         )
@@ -98,12 +97,12 @@ export async function createFollowUp(sql: Sql, _ws: string, leadId: string, inpu
 }
 
 /** GET /api/leads/:id/followups: the lead's follow-ups, newest first. */
-export async function listFollowUps(sql: Sql, _ws: string, leadId: string) {
+export async function listFollowUps(sql: Sql, ws: string, leadId: string) {
   return sql`
     select d.id, d.version, d.subject, d.body, d.status, d.followup_of, d.scheduled_for, d.created_at,
            (select a.code from approvals a where a.draft_id = d.id order by a.created_at desc limit 1) as approval_code,
            (select a.status from approvals a where a.draft_id = d.id order by a.created_at desc limit 1) as approval_status
-    from drafts d where d.lead_id = ${leadId} and d.followup_of is not null
+    from drafts d where d.workspace_id = ${ws} and d.lead_id = ${leadId} and d.followup_of is not null
     order by d.version desc`;
 }
 
@@ -117,13 +116,13 @@ export async function sendDueFollowUps(sql: Sql, env: Env, fetchFn?: FetchFn, li
     with c as (
       update drafts d set status = 'cancelled'
       from leads l
-      where d.lead_id = l.id and d.status = 'scheduled'
+      where d.lead_id = l.id and d.workspace_id = l.workspace_id and d.status = 'scheduled'
         and (l.stage = any(${REPLIED_STAGES}::text[]) or l.consent_at is null
-             or exists (select 1 from suppressions s where s.email = lower(l.email)))
-      returning d.id, d.lead_id
+             or exists (select 1 from suppressions s where s.workspace_id = l.workspace_id and s.email = lower(l.email)))
+      returning d.id, d.lead_id, d.workspace_id
     )
-    insert into events (lead_id, kind, data)
-    select lead_id, 'followups_stopped', jsonb_build_object('reason', 'not_sendable', 'drafts', jsonb_agg(id)) from c group by lead_id
+    insert into events (workspace_id, lead_id, kind, data)
+    select workspace_id, lead_id, 'followups_stopped', jsonb_build_object('reason', 'not_sendable', 'drafts', jsonb_agg(id)) from c group by workspace_id, lead_id
     returning lead_id`;
   const due = await sql`select id from drafts where status = 'scheduled' and scheduled_for <= now() order by scheduled_for limit ${limit}`;
   if (!due.length) return { sent: 0, cancelled: cancelled.length, failed: 0 };
@@ -136,12 +135,12 @@ export async function sendDueFollowUps(sql: Sql, env: Env, fetchFn?: FetchFn, li
     const claimed = await sql`
       update drafts d set status = 'sending', sending_at = now(), error = null
       where d.id = ${id} and d.status = 'scheduled' and d.scheduled_for <= now()
-        and not coalesce((select value = 'true'::jsonb from settings where key = 'paused'), false)
-        and exists (select 1 from approvals a join leads l on l.id = a.lead_id
-                    where a.draft_id = d.id and a.kind = 'send' and a.status = 'approved'
+        and not coalesce((select w.paused from workspaces w where w.id = d.workspace_id), false)
+        and exists (select 1 from approvals a join leads l on l.id = a.lead_id and l.workspace_id = a.workspace_id
+                    where a.draft_id = d.id and a.workspace_id = d.workspace_id and a.kind = 'send' and a.status = 'approved'
                       and l.consent_at is not null and lower(l.email) = lower(a.recipient)
                       and not (l.stage = any(${REPLIED_STAGES}::text[]))
-                      and not exists (select 1 from suppressions s where s.email = lower(a.recipient)))
+                      and not exists (select 1 from suppressions s where s.workspace_id = a.workspace_id and s.email = lower(a.recipient)))
       returning d.*, (select a.recipient from approvals a where a.draft_id = d.id and a.status = 'approved' limit 1) as recipient`;
     const draft = claimed[0];
     if (!draft) continue;

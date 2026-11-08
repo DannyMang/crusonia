@@ -20,24 +20,32 @@ export function traceRetentionDays(env: Pick<Env, "TRACE_RETENTION_DAYS">): numb
   return env.TRACE_RETENTION_DAYS?.trim() && Number.isInteger(n) && n >= 1 ? n : DEFAULT_TRACE_RETENTION_DAYS;
 }
 
-/** Who reads a trace. */
-export type TraceViewer = { principal: Principal };
-
 /**
- * The one place trace reads are scoped: the session row if `viewer` may read it, else 404.
- * TODO(workspaces): require the session's workspace to be the viewer's; platform admins may read any workspace.
+ * Who reads a trace: a member of `workspace` (their own workspace's runs), or a platform admin (`admin`, see
+ * src/api/admin.ts): any workspace, read-only (no refresh from Naive), each read audited by the caller.
  */
-export async function traceSession(sql: Sql, _viewer: TraceViewer, sessionId: string): Promise<SessionRow> {
+export type TraceViewer = { principal: Principal; workspace: string; admin?: boolean };
+
+/** The one place trace reads are scoped: the session row if `viewer` may read it, else 404. */
+export async function traceSession(sql: Sql, viewer: TraceViewer, sessionId: string): Promise<SessionRow> {
+  const admin = viewer.admin === true;
   const [row] = (await sql`
-    select id, lead_id, purpose, status, stop_reason, input, consumed_micro_usd, leads_processed,
+    select id, workspace_id, workflow_version, lead_id, purpose, status, stop_reason, input, consumed_micro_usd, leads_processed,
            events_seq, events_synced_at, last_event_at, created_at, updated_at
-    from naive_sessions where id = ${sessionId}`) as SessionRow[];
+    from naive_sessions where id = ${sessionId} and (${admin}::boolean or workspace_id = ${viewer.workspace})`) as SessionRow[];
   if (!row) throw new ApiError(404, "not_found", `No workflow run with session id ${sessionId}`);
   return row;
 }
 
 /** Reads the rest of the trace from Naive (free) when ours may be behind. Never fails the read: says why instead. */
-async function refresh(sql: Sql, env: Env, row: SessionRow, fetchFn?: FetchFn): Promise<{ ok: boolean; complete?: boolean; error?: string; skipped?: string }> {
+async function refresh(
+  sql: Sql,
+  env: Env,
+  row: SessionRow,
+  fetchFn?: FetchFn,
+  viewer?: TraceViewer,
+): Promise<{ ok: boolean; complete?: boolean; error?: string; skipped?: string }> {
+  if (viewer?.admin) return { ok: true, skipped: "read-only view: stored events only" };
   if (!env.NAIVE_API_KEY) return { ok: true, skipped: "NAIVE_API_KEY is not set; showing stored events only" };
   const finished = row.status === "done" || row.status === "error";
   if (finished && row.events_synced_at && new Date(row.events_synced_at).getTime() >= new Date(row.updated_at).getTime()) {
@@ -53,17 +61,18 @@ async function refresh(sql: Sql, env: Env, row: SessionRow, fetchFn?: FetchFn): 
 
 const TRACE_PAGE_MAX = 1000;
 
-async function sessionContext(sql: Sql, sessionId: string, leadId: string | null, since: Date | string) {
+async function sessionContext(sql: Sql, ws: string, sessionId: string, leadId: string | null, since: Date | string) {
   const [audit, approvals, ledger, apify] = await sql.transaction(
     [
-      sql`select id::text, lead_id, kind, data, created_at from events where data->>'session_id' = ${sessionId} order by id limit 5000`,
+      sql`select id::text, lead_id, kind, data, created_at from events where workspace_id = ${ws} and data->>'session_id' = ${sessionId} order by id limit 5000`,
       sql`select code, kind, status, summary, tool_call_id, payload, answer, decided_via, decided_at, expires_at, created_at
-          from approvals where naive_session_id = ${sessionId}
-             or (${leadId}::text is not null and lead_id = ${leadId} and kind = 'send' and created_at >= ${since}::timestamptz)
+          from approvals where workspace_id = ${ws}
+             and (naive_session_id = ${sessionId}
+                  or (${leadId}::text is not null and lead_id = ${leadId} and kind = 'send' and created_at >= ${since}::timestamptz))
           order by created_at`,
-      sql`select amount::text, source, data, created_at from credit_ledger where session_id = ${sessionId} order by id`,
+      sql`select amount::text, source, data, created_at from credit_ledger where workspace_id = ${ws} and session_id = ${sessionId} order by id`,
       sql`select run_id, actor, status, usage_micro_usd, max_charge_usd, debited_credits, created_at, finished_at
-          from apify_runs where session_id = ${sessionId} order by created_at`,
+          from apify_runs where workspace_id = ${ws} and session_id = ${sessionId} order by created_at`,
     ],
     { readOnly: true },
   );
@@ -95,19 +104,20 @@ export async function getTrace(
   fetchFn?: FetchFn,
 ) {
   let row = await traceSession(sql, viewer, sessionId);
-  const sync = await refresh(sql, env, row, fetchFn);
+  const sync = await refresh(sql, env, row, fetchFn, viewer);
   row = await traceSession(sql, viewer, sessionId);
   const limit = Math.min(Math.max(page.limit ?? 200, 1), TRACE_PAGE_MAX);
   const after = Math.max(page.afterSeq ?? 0, 0);
   const [events, ctx] = await Promise.all([
     sql`select seq, type, data, created_at from naive_session_events
-        where session_id = ${sessionId} and seq > ${after} order by seq limit ${limit + 1}`,
-    sessionContext(sql, sessionId, row.lead_id, row.created_at),
+        where workspace_id = ${row.workspace_id} and session_id = ${sessionId} and seq > ${after} order by seq limit ${limit + 1}`,
+    sessionContext(sql, row.workspace_id, sessionId, row.lead_id, row.created_at),
   ]);
   const hasMore = events.length > limit;
   const pageEvents = events.slice(0, limit) as { seq: number }[];
   ctx.spend.naive_usd = microToUsd(row.consumed_micro_usd);
   return {
+    workspace_id: row.workspace_id,
     run: toRun(row, false),
     events: pageEvents,
     has_more: hasMore,
@@ -123,11 +133,12 @@ const EXPORT_MAX_EVENTS = 20_000;
 /** GET /api/workflows/runs/:id/trace/export: the whole trace as one JSON document. */
 export async function exportTrace(sql: Sql, env: Env, viewer: TraceViewer, sessionId: string, fetchFn?: FetchFn) {
   let row = await traceSession(sql, viewer, sessionId);
-  const sync = await refresh(sql, env, row, fetchFn);
+  const sync = await refresh(sql, env, row, fetchFn, viewer);
   row = await traceSession(sql, viewer, sessionId);
   const [events, ctx] = await Promise.all([
-    sql`select seq, type, data, created_at from naive_session_events where session_id = ${sessionId} order by seq limit ${EXPORT_MAX_EVENTS}`,
-    sessionContext(sql, sessionId, row.lead_id, row.created_at),
+    sql`select seq, type, data, created_at from naive_session_events
+        where workspace_id = ${row.workspace_id} and session_id = ${sessionId} order by seq limit ${EXPORT_MAX_EVENTS}`,
+    sessionContext(sql, row.workspace_id, sessionId, row.lead_id, row.created_at),
   ]);
   ctx.spend.naive_usd = microToUsd(row.consumed_micro_usd);
   return {
@@ -148,10 +159,10 @@ export async function exportTrace(sql: Sql, env: Env, viewer: TraceViewer, sessi
 export async function syncFinishedTraces(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<number> {
   if (!env.NAIVE_API_KEY) return 0;
   const rows = (await sql`
-    select id, events_seq from naive_sessions
+    select id, workspace_id, events_seq from naive_sessions
     where status in ('done', 'error') and (events_synced_at is null or events_synced_at < updated_at)
       and created_at > now() - make_interval(days => ${traceRetentionDays(env)}::int)
-    order by updated_at limit 3`) as Pick<SessionRow, "id" | "events_seq">[];
+    order by updated_at limit 3`) as Pick<SessionRow, "id" | "workspace_id" | "events_seq">[];
   const client = new NaiveClient(env.NAIVE_API_KEY, fetchFn);
   let synced = 0;
   for (const row of rows) {

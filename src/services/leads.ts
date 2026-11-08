@@ -8,8 +8,10 @@ import type { Approval, Draft, Lead, Sql } from "../db.ts";
 import { newId, variantFor } from "../ids.ts";
 import { normalizeDomain, whyNoDomain } from "./domains.ts";
 import { missingEvidenceQuestion, missingRequirements, type RequirementGap } from "./qualification.ts";
-import { OWNER_WORKSPACE_ID, workflowForLead } from "./workflow-defs.ts";
+import { workflowForLead } from "./workflow-defs.ts";
 import { ServiceError } from "./errors.ts";
+// Every function here acts on one workspace (`ws`): reads are filtered by it, writes are stamped with it, and a lead
+// id from another workspace is "not found".
 
 // Stages a lead can be in (see schema.sql). Agent-found leads start in `no_consent` (found, not scored yet). Scoring
 // moves them to `qualified` or `disqualified` like any other lead; `has_consent` (consent_at) stays false, which is
@@ -174,7 +176,14 @@ const EXCLUDED_REASON =
  * (sends require recorded consent). Concurrent calls for the same domain are serialized by an advisory lock.
  * TODO(workspaces): a unique index on (workspace_id, domain) for company rows replaces the lock.
  */
-export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results: AddLeadResult[]; counts: Record<string, number> }> {
+/** `cohort`: the batch new leads are recorded under ('run:<session id>' for an agent run); existing leads keep theirs. */
+export async function addLeads(
+  sql: Sql,
+  ws: string,
+  inputs: LeadInput[],
+  opts: { cohort?: string | null } = {},
+): Promise<{ results: AddLeadResult[]; counts: Record<string, number> }> {
+  const cohort = opts.cohort ?? "agent";
   if (inputs.length > MAX_LEADS_PER_CALL) {
     throw new ServiceError("invalid", `Send at most ${MAX_LEADS_PER_CALL} leads per call (got ${inputs.length}).`);
   }
@@ -239,12 +248,12 @@ export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results
   const emailRows = [...byEmail.values()];
   const suppressed = new Set<string>();
   if (emailRows.length) {
-    const found = await sql`select email from suppressions where email = any(${emailRows.map((r) => r.email)}::text[])`;
+    const found = await sql`select email from suppressions where workspace_id = ${ws} and email = any(${emailRows.map((r) => r.email)}::text[])`;
     for (const r of found) suppressed.add(r.email as string);
   }
   const outcome = new Map<string, { id: string; status: AddLeadResult["status"]; stage?: string; target?: Target }>();
-  await upsertEmailLeads(sql, emailRows.filter((r) => !suppressed.has(r.email)), outcome);
-  await upsertCompanies(sql, [...byDomain.values()], outcome);
+  await upsertEmailLeads(sql, ws, cohort, emailRows.filter((r) => !suppressed.has(r.email)), outcome);
+  await upsertCompanies(sql, ws, cohort, [...byDomain.values()], outcome);
 
   for (const [i, result] of results.entries()) {
     const key = keyOf[i];
@@ -296,7 +305,7 @@ export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results
     research.set(result.id, item);
   }
   if (research.size) {
-    const saved = await saveResearchBatch(sql, [...research.values()]);
+    const saved = await saveResearchBatch(sql, ws, [...research.values()]);
     for (const r of saved) {
       const item = research.get(r.lead_id)!;
       for (const i of item.indices) {
@@ -316,7 +325,13 @@ export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results
   return { results, counts };
 }
 
-async function upsertEmailLeads(sql: Sql, rows: EmailRow[], outcome: Map<string, { id: string; status: AddLeadResult["status"]; stage?: string }>) {
+async function upsertEmailLeads(
+  sql: Sql,
+  ws: string,
+  cohort: string,
+  rows: EmailRow[],
+  outcome: Map<string, { id: string; status: AddLeadResult["status"]; stage?: string }>,
+) {
   if (!rows.length) return;
   const json = JSON.stringify(rows);
   const [, set] = await sql.transaction([
@@ -328,13 +343,13 @@ async function upsertEmailLeads(sql: Sql, rows: EmailRow[], outcome: Map<string,
       promoted as (
         update leads l set email = i.email, updated_at = now()
         from input i
-        where l.email is null and i.domain is not null and coalesce(i.name, '') <> ''
+        where l.workspace_id = ${ws} and l.email is null and i.domain is not null and coalesce(i.name, '') <> ''
           and l.domain = i.domain and coalesce(lower(l.name), '') = lower(i.name)
-          and not exists (select 1 from leads e where e.email = i.email)
+          and not exists (select 1 from leads e where e.workspace_id = ${ws} and e.email = i.email)
         returning l.id, l.email, i.source, i.source_url
       )
-      insert into events (lead_id, kind, data)
-      select id, 'lead_email_found', jsonb_build_object('via', 'mcp', 'email', email, 'source', source, 'source_url', source_url)
+      insert into events (workspace_id, lead_id, kind, data)
+      select ${ws}, id, 'lead_email_found', jsonb_build_object('via', 'mcp', 'email', email, 'source', source, 'source_url', source_url)
       from promoted`,
     sql`
       with input as (
@@ -343,9 +358,9 @@ async function upsertEmailLeads(sql: Sql, rows: EmailRow[], outcome: Map<string,
           linkedin_url text, source text, source_url text, variant text)
       ),
       up as (
-        insert into leads as l (id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage)
-        select id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent' from input
-        on conflict (email) do update set
+        insert into leads as l (id, workspace_id, cohort, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage)
+        select id, ${ws}, ${cohort}, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent' from input
+        on conflict (workspace_id, email) do update set
           name = coalesce(l.name, excluded.name),
           title = coalesce(excluded.title, l.title),
           company = coalesce(excluded.company, l.company),
@@ -356,8 +371,8 @@ async function upsertEmailLeads(sql: Sql, rows: EmailRow[], outcome: Map<string,
         returning l.id, l.email, l.stage, (l.xmax = 0) as inserted
       ),
       ev as (
-        insert into events (lead_id, kind, data)
-        select up.id, case when up.inserted then 'lead_added' else 'lead_updated' end,
+        insert into events (workspace_id, lead_id, kind, data)
+        select ${ws}, up.id, case when up.inserted then 'lead_added' else 'lead_updated' end,
                jsonb_build_object('via', 'mcp', 'source', i.source, 'source_url', i.source_url)
         from up join input i on i.email = up.email
       )
@@ -366,7 +381,13 @@ async function upsertEmailLeads(sql: Sql, rows: EmailRow[], outcome: Map<string,
   for (const r of set ?? []) outcome.set(r.key as string, { id: r.id as string, stage: r.stage as string, status: r.inserted ? "created" : "merged" });
 }
 
-async function upsertCompanies(sql: Sql, rows: CompanyRow[], outcome: Map<string, { id: string; status: AddLeadResult["status"]; stage?: string; target?: Target }>) {
+async function upsertCompanies(
+  sql: Sql,
+  ws: string,
+  cohort: string,
+  rows: CompanyRow[],
+  outcome: Map<string, { id: string; status: AddLeadResult["status"]; stage?: string; target?: Target }>,
+) {
   if (!rows.length) return;
   const json = JSON.stringify(rows);
   const domains = rows.map((r) => r.domain).sort();
@@ -378,23 +399,23 @@ async function upsertCompanies(sql: Sql, rows: CompanyRow[], outcome: Map<string
   const targets = sql`
     select distinct on (i.domain) i.domain, l.id, l.stage, l.score, (l.excluded_at is not null or l.stage = 'disqualified') as excluded,
            (l.id = i.id) as created
-    from input i join leads l on l.domain = i.domain
+    from input i join leads l on l.workspace_id = ${ws} and l.domain = i.domain
     order by i.domain, (l.id = i.id) desc, (l.email is null) desc, l.created_at, l.id`;
   const [, , found] = await sql.transaction([
-    sql`select count(pg_advisory_xact_lock(hashtext('crusonia:lead-domain:' || d)))::int as locked
+    sql`select count(pg_advisory_xact_lock(hashtext('crusonia:lead-domain:' || ${ws}::text || ':' || d)))::int as locked
         from (select d from unnest(${domains}::text[]) as d order by d) s`,
     sql`
       with input as (${input}),
       ins as (
-        insert into leads (id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage)
-        select id, null, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent'
+        insert into leads (id, workspace_id, cohort, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage)
+        select id, ${ws}, ${cohort}, null, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent'
         from input i
-        where not exists (select 1 from leads e where e.domain = i.domain)
+        where not exists (select 1 from leads e where e.workspace_id = ${ws} and e.domain = i.domain)
         on conflict do nothing
         returning id
       )
-      insert into events (lead_id, kind, data)
-      select ins.id, 'lead_added', jsonb_build_object('via', 'mcp', 'source', i.source, 'source_url', i.source_url)
+      insert into events (workspace_id, lead_id, kind, data)
+      select ${ws}, ins.id, 'lead_added', jsonb_build_object('via', 'mcp', 'source', i.source, 'source_url', i.source_url)
       from ins join input i on i.id = ins.id`,
     sql`
       with input as (${input}),
@@ -408,14 +429,14 @@ async function upsertCompanies(sql: Sql, rows: CompanyRow[], outcome: Map<string
           linkedin_url = case when l.name is null and i.name is not null then coalesce(i.linkedin_url, l.linkedin_url) else l.linkedin_url end,
           updated_at = now()
         from input i join t on t.domain = i.domain
-        where l.id = t.id and not t.created and not t.excluded
+        where l.workspace_id = ${ws} and l.id = t.id and not t.created and not t.excluded
           and ((l.company is null and i.company is not null) or (l.website is null and i.website is not null)
                or (l.name is null and i.name is not null))
         returning l.id, l.stage
       ),
       ev as (
-        insert into events (lead_id, kind, data)
-        select up.id, 'lead_updated', jsonb_build_object('via', 'mcp', 'merged', true, 'source', i.source, 'source_url', i.source_url)
+        insert into events (workspace_id, lead_id, kind, data)
+        select ${ws}, up.id, 'lead_updated', jsonb_build_object('via', 'mcp', 'merged', true, 'source', i.source, 'source_url', i.source_url)
         from up join t on t.id = up.id join input i on i.domain = t.domain
       )
       select t.domain, t.id, coalesce(up.stage, t.stage) as stage, t.score, t.excluded, t.created, (up.id is not null) as merged
@@ -514,14 +535,14 @@ export type LeadSummary = Pick<
   "id" | "email" | "name" | "title" | "company" | "domain" | "stage" | "score" | "qualified" | "source" | "updated_at"
 > & { has_consent: boolean; linkedin_url?: string | null; next_step?: string | null; why_summary?: string | null; review_question?: string | null };
 
-export async function listLeads(sql: Sql, opts: { stage?: LeadStage | null; limit?: number } = {}): Promise<LeadSummary[]> {
+export async function listLeads(sql: Sql, ws: string, opts: { stage?: LeadStage | null; limit?: number } = {}): Promise<LeadSummary[]> {
   const limit = Math.min(Math.max(opts.limit ?? 25, 1), 200);
   const stage = opts.stage ?? null;
   const rows = await sql`
     select id, email, name, title, company, domain, linkedin_url, stage, score, qualified, next_step, source, updated_at,
            consent_at is not null as has_consent
     from leads
-    where (${stage}::text is null or stage = ${stage})
+    where workspace_id = ${ws} and (${stage}::text is null or stage = ${stage})
     order by updated_at desc, id
     limit ${limit}`;
   return rows as LeadSummary[];
@@ -541,14 +562,14 @@ export type LeadDetail = {
   notes: LeadNote[];
 };
 
-export async function getLeadDetail(sql: Sql, id: string): Promise<LeadDetail> {
+export async function getLeadDetail(sql: Sql, ws: string, id: string): Promise<LeadDetail> {
   const [leads, evidence, drafts, approvals, notes] = await sql.transaction(
     [
-      sql`select *, consent_at is not null as has_consent from leads where id = ${id}`,
-      sql`select * from evidence where lead_id = ${id} order by id`,
-      sql`select * from drafts where lead_id = ${id} order by version desc`,
-      sql`select * from approvals where lead_id = ${id} order by created_at desc`,
-      sql`select id::text, author, kind, body, created_at, updated_at from lead_notes where lead_id = ${id} order by id desc limit 100`,
+      sql`select *, consent_at is not null as has_consent from leads where workspace_id = ${ws} and id = ${id}`,
+      sql`select * from evidence where workspace_id = ${ws} and lead_id = ${id} order by id`,
+      sql`select * from drafts where workspace_id = ${ws} and lead_id = ${id} order by version desc`,
+      sql`select * from approvals where workspace_id = ${ws} and lead_id = ${id} order by created_at desc`,
+      sql`select id::text, author, kind, body, created_at, updated_at from lead_notes where workspace_id = ${ws} and lead_id = ${id} order by id desc limit 100`,
     ],
     { readOnly: true },
   );
@@ -567,16 +588,16 @@ export const evidenceInputSchema = evidenceItemSchema.extend({
   lead_id: text(64).describe("Lead id, e.g. 'lead_3f2a...' (from add_leads or list_leads)."),
 });
 
-export async function saveEvidence(sql: Sql, input: z.infer<typeof evidenceInputSchema>): Promise<Evidence> {
+export async function saveEvidence(sql: Sql, ws: string, input: z.infer<typeof evidenceInputSchema>): Promise<Evidence> {
   const rows = await sql`
     with ins as (
-      insert into evidence (lead_id, claim, source_url)
-      select id, ${input.claim}, ${input.source_url} from leads where id = ${input.lead_id}
+      insert into evidence (workspace_id, lead_id, claim, source_url)
+      select workspace_id, id, ${input.claim}, ${input.source_url} from leads where workspace_id = ${ws} and id = ${input.lead_id}
       returning *
     ),
     ev as (
-      insert into events (lead_id, kind, data)
-      select lead_id, 'evidence_saved', jsonb_build_object('via', 'mcp', 'evidence_id', id, 'source_url', source_url) from ins
+      insert into events (workspace_id, lead_id, kind, data)
+      select workspace_id, lead_id, 'evidence_saved', jsonb_build_object('via', 'mcp', 'evidence_id', id, 'source_url', source_url) from ins
     ),
     touch as (update leads set updated_at = now() where id in (select lead_id from ins))
     select * from ins`;
@@ -593,18 +614,18 @@ export const scoreInputSchema = z.object({
 
 /**
  * Required evidence the lead doesn't have yet, counting `adding` (this call's items). The requirements are those of
- * the workflow version the lead was run under, else the default workflow's (./workflow-defs.ts).
+ * the workflow version the lead was run under, else the workspace's default workflow (./workflow-defs.ts).
  */
-async function evidenceGaps(sql: Sql, leadId: string, adding: { requirement?: string | null }[] = []): Promise<RequirementGap[]> {
-  const workflow = await workflowForLead(sql, OWNER_WORKSPACE_ID, leadId);
+async function evidenceGaps(sql: Sql, ws: string, leadId: string, adding: { requirement?: string | null }[] = []): Promise<RequirementGap[]> {
+  const workflow = await workflowForLead(sql, ws, leadId);
   if (!workflow?.evidence_requirements.some((r) => r.required !== false)) return [];
-  const rows = await sql`select distinct requirement from evidence where lead_id = ${leadId} and requirement is not null`;
+  const rows = await sql`select distinct requirement from evidence where workspace_id = ${ws} and lead_id = ${leadId} and requirement is not null`;
   return missingRequirements(workflow, [...rows.map((r) => r.requirement as string), ...adding.map((e) => e.requirement)]);
 }
 
-export async function scoreLead(sql: Sql, input: z.infer<typeof scoreInputSchema>): Promise<LeadSummary> {
+export async function scoreLead(sql: Sql, ws: string, input: z.infer<typeof scoreInputSchema>): Promise<LeadSummary> {
   // Pause on missing evidence: never a verdict without the workflow's required evidence.
-  const gaps = await evidenceGaps(sql, input.lead_id);
+  const gaps = await evidenceGaps(sql, ws, input.lead_id);
   if (gaps.length) {
     throw new ServiceError(
       "invalid",
@@ -622,12 +643,12 @@ export async function scoreLead(sql: Sql, input: z.infer<typeof scoreInputSchema
                      then (case when ${input.qualified}::boolean then 'qualified' else 'disqualified' end)
                      else stage end,
         updated_at = now()
-      where id = ${input.lead_id}
+      where workspace_id = ${ws} and id = ${input.lead_id}
       returning *
     ),
     ev as (
-      insert into events (lead_id, kind, data)
-      select id, 'lead_scored', jsonb_build_object('via', 'mcp', 'score', score, 'qualified', qualified, 'stage', stage) from up
+      insert into events (workspace_id, lead_id, kind, data)
+      select workspace_id, id, 'lead_scored', jsonb_build_object('via', 'mcp', 'score', score, 'qualified', qualified, 'stage', stage) from up
     )
     select id, email, name, title, company, domain, stage, score, qualified, source, updated_at,
            consent_at is not null as has_consent
@@ -707,7 +728,7 @@ const linkKey = (l: { url: string }) => l.url.trim().replace(/\/+$/, "").toLower
  * score, verdict, rationale and next step for one or more leads, in one transaction under a per-lead lock. Scoring
  * follows score_lead's stage rules. Leads that do not exist are skipped.
  */
-export async function saveResearchBatch(sql: Sql, items: ResearchInput[]): Promise<ResearchResult[]> {
+export async function saveResearchBatch(sql: Sql, ws: string, items: ResearchInput[]): Promise<ResearchResult[]> {
   if (!items.length) return [];
   // Deduped here (not with DISTINCT ON) so the insert keeps the call's order: evidence ids follow `ord`.
   const seen = new Set<string>();
@@ -735,19 +756,19 @@ export async function saveResearchBatch(sql: Sql, items: ResearchInput[]): Promi
         -- An item saved before without its requirement id gets it now.
         update evidence e set requirement = i.requirement
         from input i
-        where e.lead_id = i.lead_id and e.claim = i.claim and e.source_url = i.source_url and i.requirement is not null and e.requirement is null
+        where e.workspace_id = ${ws} and e.lead_id = i.lead_id and e.claim = i.claim and e.source_url = i.source_url and i.requirement is not null and e.requirement is null
       ),
       ins as (
-        insert into evidence (lead_id, claim, source_url, requirement)
-        select i.lead_id, i.claim, i.source_url, i.requirement from input i
-        where exists (select 1 from leads l where l.id = i.lead_id)
-          and not exists (select 1 from evidence e where e.lead_id = i.lead_id and e.claim = i.claim and e.source_url = i.source_url)
+        insert into evidence (workspace_id, lead_id, claim, source_url, requirement)
+        select ${ws}, i.lead_id, i.claim, i.source_url, i.requirement from input i
+        where exists (select 1 from leads l where l.workspace_id = ${ws} and l.id = i.lead_id)
+          and not exists (select 1 from evidence e where e.workspace_id = ${ws} and e.lead_id = i.lead_id and e.claim = i.claim and e.source_url = i.source_url)
         order by i.ord
         returning *
       ),
       ev as (
-        insert into events (lead_id, kind, data)
-        select lead_id, 'evidence_saved', jsonb_build_object('via', 'mcp', 'evidence_id', id, 'source_url', source_url) from ins
+        insert into events (workspace_id, lead_id, kind, data)
+        select workspace_id, lead_id, 'evidence_saved', jsonb_build_object('via', 'mcp', 'evidence_id', id, 'source_url', source_url) from ins
       )
       select lead_id, count(*)::int as n from ins group by lead_id`,
     sql`
@@ -767,15 +788,15 @@ export async function saveResearchBatch(sql: Sql, items: ResearchInput[]): Promi
                        else l.stage end,
           updated_at = now()
         from input i
-        where l.id = i.lead_id
+        where l.workspace_id = ${ws} and l.id = i.lead_id
         returning l.id, l.score, l.qualified, l.stage, l.consent_at is not null as has_consent
       ),
       ev as (
-        insert into events (lead_id, kind, data)
-        select id, 'lead_scored', jsonb_build_object('via', 'mcp', 'score', score, 'qualified', qualified, 'stage', stage) from up
+        insert into events (workspace_id, lead_id, kind, data)
+        select ${ws}, id, 'lead_scored', jsonb_build_object('via', 'mcp', 'score', score, 'qualified', qualified, 'stage', stage) from up
       )
       select id, stage from up`,
-    sql`update leads set updated_at = now() where id = any(${[...new Set(evidence.map((e) => e.lead_id))]}::text[])`,
+    sql`update leads set updated_at = now() where workspace_id = ${ws} and id = any(${[...new Set(evidence.map((e) => e.lead_id))]}::text[])`,
     sql`
       with x as (select * from jsonb_to_recordset(${JSON.stringify(people)}::jsonb) as x(id text, contacts jsonb, links jsonb)),
       n as (
@@ -786,6 +807,7 @@ export async function saveResearchBatch(sql: Sql, items: ResearchInput[]): Promi
                          where not exists (select 1 from jsonb_array_elements(l.links) e
                                            where lower(rtrim(e->>'url', '/')) = lower(rtrim(k->>'url', '/')))), '[]'::jsonb) as newl
         from leads l join x on x.id = l.id
+        where l.workspace_id = ${ws}
       ),
       up as (
         update leads l set contacts = l.contacts || n.newc, links = l.links || n.newl, updated_at = now()
@@ -793,8 +815,8 @@ export async function saveResearchBatch(sql: Sql, items: ResearchInput[]): Promi
         returning l.id
       ),
       ev as (
-        insert into events (lead_id, kind, data)
-        select n.id, 'lead_updated', jsonb_build_object('via', 'mcp', 'contacts_added', jsonb_array_length(n.newc), 'links_added', jsonb_array_length(n.newl))
+        insert into events (workspace_id, lead_id, kind, data)
+        select ${ws}, n.id, 'lead_updated', jsonb_build_object('via', 'mcp', 'contacts_added', jsonb_array_length(n.newc), 'links_added', jsonb_array_length(n.newl))
         from n join up on up.id = n.id
       )
       select id, jsonb_array_length(newc)::int as contacts_added, jsonb_array_length(newl)::int as links_added from n`,
@@ -802,7 +824,7 @@ export async function saveResearchBatch(sql: Sql, items: ResearchInput[]): Promi
   const saved = new Map((savedRows as { lead_id: string; n: number }[]).map((r) => [r.lead_id, r.n]));
   const scored = new Map((scoredRows as { id: string; stage: string }[]).map((r) => [r.id, r.stage]));
   const merged = new Map((mergedRows as { id: string; contacts_added: number; links_added: number }[]).map((r) => [r.id, r]));
-  await saveWhySummaries(sql, items.filter((i) => i.why_summary));
+  await saveWhySummaries(sql, ws, items.filter((i) => i.why_summary));
   return items.map((i) => ({
     lead_id: i.lead_id,
     evidence_saved: saved.get(i.lead_id) ?? 0,
@@ -817,11 +839,11 @@ export async function saveResearchBatch(sql: Sql, items: ResearchInput[]): Promi
  * Stores why-summaries with their citations renumbered from the call's evidence items to the lead's evidence list
  * (oldest first, 1-based: the numbers get_lead shows).
  */
-async function saveWhySummaries(sql: Sql, items: ResearchInput[]): Promise<void> {
+async function saveWhySummaries(sql: Sql, ws: string, items: ResearchInput[]): Promise<void> {
   if (!items.length) return;
   const rows = (await sql`
     select lead_id, claim, source_url, row_number() over (partition by lead_id order by id)::int as n
-    from evidence where lead_id = any(${items.map((i) => i.lead_id)}::text[])`) as { lead_id: string; claim: string; source_url: string; n: number }[];
+    from evidence where workspace_id = ${ws} and lead_id = any(${items.map((i) => i.lead_id)}::text[])`) as { lead_id: string; claim: string; source_url: string; n: number }[];
   const position = new Map(rows.map((r) => [JSON.stringify([r.lead_id, r.claim, r.source_url]), r.n]));
   const updates = items.map((i) => ({
     id: i.lead_id,
@@ -831,20 +853,20 @@ async function saveWhySummaries(sql: Sql, items: ResearchInput[]): Promise<void>
   await sql`
     update leads l set why_summary = x.why, updated_at = now()
     from jsonb_to_recordset(${JSON.stringify(updates)}::jsonb) as x(id text, why text, overwrite boolean)
-    where l.id = x.id and x.why <> '' and (x.overwrite or l.why_summary is null)`;
+    where l.workspace_id = ${ws} and l.id = x.id and x.why <> '' and (x.overwrite or l.why_summary is null)`;
 }
 
 /** MCP save_research: one lead's evidence, score, rationale, next step and why-summary in one call. */
-export async function saveResearch(sql: Sql, input: z.infer<typeof researchInputSchema>) {
-  const [row] = await sql`select domain from leads where id = ${input.lead_id}`;
+export async function saveResearch(sql: Sql, ws: string, input: z.infer<typeof researchInputSchema>) {
+  const [row] = await sql`select domain from leads where workspace_id = ${ws} and id = ${input.lead_id}`;
   if (!row) throw new ServiceError("not_found", `No lead with id ${input.lead_id}. Use list_leads to find lead ids.`);
   const domain = (row.domain as string | null) ?? null;
   // Pause on missing evidence: with required evidence missing (or the agent's own question), no score is stored and
   // the lead goes to needs_review with the question; the evidence, contacts and links found so far are kept.
-  const gaps = await evidenceGaps(sql, input.lead_id, input.evidence);
+  const gaps = await evidenceGaps(sql, ws, input.lead_id, input.evidence);
   const review = input.review_question ?? (gaps.length ? missingEvidenceQuestion(gaps) : null);
   const scoring = !review && input.score !== undefined && input.score !== null;
-  const [result] = await saveResearchBatch(sql, [
+  const [result] = await saveResearchBatch(sql, ws, [
     {
       lead_id: input.lead_id,
       evidence: input.evidence,
@@ -857,12 +879,12 @@ export async function saveResearch(sql: Sql, input: z.infer<typeof researchInput
     },
   ]);
   if (scoring && !result?.scored) throw new ServiceError("not_found", `No lead with id ${input.lead_id}. Use list_leads to find lead ids.`);
-  if (review) await flagForReview(sql, { lead_id: input.lead_id, question: review, missing: gaps.map((g) => g.id) });
+  if (review) await flagForReview(sql, ws, { lead_id: input.lead_id, question: review, missing: gaps.map((g) => g.id) });
   const [lead] = await sql`
     select id, email, name, title, company, domain, linkedin_url, stage, score, qualified, next_step, why_summary, review_question, source, updated_at,
            consent_at is not null as has_consent,
-           (select count(*)::int from evidence where lead_id = leads.id) as evidence_total
-    from leads where id = ${input.lead_id}`;
+           (select count(*)::int from evidence where workspace_id = leads.workspace_id and lead_id = leads.id) as evidence_total
+    from leads where workspace_id = ${ws} and id = ${input.lead_id}`;
   const summary = lead as LeadSummary & { evidence_total: number };
   return {
     lead: summary,
@@ -886,18 +908,18 @@ export const flagInputSchema = z.object({
  * The lead waits for a person: stage needs_review (from a found, researching or scored stage; leads in the send flow
  * keep theirs) with the question. Research of other leads goes on; scoring it later clears the question.
  */
-export async function flagForReview(sql: Sql, input: { lead_id: string; question: string; missing?: string[] }) {
+export async function flagForReview(sql: Sql, ws: string, input: { lead_id: string; question: string; missing?: string[] }) {
   const rows = await sql`
     with up as (
       update leads set review_question = ${input.question},
              stage = case when stage = any(${SCORABLE_STAGES}::text[]) then 'needs_review' else stage end,
              updated_at = now()
-      where id = ${input.lead_id}
+      where workspace_id = ${ws} and id = ${input.lead_id}
       returning id, stage, review_question
     ),
     ev as (
-      insert into events (lead_id, kind, data)
-      select id, 'lead_needs_review', jsonb_build_object('via', 'mcp', 'question', review_question, 'missing', ${JSON.stringify(input.missing ?? [])}::jsonb, 'stage', stage)
+      insert into events (workspace_id, lead_id, kind, data)
+      select ${ws}, id, 'lead_needs_review', jsonb_build_object('via', 'mcp', 'question', review_question, 'missing', ${JSON.stringify(input.missing ?? [])}::jsonb, 'stage', stage)
       from up
     )
     select * from up`;

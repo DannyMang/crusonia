@@ -15,8 +15,8 @@ import { createFollowUp, sendDueFollowUps } from "../src/services/followups.ts";
 import { handleAgentMailEvent } from "../src/services/inbound.ts";
 import { saveResearch } from "../src/services/leads.ts";
 import { approveAndSend } from "../src/services/send.ts";
-import { OWNER_WORKSPACE_ID } from "../src/services/workflow-defs.ts";
 import { listRuns, runWorkflow } from "../src/services/workflow-runs.ts";
+import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -25,11 +25,11 @@ const run = crypto.randomUUID().slice(0, 8);
 const mail = (name: string) => `${name}@itdemo-${run}.dev`;
 const domain = (name: string) => `${name}-${run}-itdemo.dev`;
 const cohort = `IT demo ${run}`;
-const token = `it-demo-${run}`;
+let WS = "";
+let key = "";
 const env: Env = {
   PUBLIC_URL: "https://example.test",
   DATABASE_URL: url,
-  MCP_TOKEN: token,
   NAIVE_API_KEY: "nv_test",
   NAIVE_AGENT_ID: "agt_test",
   AGENTMAIL_API_KEY: "am_test",
@@ -53,7 +53,7 @@ async function api(method: string, path: string, body?: unknown): Promise<{ stat
   const res = await worker.fetch(
     new Request(`https://example.test${path}`, {
       method,
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
     env,
@@ -87,27 +87,24 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
   let companyId = "";
   let runId = "";
 
-  beforeAll(() => {
+  beforeAll(async () => {
     sql = getSql(url);
+    // Everything happens in a throwaway workspace, deleted afterwards.
+    WS = await createTestWorkspace(sql, `demo_${run}`);
+    key = await testKey(sql, WS);
+    // A workspace other than the owner's runs on its own copy of the template agent; pretend it exists.
+    await sql`update workspaces set naive_agent_id = 'agt_ws_copy', naive_credential_id = 'vcr_x', naive_synced_at = now() + interval '1 hour'
+              where id = ${WS}`;
   });
 
   afterAll(async () => {
     if (!sql) return;
-    const ids = (await sql`select id from leads where cohort = ${cohort} or email like ${`%@itdemo-${run}.dev`} or domain like ${`%-${run}-itdemo.dev`}`).map(
-      (r) => r.id as string,
-    );
-    await sql.transaction([
-      sql`delete from events where lead_id = any(${ids}::text[]) or data->>'cohort' = ${cohort} or data->>'workflow_id' in (select id from workflow_defs where name like ${`IT demo ${run}%`})`,
-      sql`delete from workflow_defs where name like ${`IT demo ${run}%`}`,
-      sql`delete from messages where lead_id = any(${ids}::text[]) or thread_id like ${`thr_itdemo_${run}%`}`,
-      sql`delete from leads where id = any(${ids}::text[])`,
-      sql`delete from naive_sessions where id like ${`ses_itdemo_${run}%`}`,
-      sql`delete from webhook_events where event_id like ${`%itdemo_${run}%`}`,
-    ]);
+    await deleteTestWorkspaces(sql, [WS]);
+    await sql`delete from webhook_events where event_id like ${`%itdemo_${run}%`}`;
   });
 
   test("import preview: mapped rows, duplicates by email and in-file, invalid rows, consent per row; commit records the cohort", async () => {
-    const old = await createLead(sql, { email: mail("old"), name: "Old Person", source: "it_demo" }, "test");
+    const old = await createLead(sql, WS, { email: mail("old"), name: "Old Person", source: "it_demo" }, "test");
     const body = { csv: CSV, mapping: MAPPING, source: cohort, file_name: "demo.csv" };
     const { status, json: preview } = await api("POST", "/api/import/preview", body);
     expect(status).toBe(200);
@@ -203,7 +200,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
   test("a run pins version 1: variant, cohort and run on leads, sessions and drafts; the brief and the evidence gate follow it", async () => {
     let n = 0;
     const nv = provider((c) => (c.url.endsWith("/v1/sessions") ? Response.json({ id: `ses_itdemo_${run}_${++n}`, status: "running" }) : undefined));
-    const out = await runWorkflow(sql, env, OWNER_WORKSPACE_ID, workflowId, { version: 1, cohort }, "test", { fetch: nv.fn });
+    const out = await runWorkflow(sql, env, WS, workflowId, { version: 1, cohort }, "test", { fetch: nv.fn });
     runId = out.run.id;
     expect(out.started).toHaveLength(2);
     expect(out.run).toMatchObject({ version: 1, cohort });
@@ -225,7 +222,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     await sql`update naive_sessions set status = 'done' where workflow_run_id = ${runId}`;
 
     // Missing the run version's required evidence: paused for review, no score.
-    const paused = await saveResearch(sql, {
+    const paused = await saveResearch(sql, WS, {
       lead_id: adaId,
       evidence: [{ claim: "Uses a CRM", source_url: `https://${domain("ada")}/stack` }],
       score: 80,
@@ -235,10 +232,10 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
       links: [],
     });
     expect(paused).toMatchObject({ needs_review: true, lead: { stage: "needs_review" } });
-    const history = await listRuns(sql, OWNER_WORKSPACE_ID, workflowId);
+    const history = await listRuns(sql, WS, workflowId);
     expect(history.needs_review.map((r) => r.lead_id)).toContain(adaId);
 
-    const done = await saveResearch(sql, {
+    const done = await saveResearch(sql, WS, {
       lead_id: adaId,
       evidence: [{ claim: "Posted an SDR job on 2026-10-30", source_url: `https://${domain("ada")}/careers`, requirement: "e1" }],
       score: 82,
@@ -251,6 +248,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
 
     const draft = await createDraft(
       sql,
+      WS,
       { lead_id: adaId, subject: "Your SDR hire", body: "Saw the SDR role.", citations: [{ text: "SDR role", source_url: `https://${domain("ada")}/careers` }] },
       { ttlMinutes: 60, via: "test" },
     );
@@ -264,12 +262,12 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
       c.url.endsWith("/messages/send") ? Response.json({ message_id: `<m${++sends}-itdemo_${run}@agentmail.to>`, thread_id: `thr_itdemo_${run}_${sends}` }) : undefined,
     );
     const [approval] = await sql`select code from approvals where lead_id = ${adaId} and kind = 'send' and status = 'pending'`;
-    const sent = await approveAndSend({ sql, env, fetch: am.fn, actor: "test" }, approval!.code as string);
+    const sent = await approveAndSend({ sql, ws: WS, env, fetch: am.fn, actor: "test" }, approval!.code as string);
     expect(sent.status).toBe("sent");
 
-    const follow = await createFollowUp(sql, OWNER_WORKSPACE_ID, adaId, { body: "Following up on the SDR role.", send_after_days: 3 }, { ttlMinutes: 60, actor: "test" });
+    const follow = await createFollowUp(sql, WS, adaId, { body: "Following up on the SDR role.", send_after_days: 3 }, { ttlMinutes: 60, actor: "test" });
     expect(follow.draft).toMatchObject({ status: "pending_approval", subject: "Re: Your SDR hire" });
-    const scheduled = await approveAndSend({ sql, env, fetch: am.fn, actor: "test" }, follow.approval.code as string);
+    const scheduled = await approveAndSend({ sql, ws: WS, env, fetch: am.fn, actor: "test" }, follow.approval.code as string);
     expect(scheduled.status).toBe("scheduled");
     expect(sends).toBe(1); // nothing sent yet
     expect((await sql`select status from drafts where id = ${follow.draft.id}`)[0]!.status).toBe("scheduled");
@@ -300,7 +298,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     expect((await sendDueFollowUps(sql, env, am.fn)).sent).toBe(0);
     expect(sends).toBe(1);
 
-    const history = await listRuns(sql, OWNER_WORKSPACE_ID, workflowId);
+    const history = await listRuns(sql, WS, workflowId);
     const runRow = history.runs.find((r) => r.id === runId)!;
     expect(runRow.counts).toMatchObject({ found: 2, qualified: 1, drafted: 1, sent: 1 });
     expect(runRow.session_ids).toHaveLength(2);

@@ -13,6 +13,7 @@ export type Status = {
     total_leads?: number;
     pending_approvals?: number;
     profile_saved?: boolean;
+    company_summary_version?: number;
     paused?: boolean;
   };
   next_steps: string[];
@@ -23,7 +24,8 @@ function provider(env: Env, used_for: string, keys: (keyof Env)[]) {
   return missing.length ? { configured: false, used_for, missing: missing as string[] } : { configured: true, used_for };
 }
 
-export async function getStatus(env: Env): Promise<Status> {
+/** Configuration, plus the database counts of workspace `ws` when given (MCP get_status, GET /api/status). */
+export async function getStatus(env: Env, ws?: string): Promise<Status> {
   const providers = {
     database: provider(env, "Neon Postgres: leads, drafts, approvals, events", ["DATABASE_URL"]),
     apify: provider(env, "web crawling (read_website) and Google search (search_web)", ["APIFY_TOKEN"]),
@@ -41,20 +43,22 @@ export async function getStatus(env: Env): Promise<Status> {
   if (database.configured) {
     try {
       const sql = getSql(env.DATABASE_URL);
+      const w = ws ?? null;
       const [row] = await sql`
         select
           (select coalesce(jsonb_object_agg(stage, n), '{}'::jsonb)
-             from (select stage, count(*)::int as n from leads group by stage) s) as leads_by_stage,
-          (select count(*)::int from approvals where status = 'pending' and expires_at > now()) as pending_approvals,
-          exists (select 1 from settings where key = 'profile') as profile_saved,
-          coalesce((select value = 'true'::jsonb from settings where key = 'paused'), false) as paused`;
+             from (select stage, count(*)::int as n from leads where workspace_id = ${w} group by stage) s) as leads_by_stage,
+          (select count(*)::int from approvals where workspace_id = ${w} and status = 'pending' and expires_at > now()) as pending_approvals,
+          (select coalesce(max(version), 0)::int from company_summary_versions where workspace_id = ${w}) as summary_version,
+          coalesce((select paused from workspaces where id = ${w}), false) as paused`;
       const byStage = (row?.leads_by_stage ?? {}) as Record<string, number>;
       Object.assign(database, {
         reachable: true,
         leads_by_stage: byStage,
         total_leads: Object.values(byStage).reduce((a, b) => a + b, 0),
         pending_approvals: row?.pending_approvals as number,
-        profile_saved: row?.profile_saved as boolean,
+        profile_saved: Number(row?.summary_version) > 0,
+        company_summary_version: Number(row?.summary_version ?? 0),
         paused: row?.paused as boolean,
       });
     } catch (err) {
@@ -66,7 +70,9 @@ export async function getStatus(env: Env): Promise<Status> {
   const next_steps: string[] = [];
   if (!database.configured) next_steps.push("Set DATABASE_URL (Neon) and run `bun run migrate` to enable leads, profile, drafts and approvals.");
   else if (!database.reachable) next_steps.push("Fix the database error above (wrong DATABASE_URL, or run `bun run migrate`).");
-  else if (!database.profile_saved) next_steps.push("Onboard: read_website on the user's site, propose an ICP, then save_profile.");
+  else if (!database.profile_saved) {
+    next_steps.push("Onboard: read_website on the user's site, then write the Company summary with update_company_summary (markdown).");
+  }
   if (!providers.apify.configured) {
     next_steps.push("Set APIFY_TOKEN to enable search_web and full-site crawling (read_website falls back to a plain fetch without it).");
   }
