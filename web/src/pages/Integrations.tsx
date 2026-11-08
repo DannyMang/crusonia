@@ -75,12 +75,7 @@ export default function Integrations() {
       <Page>
         <div className="flex w-240 max-w-full flex-col gap-4 px-4 pb-14 pt-6 sm:px-12 sm:pt-8">
           <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-2">
-            <div className="flex min-w-0 max-w-full flex-col gap-2">
-              <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Integrations</h1>
-              <p className="w-140 max-w-full text-[13px]/4.5 font-medium text-muted">
-                The tools your Crusonia agent works through. Keys are stored encrypted and only used for the job listed on each card.
-              </p>
-            </div>
+            <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Integrations</h1>
             {s ? (
               <div className="shrink-0 text-[13px]/4 font-medium text-muted">
                 {connected} connected · {needs} {needs === 1 ? "needs" : "need"} a key{imessageOn(s) ? "" : " · 1 coming soon"}

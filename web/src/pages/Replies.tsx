@@ -29,10 +29,7 @@ export default function Replies() {
 
   return (
     <Page className="gap-6 px-4 pb-14 pt-6 sm:px-12 sm:pt-10">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h1 className="text-2xl/7.5 font-semibold tracking-[-0.02em]">Replies</h1>
-        <div className="text-sm/5 font-medium text-muted">Real inbound email only. Each one stops that lead's follow-ups.</div>
-      </div>
+      <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Replies</h1>
 
       <div
         className="flex flex-wrap items-center gap-1 self-start rounded-[18px] border border-[#200D0D1A] bg-[#200D0D0A] p-1"
