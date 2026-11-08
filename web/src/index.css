@@ -51,6 +51,18 @@
   }
 }
 
+/* Page zoom (lib/zoom.ts sets `zoom`, --app-zoom and data-app-zoom on <html> for the app, onboarding and 404
+   pages). Zoom shrinks viewport units as well, so 100vh would leave a gap at the bottom: full-height layouts
+   (app shell, sidebar, onboarding, Approvals, Experiments) divide by the zoom to still fill the window. */
+@layer utilities {
+  :root[data-app-zoom] .h-screen {
+    height: calc(100vh / var(--app-zoom));
+  }
+  :root[data-app-zoom] .min-h-screen {
+    min-height: calc(100vh / var(--app-zoom));
+  }
+}
+
 @keyframes crusonia-spin {
   to {
     transform: rotate(360deg);

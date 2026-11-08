@@ -1,8 +1,9 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Component, lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
+import { Component, lazy, Suspense, useEffect, useLayoutEffect, useSyncExternalStore, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import { AuthProvider, FullPageSpinner, RedirectIfSignedIn, RequireAuth } from "./auth.tsx";
 import Landing from "./landing/Landing.tsx";
+import { PHONE_QUERY, zoomFor } from "./lib/zoom.ts";
 import { queryClient } from "./queries.ts";
 
 // Every route but the landing page is its own chunk (React.lazy), so "/" loads only the landing. Inside the
@@ -94,6 +95,32 @@ class LoadBoundary extends Component<{ children: ReactNode }, { failed: boolean 
   }
 }
 
+function subscribePhone(onChange: () => void) {
+  const mq = window.matchMedia(PHONE_QUERY);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+
+/** Sets the route's page scale on <html> (lib/zoom.ts) before paint, so a page never flashes at the wrong size. */
+function AppZoom() {
+  const { pathname } = useLocation();
+  const phone = useSyncExternalStore(subscribePhone, () => window.matchMedia(PHONE_QUERY).matches);
+  const zoom = zoomFor(pathname, phone);
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    if (zoom === 1) {
+      root.style.removeProperty("zoom");
+      root.style.removeProperty("--app-zoom");
+      root.removeAttribute("data-app-zoom");
+    } else {
+      root.style.setProperty("zoom", String(zoom));
+      root.style.setProperty("--app-zoom", String(zoom));
+      root.setAttribute("data-app-zoom", "");
+    }
+  }, [zoom]);
+  return null;
+}
+
 const Protected = () => {
   usePreloadPages();
   return (
@@ -107,6 +134,7 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <AppZoom />
         <LoadBoundary>
           <AuthProvider>
             <Routes>
