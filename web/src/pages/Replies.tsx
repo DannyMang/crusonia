@@ -28,14 +28,14 @@ export default function Replies() {
   const list = (replies.data?.data ?? []).filter((r) => !("match" in active) || (active.match as readonly string[]).includes(r.label ?? "other"));
 
   return (
-    <Page className="gap-6 px-12 pb-14 pt-10">
-      <div className="flex items-baseline gap-3">
+    <Page className="gap-6 px-4 pb-14 pt-6 sm:px-12 sm:pt-10">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h1 className="text-2xl/7.5 font-semibold tracking-[-0.02em]">Replies</h1>
         <div className="text-sm/5 font-medium text-muted">Real inbound email only. Each one stops that lead's follow-ups.</div>
       </div>
 
       <div
-        className="flex items-center gap-1 self-start rounded-full border border-[#200D0D1A] bg-[#200D0D0A] p-1"
+        className="flex flex-wrap items-center gap-1 self-start rounded-[18px] border border-[#200D0D1A] bg-[#200D0D0A] p-1"
         role="tablist"
         aria-label="Reply labels"
         onKeyDown={tabListKeys(
@@ -68,7 +68,7 @@ export default function Replies() {
       {replies.isError ? <QueryError error={replies.error} what="replies" onRetry={() => void replies.refetch()} /> : null}
 
       <Card className="overflow-clip">
-        <div className="flex items-center gap-4 border-b border-b-[#200D0D14] bg-[#200D0D06] px-4.5 py-2.5 text-xs/4 font-medium text-muted">
+        <div className="hidden items-center gap-4 border-b border-b-[#200D0D14] bg-[#200D0D06] px-4.5 py-2.5 text-xs/4 font-medium text-muted sm:flex">
           <div className="w-40 shrink-0 xl:w-56">From</div>
           <div className="grow">Reply</div>
           <div className="w-28 shrink-0">Label</div>
@@ -77,7 +77,7 @@ export default function Replies() {
         {replies.isPending ? (
           [0, 1, 2].map((i) => (
             <div key={i} className="flex items-center gap-4 border-t border-t-[#200D0D0F] px-4.5 py-4 first:border-t-0">
-              <Skeleton className="h-8 w-56" />
+              <Skeleton className="h-8 w-40 sm:w-56" />
               <Skeleton className="h-8 grow" />
             </div>
           ))
@@ -100,21 +100,22 @@ export default function Replies() {
 function Row({ r }: { r: Reply }) {
   const content = (
     <>
-      <div className="flex w-40 shrink-0 flex-col gap-0.5 xl:w-56">
+      <div className="flex min-w-0 grow basis-0 flex-col gap-0.5 sm:w-40 sm:shrink-0 sm:grow-0 sm:basis-auto xl:w-56">
         <div className="truncate text-sm/4.5 font-medium text-ink">{r.lead?.name ?? r.from ?? "Unknown sender"}</div>
         <div className="truncate text-[11px]/3.5 text-muted">{r.lead?.company ?? (r.lead?.name ? r.from : "") ?? ""}</div>
       </div>
-      <div className="flex min-w-0 grow flex-col gap-0.5">
+      <div className="order-1 flex min-w-0 grow basis-full flex-col gap-0.5 sm:order-none sm:basis-auto">
         <div className="truncate text-[13px]/4 font-medium text-ink">{r.subject ?? "(no subject)"}</div>
         <div className="truncate text-xs/4 font-medium text-muted">{r.preview ?? ""}</div>
       </div>
-      <div className="w-28 shrink-0">
+      <div className="shrink-0 sm:w-28">
         <ReplyLabel label={r.label} />
       </div>
-      <div className="w-24 shrink-0 text-right text-[13px]/4 font-medium text-muted">{timeAgo(r.received_at)}</div>
+      <div className="shrink-0 text-right text-[13px]/4 font-medium text-muted sm:w-24">{timeAgo(r.received_at)}</div>
     </>
   );
-  const cls = "flex items-center gap-4 border-t border-t-[#200D0D0F] px-4.5 py-3.5 first:border-t-0";
+  // Phones: sender, label and time on top, the subject and preview under them.
+  const cls = "flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-t-[#200D0D0F] px-4 py-3.5 first:border-t-0 sm:flex-nowrap sm:px-4.5";
   return r.lead_id ? (
     <Link to={`/app/leads/${encodeURIComponent(r.lead_id)}`} className={cx(cls, "hover:bg-[#200D0D05]")}>
       {content}

@@ -29,7 +29,7 @@ export default function LeadDetail() {
     const e = lead.error;
     if (isApiError(e) && e.status === 404 && !e.missingRoute) return <NotFoundLead />;
     return (
-      <Page className="gap-6 px-12 py-10">
+      <Page className="gap-6 px-4 py-6 sm:px-12 sm:py-10">
         <Breadcrumb lead={null} />
         <QueryError error={e} what="this lead" onRetry={() => void lead.refetch()} />
       </Page>
@@ -44,19 +44,20 @@ function Detail({ data, approve }: { data: LeadFull; approve: ApproveMutation })
   const pending = approvals.filter((a) => a.status === "pending");
   const sendApproval = pending.find((a) => a.kind === "send");
   return (
-    <Page className="gap-6 px-12 py-10">
+    <Page className="gap-6 px-4 py-6 sm:px-12 sm:py-10">
       <Header lead={lead} sendApproval={sendApproval} approve={approve} />
       {approve.isError ? <QueryError error={approve.error} what="sending" /> : null}
       <Stats lead={lead} evidence={evidence} pending={pending} />
-      {/* Three columns from 1280px. Below that the draft sits beside the facts and the evidence and timeline run full width underneath. */}
-      <div className="grid grid-cols-[16rem_minmax(0,1fr)] items-start gap-7 xl:flex">
-        <div className="flex w-64 shrink-0 flex-col gap-5.5">
+      {/* Three columns from 1280px. Below that the draft sits beside the facts and the evidence and timeline run full width
+          underneath. Phones stack facts, draft, then evidence and timeline in one column. */}
+      <div className="flex flex-col gap-7 sm:grid sm:grid-cols-[16rem_minmax(0,1fr)] sm:items-start xl:flex xl:flex-row">
+        <div className="flex w-full shrink-0 flex-col gap-5.5 sm:w-64">
           <CompanyFacts lead={lead} lookalikes={data.lookalikes} />
           <ContactFacts lead={lead} />
           <WhyFit lead={lead} />
           <ConsentBox lead={lead} />
         </div>
-        <div className="col-span-2 row-start-2 flex min-w-0 grow basis-0 flex-col gap-7">
+        <div className="order-last col-span-2 row-start-2 flex min-w-0 grow basis-0 flex-col gap-7 sm:order-none">
           <EvidenceList evidence={evidence} />
           <Timeline events={timeline} pending={pending} />
           {messages.length ? <Conversation messages={messages} /> : null}
@@ -115,7 +116,7 @@ function Header({ lead, sendApproval, approve }: { lead: Lead; sendApproval: App
         {lead.domain && lead.domain !== leadTitle(lead) ? <div className={cx("shrink-0 text-[13px]/4", muted)}>{lead.domain}</div> : null}
         <StageBadge stage={lead.stage} size="lg" />
         <div className="grow" />
-        <div className="flex shrink-0 gap-2">
+        <div className="flex min-w-0 flex-wrap gap-2 sm:shrink-0">
           {lead.stage === "replied" || lead.stage === "interested" ? <MeetingButton lead={lead} /> : null}
           <Button
             variant="outline"
@@ -302,9 +303,17 @@ function SuppressDialog({ lead, open, onClose }: { lead: Lead; open: boolean; on
 
 // ---------- stats ----------
 
-function Stat({ title, value, unit, note, first, last, text }: { title: string; value: string; unit?: string; note: string; first?: boolean; last?: boolean; text?: boolean }) {
+// Four across from `sm`; phones show two rows of two, so the third stat starts a row without a divider.
+const STAT_EDGE = {
+  first: "pr-4",
+  second: "border-l border-l-[#200D0D1A] pl-4 sm:px-4",
+  third: "pr-4 sm:border-l sm:border-l-[#200D0D1A] sm:px-4",
+  last: "border-l border-l-[#200D0D1A] pl-4",
+};
+
+function Stat({ title, value, unit, note, edge, text }: { title: string; value: string; unit?: string; note: string; edge: keyof typeof STAT_EDGE; text?: boolean }) {
   return (
-    <div className={cx("flex min-w-0 grow basis-0 flex-col gap-1", first ? "pr-4" : last ? "border-l border-l-[#200D0D1A] pl-4" : "border-l border-l-[#200D0D1A] px-4")}>
+    <div className={cx("flex min-w-0 grow basis-0 flex-col gap-1", STAT_EDGE[edge])}>
       <div className={cx("text-[13px]/4 font-medium", muted)}>{title}</div>
       <div className={cx("text-xl/6 font-semibold text-ink", text ? "tracking-[-0.01em]" : "tabular-nums")}>
         {value}
@@ -320,23 +329,24 @@ function Stats({ lead, evidence, pending }: { lead: Lead; evidence: Evidence[]; 
   const latest = evidence.reduce<string | null>((m, e) => (!m || e.created_at > m ? e.created_at : m), null);
   const oldest = [...pending].sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
   return (
-    <div className="flex border-y border-y-[#200D0D1A] py-4">
+    <div className="grid grid-cols-2 gap-y-4 border-y border-y-[#200D0D1A] py-4 sm:flex">
       <Stat
-        first
+        edge="first"
         title="Fit score"
         value={lead.score === null ? "—" : String(lead.score)}
         unit={lead.score === null ? undefined : "/100"}
         note={lead.qualified === null ? "not scored yet" : lead.qualified ? "qualified" : "below the bar"}
       />
       <Stat
+        edge="second"
         title="Evidence"
         value={String(evidence.length)}
         unit={evidence.length === 1 ? "source" : "sources"}
         note={evidence.length ? `${plural(hosts.size, "site")} · latest ${timeAgo(latest)}` : "none yet"}
       />
-      <Stat text title="Experiment" value={`Variant ${lead.variant}`} note="A/B arm for this contact" />
+      <Stat edge="third" text title="Draft variant" value={`Variant ${lead.variant}`} note="the version of the draft this contact gets" />
       <Stat
-        last
+        edge="last"
         title="Waiting on you"
         value={oldest ? duration(Date.now() - new Date(oldest.created_at).getTime()) : "—"}
         note={oldest ? `code ${oldest.code} · expires in ${timeLeft(oldest.expires_at)}` : "nothing pending"}
@@ -686,7 +696,7 @@ function CrmSync({ lead }: { lead: Lead }) {
 
 function NotFoundLead() {
   return (
-    <Page className="gap-6 px-12 py-10">
+    <Page className="gap-6 px-4 py-6 sm:px-12 sm:py-10">
       <Breadcrumb lead={null} />
       <Card className="flex flex-col items-center gap-2 px-6 py-14 text-center">
         <div className="text-[15px]/5 font-semibold tracking-[-0.01em] text-ink">We couldn't find that lead</div>
@@ -701,17 +711,17 @@ function NotFoundLead() {
 
 function Loading() {
   return (
-    <Page className="gap-6 px-12 py-10" >
+    <Page className="gap-6 px-4 py-6 sm:px-12 sm:py-10" >
       <div className="flex flex-col gap-2.5" aria-busy="true" aria-label="Loading lead">
         <Skeleton className="h-4 w-48" />
-        <Skeleton className="h-7.5 w-80" />
-        <Skeleton className="h-4.5 w-120" />
+        <Skeleton className="h-7.5 w-80 max-w-full" />
+        <Skeleton className="h-4.5 w-120 max-w-full" />
       </div>
       <Skeleton className="h-25 w-full" />
-      <div className="flex items-start gap-7">
-        <Skeleton className="h-96 w-64 shrink-0" />
+      <div className="flex flex-col gap-7 sm:flex-row sm:items-start">
+        <Skeleton className="h-96 w-full shrink-0 sm:w-64" />
         <Skeleton className="h-96 grow" />
-        <Skeleton className="h-96 w-91 shrink-0" />
+        <Skeleton className="h-96 w-full shrink-0 sm:w-91" />
       </div>
     </Page>
   );

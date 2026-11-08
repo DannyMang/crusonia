@@ -35,7 +35,7 @@ export function ApiKeysCard({ created, onCreated }: { created: CreatedKey | null
   // Active keys first (newest first), revoked ones after them for the record.
   const data = [...(list.data ?? [])].sort((a, b) => Number(a.status === "revoked") - Number(b.status === "revoked"));
   return (
-    <Card className="flex flex-col px-6 pb-2 pt-6">
+    <Card className="flex flex-col px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
       <div className="flex items-center justify-between pb-3.5">
         <h2 className="text-[15px]/4.5 font-medium text-ink">API keys</h2>
         {!missing ? (
@@ -119,7 +119,7 @@ function CreateKeyForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
       <label htmlFor="key-name" className="text-[13px]/4 font-medium text-ink">
         Name this key
       </label>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
         <input
           ref={input}
           id="key-name"
@@ -128,7 +128,7 @@ function CreateKeyForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
           placeholder="e.g. claude-code-laptop"
           maxLength={64}
           autoComplete="off"
-          className="h-8.75 min-w-0 grow rounded-lg border border-[#200D0D26] bg-white px-3 text-sm/4.5 font-medium text-ink placeholder:text-[#200D0D59] focus:border-ink focus:outline-none"
+          className="h-8.75 min-w-0 grow basis-full rounded-lg border sm:basis-auto border-[#200D0D26] bg-white px-3 text-sm/4.5 font-medium text-ink placeholder:text-[#200D0D59] focus:border-ink focus:outline-none"
         />
         <button type="submit" className={limeButton} disabled={!name.trim() || create.isPending}>
           {create.isPending ? "Creating…" : "Create"}
@@ -173,10 +173,10 @@ function KeyTable({ rows }: { rows: ApiKey[] }) {
   return (
     <table className="w-full table-fixed border-collapse">
       <colgroup>
-        {/* Narrower below 1440px so "Last used" keeps room next to the tools card. */}
-        <col className="w-37.5 min-[1440px]:w-42.5" />
-        <col className="w-32.5 min-[1440px]:w-37.5" />
-        <col className="w-25 min-[1440px]:w-30" />
+        {/* Narrower below 1440px so "Last used" keeps room next to the tools card. Phones show Name, Last used and the action. */}
+        <col className="w-37.5 max-sm:w-auto min-[1440px]:w-42.5" />
+        <col className="hidden w-32.5 sm:table-column min-[1440px]:w-37.5" />
+        <col className="hidden w-25 sm:table-column min-[1440px]:w-30" />
         <col />
         <col className="w-16" />
       </colgroup>
@@ -185,10 +185,10 @@ function KeyTable({ rows }: { rows: ApiKey[] }) {
           <th scope="col" className={th}>
             Name
           </th>
-          <th scope="col" className={th}>
+          <th scope="col" className={cx(th, "hidden sm:table-cell")}>
             Key
           </th>
-          <th scope="col" className={th}>
+          <th scope="col" className={cx(th, "hidden sm:table-cell")}>
             Created
           </th>
           <th scope="col" className={th}>
@@ -208,8 +208,8 @@ function KeyTable({ rows }: { rows: ApiKey[] }) {
               <td className={cx("h-14 truncate p-0 pr-3 text-sm/4.5 font-medium", revoked ? "text-faint" : "text-ink")} title={k.name}>
                 {k.name}
               </td>
-              <td className="truncate p-0 pr-3 text-xs/4 font-medium tabular-nums text-faint">{k.prefix}…</td>
-              <td className="p-0 text-xs/4 font-medium text-muted">{longDate(k.created_at)}</td>
+              <td className="hidden truncate p-0 pr-3 text-xs/4 font-medium tabular-nums text-faint sm:table-cell">{k.prefix}…</td>
+              <td className="hidden p-0 text-xs/4 font-medium text-muted sm:table-cell">{longDate(k.created_at)}</td>
               <td className="p-0 text-xs/4 font-medium">
                 {revoked ? (
                   <span className="text-muted">{k.revoked_at ? `Revoked ${longDate(k.revoked_at)}` : "Revoked"}</span>
