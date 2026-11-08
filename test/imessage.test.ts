@@ -12,6 +12,7 @@ import {
   normalizeHandle,
   oneLine,
   parseAnswers,
+  phoneHint,
   timeLeft,
   type NoticeRow,
 } from "../src/services/imessage.ts";
@@ -154,6 +155,13 @@ describe("config and handles", () => {
     expect(imessageConfig(env({ IMESSAGE_ENABLED: "yes", BRIDGE_SECRET: secret })).active).toBe(false);
   });
 
+  test("phoneHint shows the last 4 digits only", () => {
+    expect(phoneHint("+14155550142")).toBe("\u00B7\u00B7\u00B70142");
+    expect(phoneHint("+1 (415) 555-0142")).toBe("···0142");
+    expect(phoneHint(undefined)).toBeNull();
+    expect(phoneHint("+12")).toBeNull();
+  });
+
   test("normalizeHandle", () => {
     expect(normalizeHandle("+1 (555) 000-1111")).toBe("+15550001111");
     expect(normalizeHandle("Me@Example.com")).toBe("me@example.com");
@@ -220,9 +228,15 @@ describe("/webhooks/photon routes (no database)", () => {
   });
 
   test("/api/status lists imessage among providers", async () => {
-    const res = await worker.fetch(new Request("https://example.test/api/status", { headers: { Authorization: "Bearer t" } }), env({ MCP_TOKEN: "t" }), {} as ExecutionContext);
-    const body = (await res.json()) as any;
+    const res = await worker.fetch(
+      new Request("https://example.test/api/status", { headers: { Authorization: "Bearer t" } }),
+      env({ MCP_TOKEN: "t", OWNER_PHONE: "+14155550142" }),
+      {} as ExecutionContext,
+    );
+    const text = await res.text();
+    const body = JSON.parse(text) as any;
     expect(body.providers.imessage).toMatchObject({ configured: true });
-    expect(body.imessage).toMatchObject({ enabled: true, configured: true, active: true, bridge: null });
+    expect(body.imessage).toMatchObject({ enabled: true, configured: true, active: true, bridge: null, owner_phone_set: true, owner_phone_hint: "···0142" });
+    expect(text).not.toContain("4155550142"); // never the full number
   });
 });

@@ -271,6 +271,7 @@ create table if not exists billing_accounts (
 --   invoice:<invoice id>    monthly plan credits for a paid subscription invoice
 --   usage:<naive session>   hosted agent spend x markup when the session finishes (+ `:<micro-usd>` top-ups if
 --                           the session resumes and spends more)
+--   apify:<run id>:<total credits>   an Apify Actor run's usage x markup (a later row tops up if usage grew)
 --   refund:<charge>:<cumulative amount refunded>   claw-back of the purchase in `purchase_source`
 --   expire:<grant source>   the unused rest of an expired plan grant (`purchase_source`)
 --   adjustment:<anything>   manual correction (insert by hand)
@@ -423,3 +424,88 @@ create table if not exists imessage_outbox (
 );
 create index if not exists imessage_outbox_due_idx on imessage_outbox (created_at) where delivered_at is null;
 create unique index if not exists imessage_outbox_message_uq on imessage_outbox (message_id) where message_id is not null;
+
+-- ---------------------------------------------------------------------------
+-- Agent loop v2: outreach channels and the manual task queue, batched research, Apify metering.
+-- Additive and idempotent. TODO(workspaces): scope apify_runs (and the task queries) by workspace.
+-- ---------------------------------------------------------------------------
+
+-- A draft's channel. 'email' goes out through AgentMail only after a send approval, and only to opted-in leads
+-- (unchanged). Every other channel is a manual task the owner sends personally and then marks sent or skipped:
+-- 'email_manual' (from the owner's own mailbox), 'linkedin', 'x', 'intro' (a forwardable blurb for a warm
+-- introduction). Manual drafts never get an approval and nothing ever sends them. Their status is
+-- open -> sent | skipped | superseded. One open draft per lead across channels: a new version of any channel
+-- supersedes the older open one. `target_url` is the profile the owner opens to send it (LinkedIn or X).
+-- `citations` links factual phrases in the body to the lead's saved evidence: [{text, source_url}].
+alter table drafts add column if not exists channel text not null default 'email';
+alter table drafts drop constraint if exists drafts_channel_check;
+alter table drafts add constraint drafts_channel_check check (channel in ('email', 'email_manual', 'linkedin', 'x', 'intro'));
+alter table drafts add column if not exists target_url text;
+alter table drafts add column if not exists citations jsonb not null default '[]';
+alter table drafts add column if not exists closed_at timestamptz;
+create index if not exists drafts_tasks_idx on drafts (status, created_at desc) where channel <> 'email';
+
+-- Outbound messages the owner sent by hand (a marked-sent task) carry their channel; email rows are 'email'.
+alter table messages add column if not exists channel text not null default 'email';
+
+-- The agent's suggested next step after research (save_research), e.g. "LinkedIn note to the CEO about the
+-- SDR job post".
+alter table leads add column if not exists next_step text;
+
+-- Every Apify Actor run Crusonia starts (search_web, read_website). `usage_micro_usd` is the run's
+-- usageTotalUsd in micro-USD; Apify finalizes it shortly after the run ends, so the cron re-reads it once
+-- (`usage_final`). The billing owner is debited usage x the markup in src/billing/plans.ts, like Naive spend:
+-- ledger rows `apify:<run id>:<total credits>`, `debited_credits` is what was debited so far (top-ups only).
+create table if not exists apify_runs (
+  run_id           text primary key,
+  actor            text not null,
+  status           text not null,
+  usage_micro_usd  bigint,
+  usage_final      boolean not null default false,
+  max_charge_usd   numeric,
+  billing_owner_id text,
+  session_id       text,
+  via              text,
+  debited_credits  bigint not null default 0,
+  created_at       timestamptz not null default now(),
+  finished_at      timestamptz,
+  updated_at       timestamptz not null default now()
+);
+create index if not exists apify_runs_open_idx on apify_runs (updated_at) where usage_final = false;
+
+-- One lead per company. Agent-found leads without an email are keyed by the company's normalized domain
+-- (src/services/domains.ts): add_leads merges into the existing row instead of adding a second one.
+-- `contacts`: named people at the company, only from public pages the agent read:
+-- [{name, title, linkedin_url, x_url, github_url, source_url, found_at}], merged by name (name/title/linkedin_url
+-- stay the first-seen person). `links`: the company's links [{kind: website|linkedin|github|x|other, url, source_url,
+-- found_at}], merged by URL. No other enrichment (funding, headcount...) is stored unless a cited evidence item says it.
+-- `why_summary`: the agent's 2-4 sentence "why we picked this", citing the lead's evidence by number (oldest first).
+-- `excluded_at`: the owner excluded the company; like a disqualified lead it is remembered and skipped by future
+-- runs until the owner un-excludes it. TODO(workspaces): a unique index on (workspace_id, domain) where email is null.
+alter table leads add column if not exists contacts jsonb not null default '[]';
+alter table leads add column if not exists links jsonb not null default '[]';
+alter table leads add column if not exists why_summary text;
+alter table leads add column if not exists excluded_at timestamptz;
+alter table leads add column if not exists excluded_reason text;
+create index if not exists leads_domain_idx on leads (domain) where domain is not null;
+
+-- Notes on a lead, from the owner (`user:<id>`) or an agent (`agent:<session id>`, or `agent:mcp`). kind
+-- 'thumbs_down' / 'thumbs_up' is the owner's rating of a pick, with the reason as the body. Agents read a lead's notes
+-- (get_lead) and the owner's recent notes across leads (get_profile) before finding or researching. Authors edit and
+-- delete only their own notes.
+create table if not exists lead_notes (
+  id         bigserial primary key,
+  lead_id    text not null references leads(id) on delete cascade,
+  author     text not null,
+  kind       text not null default 'note' check (kind in ('note', 'thumbs_down', 'thumbs_up')),
+  body       text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists lead_notes_lead_idx on lead_notes (lead_id, id desc);
+create index if not exists lead_notes_author_idx on lead_notes (id desc) where author like 'user:%';
+
+-- Pause on missing evidence: evidence items name the qualification workflow requirement they satisfy (settings key
+-- 'qualification_workflow', src/services/qualification.ts). A lead missing required evidence is never scored: it
+-- goes to needs_review with `review_question` (a column that predates this).
+alter table evidence add column if not exists requirement text;

@@ -9,15 +9,21 @@ import { experiments } from "./experiments.ts";
 import { integrations } from "./integrations.ts";
 import { keys } from "./keys.ts";
 import { leads } from "./leads.ts";
+import { notes } from "./notes.ts";
 import { onboarding, profile } from "./onboarding.ts";
 import { settings, suppressions } from "./settings.ts";
+import { tasks } from "./tasks.ts";
 import { workflows } from "./workflows.ts";
 
 export const api = new Hono<AppEnv>();
 
 api.use("*", requireAuth);
 api.route("/leads", leads);
+// Notes on a lead and excluding it: /leads/:id/notes, /leads/:id/exclude.
+api.route("/leads", notes);
 api.route("/approvals", approvals);
+// Manual outreach queue: LinkedIn, X, intro and own-mailbox drafts the owner sends personally.
+api.route("/tasks", tasks);
 api.route("/workflows", workflows);
 api.route("/settings", settings);
 api.route("/suppressions", suppressions);

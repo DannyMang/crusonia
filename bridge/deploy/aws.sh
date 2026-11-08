@@ -65,7 +65,72 @@ env_lines() { # exactly the five settings the bridge needs, plus non-secret conf
   printf 'WORKER_URL=%s\nSPECTRUM_MODE=live\nBRIDGE_VERSION=%s\n' "$WORKER_URL" "${GIT_REF:0:12}"
 }
 
-launch_script() { # first boot, as root. Never echoes the env file.
+bootstrap_body() { # the first-boot script (bash, as root). Never echoes the env file. Validated by deploy/test-bootstrap.sh.
+  cat <<EOF
+set -euo pipefail
+log() { echo "\$(date -u +%FT%TZ) \$*"; }
+log "bootstrap start (commit ${GIT_REF:0:12})"
+if [ ! -f /swapfile ]; then # 512 MB box: swap for the image build
+  { fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile &&
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab && log "swap on"; } || log "no swap (continuing)"
+fi
+export DEBIAN_FRONTEND=noninteractive
+# First boot races unattended-upgrades for the apt lock: wait for it instead of failing.
+APT="apt-get -o DPkg::Lock::Timeout=600 -o Acquire::Retries=3"
+\$APT update -y
+\$APT install -y --no-install-recommends docker.io git ca-certificates
+# Recent docker CLIs refuse 'docker build' without the buildx plugin; the legacy builder is the fallback below.
+\$APT install -y --no-install-recommends docker-buildx || log "docker-buildx not available; using the legacy builder"
+systemctl enable --now docker
+log "docker \$(docker version --format '{{.Server.Version}}')"
+install -d -m 700 -o root -g root /opt/crusonia-bridge
+# Root-only env file: dockerd (root) reads it; the bridge inside the container runs as the unprivileged bun user.
+( umask 077; cat > /opt/crusonia-bridge/bridge.env <<'ENVEOF'
+$(env_lines)
+ENVEOF
+)
+chmod 600 /opt/crusonia-bridge/bridge.env
+rm -rf /opt/crusonia-bridge/repo
+git clone --quiet "$REPO_URL" /opt/crusonia-bridge/repo
+git -C /opt/crusonia-bridge/repo checkout --quiet --detach "$GIT_REF"
+IMAGE="crusonia-bridge:${GIT_REF:0:12}"
+docker build -q -t "\$IMAGE" /opt/crusonia-bridge/repo/bridge >/dev/null ||
+  DOCKER_BUILDKIT=0 docker build -q -t "\$IMAGE" /opt/crusonia-bridge/repo/bridge >/dev/null
+log "image built"
+run() {
+  docker rm -f crusonia-bridge >/dev/null 2>&1 || true
+  docker run -d --name crusonia-bridge --restart always --env-file /opt/crusonia-bridge/bridge.env \\
+    --cap-drop ALL --security-opt no-new-privileges --memory 300m --pids-limit 200 \\
+    --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 "\$@" "\$IMAGE" >/dev/null
+}
+# Health is read into a variable first: piping into 'grep -q' can SIGPIPE docker exec and fail under pipefail.
+connected() {
+  local out
+  for _ in \$(seq 1 24); do
+    sleep 5
+    out="\$(docker exec crusonia-bridge bun src/cli.ts health 2>/dev/null || true)"
+    case "\$out" in *'"state":"connected"'*) return 0 ;; esac
+  done
+  return 1
+}
+run --read-only --tmpfs /tmp:rw,size=64m
+if connected; then log "bridge connected (read-only root filesystem)"; else
+  log "not connected with a read-only root filesystem; retrying writable"
+  run
+  if connected; then log "bridge connected"; else log "bridge NOT connected; see: docker logs crusonia-bridge"; fi
+fi
+if [ "${SEND_TEST_MESSAGE:-0}" = "1" ] && [ ! -f /opt/crusonia-bridge/.test-message-sent ]; then
+  out="\$(docker exec crusonia-bridge bun src/cli.ts notify test:connected "$TEST_TEXT" 2>&1 || true)"
+  case "\$out" in
+    "200 "*) touch /opt/crusonia-bridge/.test-message-sent; log "test message sent" ;;
+    *) log "test message FAILED: \$(printf '%s' "\$out" | head -c 300)" ;;
+  esac
+fi
+log "bootstrap done"
+EOF
+}
+
+launch_script() {
   # Lightsail runs launch scripts with /bin/sh (its examples have no shebang), so the outer layer is POSIX sh: it writes
   # the real (bash) bootstrap to /run, which is RAM-backed, runs it, and deletes it.
   cat <<EOF
@@ -73,55 +138,8 @@ launch_script() { # first boot, as root. Never echoes the env file.
 umask 077
 cat > /run/crusonia-bootstrap.sh <<'CRUSONIA_BOOTSTRAP'
 #!/bin/bash
-set -euo pipefail
 exec >>/var/log/crusonia-bootstrap.log 2>&1
-echo "bootstrap start \$(date -u +%FT%TZ)"
-if [ ! -f /swapfile ]; then
-  fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
-  echo '/swapfile none swap sw 0 0' >> /etc/fstab
-fi
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y docker.io git
-systemctl enable --now docker
-install -d -m 700 -o root -g root /opt/crusonia-bridge
-# Root-only env file: dockerd (root) reads it; the bridge process inside the container runs as the unprivileged bun user.
-( umask 077; cat > /opt/crusonia-bridge/bridge.env <<'ENVEOF'
-$(env_lines)
-ENVEOF
-)
-chmod 600 /opt/crusonia-bridge/bridge.env
-git clone --quiet "$REPO_URL" /opt/crusonia-bridge/repo
-git -C /opt/crusonia-bridge/repo checkout --quiet --detach "$GIT_REF"
-docker build -q -t "crusonia-bridge:${GIT_REF:0:12}" /opt/crusonia-bridge/repo/bridge
-run() {
-  docker rm -f crusonia-bridge >/dev/null 2>&1 || true
-  docker run -d --name crusonia-bridge --restart always --env-file /opt/crusonia-bridge/bridge.env \\
-    --cap-drop ALL --security-opt no-new-privileges --memory 300m --pids-limit 200 \\
-    --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 "\$@" "crusonia-bridge:${GIT_REF:0:12}" >/dev/null
-}
-connected() {
-  for _ in \$(seq 1 18); do
-    sleep 5
-    docker exec crusonia-bridge bun src/cli.ts health 2>/dev/null | grep -q '"state":"connected"' && return 0
-  done
-  return 1
-}
-run --read-only --tmpfs /tmp:rw,size=64m
-if connected; then echo "bridge connected (read-only root filesystem)"; else
-  echo "not connected with a read-only root filesystem; retrying writable"
-  run
-  connected && echo "bridge connected" || echo "bridge NOT connected; see: docker logs crusonia-bridge"
-fi
-if [ "${SEND_TEST_MESSAGE:-0}" = "1" ] && [ ! -f /opt/crusonia-bridge/.test-message-sent ]; then
-  if docker exec crusonia-bridge bun src/cli.ts notify test:connected "$TEST_TEXT" | grep -q '^200 '; then
-    touch /opt/crusonia-bridge/.test-message-sent
-    echo "test message sent"
-  else
-    echo "test message FAILED"
-  fi
-fi
-echo "bootstrap done \$(date -u +%FT%TZ)"
+$(bootstrap_body)
 CRUSONIA_BOOTSTRAP
 /bin/bash /run/crusonia-bootstrap.sh
 status=\$?
@@ -194,6 +212,8 @@ cmd_down() {
     say "deleted instance $INSTANCE"
   fi
 }
+
+[[ "${AWS_SH_LIB:-}" == 1 ]] && return 0 2>/dev/null
 
 case "${1:-plan}" in
   plan) cmd_plan ;;

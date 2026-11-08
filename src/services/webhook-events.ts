@@ -14,3 +14,14 @@ export async function claimWebhookEvent(sql: Sql, source: string, eventId: strin
 export async function releaseWebhookEvent(sql: Sql, eventId: string): Promise<void> {
   await sql`delete from webhook_events where event_id = ${eventId}`;
 }
+
+/** Claims many event ids in one statement. Returns the ids this call claimed (the others were already claimed). */
+export async function claimWebhookEvents(sql: Sql, source: string, eventIds: string[]): Promise<Set<string>> {
+  if (!eventIds.length) return new Set();
+  const rows = await sql`
+    insert into webhook_events (event_id, source)
+    select id, ${source} from unnest(${eventIds}::text[]) as id
+    on conflict (event_id) do nothing
+    returning event_id`;
+  return new Set(rows.map((r) => r.event_id as string));
+}
