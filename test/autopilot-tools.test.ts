@@ -9,7 +9,7 @@ import type { Env } from "../src/env.ts";
 import { agentTextProblem, createMcpServer, operatorWorkflowProblem, type McpContext } from "../src/mcp/server.ts";
 import { ALL_TOOLS, OPERATOR_MUST_NOT_HAVE, OPERATOR_TOOLS, PIPELINE_READ_TOOLS, RESEARCHER_TOOLS, WEB_TOOLS, resolveRole, type McpRole } from "../src/mcp/toolsets.ts";
 import { DEFAULT_AUTO_CONFIRM_TOOLS, OPERATOR_AUTO_CONFIRM, isToolAllowed, parseToolAllowlist } from "../src/services/policy.ts";
-import { GOOGLE_SEARCH_MIN_CHARGE_USD, searchGoogle } from "../src/services/apify.ts";
+import { CRAWL_PLAIN_MEMORY_MB, CRAWL_RENDER_MEMORY_MB, crawlWebsite, GOOGLE_SEARCH_MIN_CHARGE_USD, searchGoogle } from "../src/services/apify.ts";
 import { mergeProblem } from "../src/services/merge-leads.ts";
 import { DENIED_BUILTINS, OPERATOR_PLAYBOOK_PATH, naiveAgentConfig, operatorAgentConfig, parsePlaybook } from "../scripts/lib/naive-agent.ts";
 import { workspaceAgentConfig } from "../src/services/naive-agents.ts";
@@ -230,6 +230,20 @@ describe("web tools", () => {
     urls.length = 0;
     await searchGoogle({ token: "t", maxChargeUsd: 2, fetchFn }, { query: "q", max_results: 10 }).catch(() => {});
     expect(new URL(urls[0]!).searchParams.get("maxTotalChargeUsd")).toBe("2");
+  });
+});
+
+describe("reading sites", () => {
+  test("a crawl asks for little memory, so several can run at once under the account's limit", async () => {
+    const urls: string[] = [];
+    const fetchFn = (async (input: unknown) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ error: { type: "stop", message: "stop" } }), { status: 400 });
+    }) as never;
+    const opts = { url: "https://a.dev", maxPages: 1, maxCharsPerPage: 100 };
+    await crawlWebsite({ token: "t", maxChargeUsd: 0.25, fetchFn }, { ...opts, renderJs: false }).catch(() => {});
+    await crawlWebsite({ token: "t", maxChargeUsd: 0.25, fetchFn }, { ...opts, renderJs: true }).catch(() => {});
+    expect(urls.map((u) => new URL(u).searchParams.get("memory"))).toEqual([String(CRAWL_PLAIN_MEMORY_MB), String(CRAWL_RENDER_MEMORY_MB)]);
   });
 });
 

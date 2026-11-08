@@ -100,6 +100,12 @@ describe("what a find step hands to research", () => {
     expect(found.map((l) => l.id).sort()).toEqual(["out", "sent"]);
   });
 
+  test("a known company already looked at isn't researched again; one nobody looked at is", () => {
+    const { research, found } = pickForResearch([lead("seen", { find_status: "merged", stage: "qualified" }), lead("fresh", { find_status: "merged", stage: "no_consent", score: null, qualified: null })], 5);
+    expect(research.map((l) => l.id)).toEqual(["fresh"]);
+    expect(found.map((l) => l.id)).toEqual(["seen"]);
+  });
+
   test("an unscored lead still goes, after the scored ones", () => {
     const { research } = pickForResearch([lead("none", { score: null, qualified: null, stage: "no_consent" }), lead("low", { score: 1 })], 5);
     expect(research.map((l) => l.id)).toEqual(["low", "none"]);

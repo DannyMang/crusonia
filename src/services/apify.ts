@@ -14,6 +14,8 @@ const APIFY_API = "https://api.apify.com/v2";
 
 /** Default cap per Actor run in USD. A 5-page crawl or one search page costs well under a cent. */
 export const DEFAULT_MAX_CHARGE_USD = 0.25;
+export const CRAWL_PLAIN_MEMORY_MB = 1024;
+export const CRAWL_RENDER_MEMORY_MB = 4096;
 /** Apify refuses a Google search run capped below this (max-total-charge-usd-below-minimum), whatever it would cost. */
 export const GOOGLE_SEARCH_MIN_CHARGE_USD = 0.5;
 
@@ -44,6 +46,8 @@ export type RunOptions = {
   timeoutSecs: number;
   /** Hard cap on what the run may cost (maxTotalChargeUsd). */
   maxChargeUsd: number;
+  /** Run memory in MB (default: the Actor's own, 8 GB for the crawler). The account's limit counts every run at once. */
+  memoryMbytes?: number;
   /** Top-level dataset fields to return (smaller responses). */
   fields?: string[];
   /** Dataset items to read back. */
@@ -107,7 +111,12 @@ export async function runActor<T>(token: string, actor: string, input: unknown, 
   const actorPath = actor.replace("/", "~");
   const deadline = Date.now() + (opts.timeoutSecs + (opts.graceSecs ?? 30)) * 1000;
   const firstWait = Math.min(60, opts.timeoutSecs);
-  const qs = new URLSearchParams({ timeout: String(opts.timeoutSecs), maxTotalChargeUsd: String(opts.maxChargeUsd), waitForFinish: String(firstWait) });
+  const qs = new URLSearchParams({
+    timeout: String(opts.timeoutSecs),
+    maxTotalChargeUsd: String(opts.maxChargeUsd),
+    waitForFinish: String(firstWait),
+    ...(opts.memoryMbytes ? { memory: String(opts.memoryMbytes) } : {}),
+  });
 
   let run = (await apifyJson<{ data: ApifyRun }>(fetchFn, token, "POST", `/acts/${actorPath}/runs?${qs}`, actor, input, firstWait + 15)).data;
   await report(opts.meter, actor, run, opts.maxChargeUsd);
@@ -198,6 +207,8 @@ export async function crawlWebsite(
     },
     {
       timeoutSecs: opts.renderJs ? 150 : 90,
+      // At its default 8 GB, the account's 16 GB limit allows two crawls at once, and agents read several sites at once.
+      memoryMbytes: opts.renderJs ? CRAWL_RENDER_MEMORY_MB : CRAWL_PLAIN_MEMORY_MB,
       maxChargeUsd: ctx.maxChargeUsd,
       fields: ["url", "metadata", "text"],
       limit: opts.maxPages,

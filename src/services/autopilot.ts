@@ -95,13 +95,14 @@ export const hasFindStep = (steps: Pick<WorkflowStep, "kind">[]) => steps.some((
 type Found = { id: string; find_status?: string; stage: string; score: number | null; qualified: boolean | null; excluded_at?: Date | string | null };
 
 /**
- * Which leads a find step hands to research: new or merged, not excluded, not already judged out, best score first.
- * Pure.
+ * Which leads a find step hands to research: new ones, or known ones nobody has looked at yet, not excluded, not already
+ * judged out, best score first. A known company that was already researched stays as it is: researching it again costs
+ * money and replaces its draft. Pure.
  */
 export function pickForResearch(leads: Found[], limit: number): { research: Found[]; found: Found[] } {
   const usable = leads.filter((l) => (l.find_status === "created" || l.find_status === "merged") && !l.excluded_at && l.stage !== "unsubscribed");
   const candidates = usable
-    .filter((l) => l.qualified !== false && ["new", "no_consent", "qualified"].includes(l.stage))
+    .filter((l) => l.qualified !== false && (l.find_status === "created" ? ["new", "no_consent", "qualified"].includes(l.stage) : ["new", "no_consent"].includes(l.stage)))
     .sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
     .slice(0, limit);
   const picked = new Set(candidates.map((l) => l.id));
