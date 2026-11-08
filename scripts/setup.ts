@@ -294,8 +294,10 @@ async function ensureCrusoniaCredentials(naive: Naive, baseUrl: string) {
     return;
   }
   const creds = await vaultCredentials(naive, vaultId);
-  for (const [key, url] of [["Crusonia MCP (research)", researcherMcpUrl(baseUrl)], ["Crusonia MCP (operator)", operatorMcpUrl(baseUrl)]] as const) {
+  for (const [name, url] of [["Crusonia MCP (research)", researcherMcpUrl(baseUrl)], ["Crusonia MCP (operator)", operatorMcpUrl(baseUrl)]] as const) {
     if (creds.some((c) => c.mcp_server_url === url)) continue;
+    // Keys are unique per vault, and moving to a new URL keeps the old credential until it's removed.
+    const key = creds.some((c) => c.key === name) ? `${name} ${new URL(url).host}` : name;
     await naive.post(`/v1/vaults/${encodeURIComponent(vaultId)}/credentials`, { kind: "static_bearer", key, mcp_server_url: url, value: mcpToken }, `naive-credential:${vaultId}:${url}:${await sha256Hex(mcpToken)}`);
     console.log(`Naive vault credential: ${key} -> ${url}`);
   }
