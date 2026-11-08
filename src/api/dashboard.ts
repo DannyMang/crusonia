@@ -7,6 +7,7 @@ import { parseQuery, sqlFor, wsOf, type AppEnv, type Principal } from "../lib/co
 import { REPLY_LABELS } from "../services/classify.ts";
 import { crmStatusSummary } from "../services/crm-sync.ts";
 import { listReplies } from "../services/replies.ts";
+import { imessageStatus } from "../services/imessage.ts";
 import { getStatus } from "../services/status.ts";
 import { getSummary } from "../services/summary.ts";
 import { workspaceMcpUrl } from "../services/naive-agents.ts";
@@ -87,6 +88,9 @@ dashboard.get("/status", async (c) => {
     // Per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error. Details: GET /api/integrations/crm.
     // CRM sync is the instance's own HubSpot / Notion: the owner workspace only.
     crm_sync: ws.owner ? await crmStatusSummary(sql, c.env) : crmUnavailable(),
+    // enabled, configured, active, missing, owner_phone_set, bridge (last reported state, online), undeliverable_notices.
+    // iMessage approvals text the instance owner's phone: the owner workspace only.
+    imessage: ws.owner ? await imessageStatus(sql, c.env) : null,
   });
 });
 

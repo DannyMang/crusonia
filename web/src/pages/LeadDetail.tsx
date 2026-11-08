@@ -16,7 +16,7 @@ import { displayUrl, groupOf, safeHref, sourceLabel, stamp } from "./leads/share
 import { Timeline } from "./leads/Timeline.tsx";
 
 const sectionTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
-const muted = "text-[#200D0D8C]";
+const muted = "text-muted";
 
 export default function LeadDetail() {
   const { id = "" } = useParams();
@@ -48,19 +48,20 @@ function Detail({ data, approve }: { data: LeadFull; approve: ApproveMutation })
       <Header lead={lead} sendApproval={sendApproval} approve={approve} />
       {approve.isError ? <QueryError error={approve.error} what="sending" /> : null}
       <Stats lead={lead} evidence={evidence} pending={pending} />
-      <div className="flex items-start gap-7">
+      {/* Three columns from 1280px. Below that the draft sits beside the facts and the evidence and timeline run full width underneath. */}
+      <div className="grid grid-cols-[16rem_minmax(0,1fr)] items-start gap-7 xl:flex">
         <div className="flex w-64 shrink-0 flex-col gap-5.5">
           <CompanyFacts lead={lead} lookalikes={data.lookalikes} />
           <ContactFacts lead={lead} />
           <WhyFit lead={lead} />
           <ConsentBox lead={lead} />
         </div>
-        <div className="flex min-w-0 grow basis-0 flex-col gap-7">
+        <div className="col-span-2 row-start-2 flex min-w-0 grow basis-0 flex-col gap-7">
           <EvidenceList evidence={evidence} />
           <Timeline events={timeline} pending={pending} />
           {messages.length ? <Conversation messages={messages} /> : null}
         </div>
-        <div className="flex w-91 shrink-0 flex-col gap-5">
+        <div className="flex w-full shrink-0 flex-col gap-5 xl:w-91">
           <DraftCard lead={lead} drafts={drafts} approval={sendApproval} approve={approve} />
           <CrmSync lead={lead} />
         </div>
@@ -109,7 +110,7 @@ function Header({ lead, sendApproval, approve }: { lead: Lead; sendApproval: App
   return (
     <div className="flex flex-col gap-2.5">
       <Breadcrumb lead={lead} />
-      <div className="flex items-center gap-3.5">
+      <div className="flex flex-wrap items-center gap-x-3.5 gap-y-3 xl:flex-nowrap">
         <h1 className="min-w-0 truncate text-2xl/7.5 font-semibold tracking-[-0.02em] text-ink">{leadTitle(lead)}</h1>
         {lead.domain && lead.domain !== leadTitle(lead) ? <div className={cx("shrink-0 text-[13px]/4", muted)}>{lead.domain}</div> : null}
         <StageBadge stage={lead.stage} size="lg" />
@@ -143,7 +144,7 @@ function Header({ lead, sendApproval, approve }: { lead: Lead; sendApproval: App
           <>
             {" "}
             from{" "}
-            <a href={source} target="_blank" rel="noopener noreferrer" className="text-green hover:underline">
+            <a href={source} target="_blank" rel="noopener noreferrer" className="text-ink hover:underline">
               {hostOf(source)}
             </a>
           </>
@@ -357,7 +358,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 
 function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-green hover:underline">
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-ink hover:underline">
       {children}
     </a>
   );
@@ -453,7 +454,7 @@ function WhyFit({ lead }: { lead: Lead }) {
           Why fit{lead.score !== null ? <span className="tabular-nums"> {lead.score}</span> : null}
         </h2>
         {lead.qualified !== null ? (
-          <div className={cx("text-xs/4 font-medium", lead.qualified ? "text-green" : muted)}>{lead.qualified ? "qualified" : "not qualified"}</div>
+          <div className={cx("text-xs/4 font-medium", lead.qualified ? "text-green-dark" : muted)}>{lead.qualified ? "qualified" : "not qualified"}</div>
         ) : null}
       </div>
       {lead.rationale ? (
@@ -571,7 +572,7 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
                 <div className="flex min-w-0 grow basis-0 flex-col gap-0.75">
                   <div className="break-words text-[13px]/4.25 font-medium text-ink">{e.claim}</div>
                   {href ? (
-                    <a href={href} target="_blank" rel="noopener noreferrer" className="truncate text-[11px]/3.75 text-green hover:underline" title={href}>
+                    <a href={href} target="_blank" rel="noopener noreferrer" className="truncate text-[11px]/3.75 text-ink hover:underline" title={href}>
                       {displayUrl(href)}
                     </a>
                   ) : (
@@ -627,7 +628,7 @@ function Conversation({ messages }: { messages: Message[] }) {
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {m.direction === "in" && m.label ? <ReplyLabel label={m.label} /> : null}
-                <time dateTime={m.created_at} className="text-[11px]/3.5 font-medium tabular-nums text-[#200D0D66]">
+                <time dateTime={m.created_at} className="text-[11px]/3.5 font-medium tabular-nums text-faint">
                   {stamp(m.created_at)}
                 </time>
               </div>
@@ -650,7 +651,7 @@ function CrmSync({ lead }: { lead: Lead }) {
         <h2 className={sectionTitle}>CRM sync</h2>
         <div className="flex items-center gap-1.5">
           <span className={cx("size-1.75 shrink-0 rounded-full", lead.hubspot_id ? "bg-green" : "bg-[#200D0D40]")} />
-          <span className={cx("text-xs/4 font-medium", lead.hubspot_id ? "text-green" : muted)}>{lead.hubspot_id ? "In HubSpot" : "Not synced yet"}</span>
+          <span className={cx("text-xs/4 font-medium", lead.hubspot_id ? "text-green-dark" : muted)}>{lead.hubspot_id ? "In HubSpot" : "Not synced yet"}</span>
         </div>
       </div>
       <div className="flex items-center gap-2.5 border-t border-t-[#200D0D14] px-4 py-2.5">

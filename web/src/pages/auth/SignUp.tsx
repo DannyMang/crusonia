@@ -7,7 +7,7 @@ import { useAuth, useClerk, useSignUp } from "@clerk/react";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { clerkEnabled } from "../../auth.tsx";
-import { ALL_PROVIDERS, AuthBrand, AuthField, AuthHeading, AuthShell, CodeForm, FormError, PrimaryButton, StartForm, SwitchLine, type Provider } from "../../components/auth/AuthLayout.tsx";
+import { ALL_PROVIDERS, AuthBrand, AuthField, AuthHeading, AuthLoadFailed, AuthShell, CodeForm, FormError, PrimaryButton, StartForm, SwitchLine, useLoadTimedOut, type Provider } from "../../components/auth/AuthLayout.tsx";
 import { clerkMessage, enabledProviders, goTo, isEmail, providerOffMessage, rememberAfterAuth, rememberWebsite } from "../../components/auth/flow.ts";
 
 const TITLE = "Welcome to Crusonia!";
@@ -38,7 +38,8 @@ function ClerkSignUp() {
   const { isLoaded } = useAuth();
   const clerk = useClerk();
   const navigate = useNavigate();
-  const providers = enabledProviders(clerk, ALL_PROVIDERS);
+  const providers = enabledProviders(clerk, ALL_PROVIDERS, isLoaded);
+  const loadFailed = useLoadTimedOut(isLoaded);
 
   const [step, setStep] = useState<"start" | "code" | "details">("start");
   const [email, setEmail] = useState("");
@@ -207,6 +208,8 @@ function ClerkSignUp() {
     }
     await complete();
   }
+
+  if (loadFailed) return <AuthLoadFailed title={TITLE} subtitle={SUBTITLE} footer={footer} />;
 
   if (step === "details") {
     const missing = new Set(signUp.missingFields ?? []);

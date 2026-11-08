@@ -14,7 +14,7 @@ function Calm({ title, body, action }: { title: ReactNode; body: ReactNode; acti
         <ApprovalsIcon />
       </div>
       <h2 className="text-[15px]/5 font-semibold tracking-[-0.01em] text-ink">{title}</h2>
-      <p className="max-w-sm text-[13px]/5 font-medium text-[#200D0D8C]">{body}</p>
+      <p className="max-w-sm text-[13px]/5 font-medium text-muted">{body}</p>
       {action ? <div className="mt-2">{action}</div> : null}
     </div>
   );

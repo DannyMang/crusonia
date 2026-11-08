@@ -149,7 +149,7 @@ function FindError({ error, onNavigate }: { error: unknown; onNavigate: () => vo
         <div className="flex grow flex-col gap-2">
           <div>
             <div className="font-semibold text-ink">Set up your ideal customer first</div>
-            <div className="font-medium text-[#200D0D99]">Your agent searches against your saved profile. Onboarding builds it from your website in a few minutes.</div>
+            <div className="font-medium text-muted">Your agent searches against your saved profile. Onboarding builds it from your website in a few minutes.</div>
           </div>
           <ButtonLink to="/onboarding/1" onClick={onNavigate} className="self-start">
             Start onboarding

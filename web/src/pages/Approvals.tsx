@@ -12,7 +12,7 @@ import { FilterChip, isTypingTarget, SearchField, updatedAgo, useNow, useSlashTo
 import { matchesSearch, workflowOf } from "../components/approvals/model.ts";
 import type { OnDecided } from "../components/approvals/parts.tsx";
 import { Queue } from "../components/approvals/Queue.tsx";
-import { SendDetail } from "../components/approvals/SendDetail.tsx";
+import { SendDetail, type LeaveGuard } from "../components/approvals/SendDetail.tsx";
 import { CodeState, DetailSkeleton, NothingSelected } from "../components/approvals/States.tsx";
 import { ApprovalsIcon } from "../components/icons.tsx";
 import { Button, ButtonLink, EmptyState, QueryError } from "../components/ui.tsx";
@@ -86,9 +86,11 @@ export default function Approvals() {
     if (!code && first) navigate(`/app/approvals/${encodeURIComponent(first)}`, { replace: true });
   }, [code, first, navigate]);
 
-  // J / K move through the visible queue (and open the first item when nothing is selected).
+  // J / K move through the visible queue (and open the first item when nothing is selected). With unsaved
+  // draft edits open, the detail asks first (leaveGuard).
   const orderedRef = useRef(ordered);
   orderedRef.current = ordered;
+  const leaveGuard: LeaveGuard = useRef(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
@@ -98,7 +100,9 @@ export default function Approvals() {
       e.preventDefault();
       const i = list.findIndex((a) => a.code === code);
       const next = i === -1 ? list[0] : list[Math.min(list.length - 1, Math.max(0, i + (k === "j" ? 1 : -1)))];
-      if (next && next.code !== code) navigate(`/app/approvals/${encodeURIComponent(next.code)}`, { replace: true });
+      if (!next || next.code === code) return;
+      const go = () => navigate(`/app/approvals/${encodeURIComponent(next.code)}`, { replace: true });
+      if (!leaveGuard.current?.(go)) go();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -135,7 +139,7 @@ export default function Approvals() {
       <div className="flex h-9 shrink-0 items-center justify-between gap-6">
         <div className="flex min-w-0 items-baseline gap-3">
           <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Approvals</h1>
-          <p className="truncate text-[13px]/4 font-medium text-[#200D0D8C]">Nothing is sent until someone approves the exact draft.</p>
+          <p className="truncate text-[13px]/4 font-medium text-muted">Nothing is sent until someone approves the exact draft.</p>
         </div>
         <SearchField inputRef={searchRef} value={search} onChange={setSearch} placeholder="Search recipient, company, code" className="h-8 w-65" />
       </div>
@@ -150,12 +154,12 @@ export default function Approvals() {
             <FilterChip label="Variant" value={variant} options={[{ value: "", label: "Any" }, ...variants.map((v) => ({ value: v, label: v }))]} onChange={setVariant} />
           ) : null}
           {filtering ? (
-            <button type="button" onClick={clearFilters} className="h-7.5 rounded-full px-2.5 text-[13px]/4 font-medium text-[#200D0D99] hover:bg-[#200D0D08] hover:text-ink">
+            <button type="button" onClick={clearFilters} className="h-7.5 rounded-full px-2.5 text-[13px]/4 font-medium text-muted hover:bg-[#200D0D08] hover:text-ink">
               Clear
             </button>
           ) : null}
         </div>
-        <div className="shrink-0 text-[13px]/4 tabular-nums text-[#200D0D73]" aria-live="polite">
+        <div className="shrink-0 text-[13px]/4 tabular-nums text-faint" aria-live="polite">
           {counts.join(" · ")}
         </div>
       </div>
@@ -195,7 +199,7 @@ export default function Approvals() {
             emptyNote={
               <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
                 <div className="text-[13px]/4 font-semibold text-ink">No approvals match</div>
-                <div className="text-xs/4 font-medium text-[#200D0D8C]">{all.length ? `${all.length} waiting outside these filters.` : "Nothing of this kind is waiting."}</div>
+                <div className="text-xs/4 font-medium text-muted">{all.length ? `${all.length} waiting outside these filters.` : "Nothing of this kind is waiting."}</div>
                 <Button variant="soft" onClick={clearFilters} className="mt-1">
                   Clear filters
                 </Button>
@@ -206,7 +210,7 @@ export default function Approvals() {
             {loading ? (
               <DetailSkeleton />
             ) : selected ? (
-              <Detail key={selected.code} a={selected} now={now} onDecided={onDecided} />
+              <Detail key={selected.code} a={selected} now={now} onDecided={onDecided} leaveGuard={leaveGuard} />
             ) : code ? (
               <CodeState key={code} code={code} filtered={filtering} onClearFilters={clearFilters} />
             ) : (
@@ -225,8 +229,8 @@ export default function Approvals() {
   );
 }
 
-function Detail({ a, now, onDecided }: { a: ApprovalListItem; now: number; onDecided: OnDecided }) {
+function Detail({ a, now, onDecided, leaveGuard }: { a: ApprovalListItem; now: number; onDecided: OnDecided; leaveGuard: LeaveGuard }) {
   if (a.kind === "tool") return <ToolDetail a={a} now={now} onDecided={onDecided} />;
   if (a.kind === "question") return <QuestionDetail a={a} now={now} onDecided={onDecided} />;
-  return <SendDetail a={a} now={now} onDecided={onDecided} />;
+  return <SendDetail a={a} now={now} onDecided={onDecided} leaveGuard={leaveGuard} />;
 }

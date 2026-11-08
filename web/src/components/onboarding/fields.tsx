@@ -71,7 +71,7 @@ export function RolesInput({ id, roles, onChange }: { id: string; roles: string[
             type="button"
             aria-label={`Remove ${r}`}
             onClick={() => onChange(roles.filter((_, j) => j !== i))}
-            className="-mr-1 hidden size-4 items-center justify-center rounded-full text-[#200D0D80] hover:bg-[#200D0D14] hover:text-ink group-hover:flex"
+            className="-mr-1 hidden size-4 items-center justify-center rounded-full text-faint hover:bg-[#200D0D14] hover:text-ink group-hover:flex"
           >
             <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
               <path d="M1.5 1.5l5 5M6.5 1.5l-5 5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />

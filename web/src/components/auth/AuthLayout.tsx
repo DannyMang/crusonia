@@ -1,7 +1,7 @@
 // Presentational pieces for the "Sign in" / "Sign up" artboards: the 720px form column with the help band,
 // and the 720px gradient image (hidden below 1024px). No Clerk hooks in here, so the static (no publishable
 // key) variant and the Clerk custom flows share exactly the same markup.
-import type { FormEvent, InputHTMLAttributes, ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { Link } from "react-router";
 import { cx } from "../../lib/format.ts";
 import { Logo } from "../icons.tsx";
@@ -34,7 +34,7 @@ export function AuthHeading({ title, subtitle }: { title: ReactNode; subtitle: R
   return (
     <>
       <h1 className="pt-7 text-[32px]/9.25 font-bold tracking-[-0.04em] text-ink">{title}</h1>
-      <p className="pt-2 text-[15px]/4.5 font-[450] text-[#200D0D73]">{subtitle}</p>
+      <p className="pt-2 text-[15px]/4.5 font-[450] text-faint">{subtitle}</p>
     </>
   );
 }
@@ -44,6 +44,7 @@ export type Provider = "github" | "google";
 export const ALL_PROVIDERS: Provider[] = ["github", "google"];
 const PROVIDER_LABEL: Record<Provider, string> = { github: "Continue with GitHub", google: "Continue with Google" };
 
+/** `providers: null` means Clerk has not said which ones are on yet: a neutral placeholder, never a guess. */
 export function ProviderButtons({
   onProvider,
   pending,
@@ -53,8 +54,9 @@ export function ProviderButtons({
   onProvider?: (p: Provider) => void;
   pending?: string | null;
   disabled?: boolean;
-  providers?: Provider[];
+  providers?: Provider[] | null;
 }) {
+  if (providers === null) return <ProviderSkeleton />;
   if (!providers.length) return null;
   return (
     <div className="flex flex-col gap-3 pt-7.25">
@@ -80,11 +82,49 @@ function ProviderButton({ provider, label, onClick, loading, disabled }: { provi
   );
 }
 
+function ProviderSkeleton() {
+  return (
+    <div className="flex flex-col gap-3 pt-7.25" role="status" aria-label="Loading sign-in options">
+      {ALL_PROVIDERS.map((p) => (
+        <div key={p} aria-hidden className="h-12 rounded-[10px] bg-[#200D0D0A] [animation:crusonia-pulse_1.6s_ease-in-out_infinite]" />
+      ))}
+    </div>
+  );
+}
+
+/** True when Clerk is still not loaded after `ms` (its script blocked, offline, an outage). */
+export function useLoadTimedOut(isLoaded: boolean, ms = 8000): boolean {
+  const [late, setLate] = useState(false);
+  useEffect(() => {
+    if (isLoaded) return;
+    const t = setTimeout(() => setLate(true), ms);
+    return () => clearTimeout(t);
+  }, [isLoaded, ms]);
+  return late && !isLoaded;
+}
+
+/** Shown instead of the form when Clerk did not load: a plain error and a way to try again. */
+export function AuthLoadFailed({ title, subtitle, footer }: { title: ReactNode; subtitle: ReactNode; footer: ReactNode }) {
+  return (
+    <AuthShell>
+      <AuthBrand />
+      <AuthHeading title={title} subtitle={subtitle} />
+      <div className="flex flex-col gap-3 pt-7.25">
+        <FormError>Sign-in could not load. Check your connection, then try again.</FormError>
+        <PrimaryButton type="button" onClick={() => window.location.reload()}>
+          Try again
+        </PrimaryButton>
+      </div>
+      {footer}
+    </AuthShell>
+  );
+}
+
 export function OrDivider() {
   return (
     <div className="flex items-center gap-3" role="separator" aria-label="or">
       <span className="h-px grow basis-0 bg-[#200D0D14]" />
-      <span className="text-xs/4 font-[525] text-[#200D0D73]">or</span>
+      <span className="text-xs/4 font-[525] text-faint">or</span>
       <span className="h-px grow basis-0 bg-[#200D0D14]" />
     </div>
   );
@@ -138,7 +178,7 @@ export function FormError({ children }: { children: ReactNode }) {
 /** Calm note (e.g. "Sign-in is not configured in this build", "We sent a new code"). */
 export function FormNote({ children }: { children: ReactNode }) {
   return (
-    <div role="status" className="flex items-start gap-2.5 rounded-[10px] border border-panel-line bg-panel px-3.5 py-3 text-[13px]/4.5 font-[525] text-[#200D0D99]">
+    <div role="status" className="flex items-start gap-2.5 rounded-[10px] border border-panel-line bg-panel px-3.5 py-3 text-[13px]/4.5 font-[525] text-muted">
       <span className="mt-1.75 size-1.5 shrink-0 rounded-full bg-green" />
       <div>{children}</div>
     </div>
@@ -164,7 +204,7 @@ export function PrimaryButton({ children, loading, disabled, type = "submit", on
 export function SwitchLine({ text, to, label, className }: { text: string; to: string; label: string; className?: string }) {
   return (
     <div className={cx("flex flex-wrap gap-1 text-[13px]/4.5 font-[525]", className)}>
-      <span className="text-[#200D0D8C]">{text}</span>
+      <span className="text-muted">{text}</span>
       <Link to={to} className="text-ink underline decoration-1 [text-underline-position:from-font] hover:decoration-2">
         {label}
       </Link>
@@ -194,8 +234,8 @@ export type StartFormProps = {
   onEmailChange?: (v: string) => void;
   onSubmit?: (e: FormEvent<HTMLFormElement>) => void;
   onProvider?: (p: Provider) => void;
-  /** Social providers turned on in the Clerk instance (default: both, as designed). */
-  providers?: Provider[];
+  /** Social providers turned on in the Clerk instance (default: both, as designed); null while Clerk loads. */
+  providers?: Provider[] | null;
   pending?: Provider | "email" | null;
   /** Everything disabled (static build, Clerk still loading). */
   disabled?: boolean;

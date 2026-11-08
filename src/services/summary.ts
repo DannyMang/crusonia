@@ -63,6 +63,7 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
                and exists (select 1 from approvals a where a.workspace_id = ${ws} and a.lead_id = l.id and a.kind = 'send'
                            and a.status = 'pending' and a.expires_at > now())) as awaiting_open,
           (select count(*)::int from approvals where workspace_id = ${ws} and status = 'pending' and expires_at > now()) as pending_total,
+          (select count(*)::int from approvals where workspace_id = ${ws} and status = 'pending' and expires_at > now() and kind = 'send') as pending_sends,
           -- Naive's running totals for sessions active in the last 7 days.
           (select sum(consumed_micro_usd)::text from naive_sessions
              where workspace_id = ${ws} and coalesce(last_event_at, updated_at) >= now() - interval '7 days') as week_micro,
@@ -85,6 +86,8 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
       subject: a.draft?.subject ?? null,
     })),
     pending_approvals_total: counts?.pending_total ?? 0,
+    // Drafts (send approvals) only; the rest are tool calls and agent questions.
+    pending_sends_total: counts?.pending_sends ?? 0,
     active_workflows: workflows.filter((w) => w.active_runs > 0),
     recent_replies: replies.data,
     spend: {

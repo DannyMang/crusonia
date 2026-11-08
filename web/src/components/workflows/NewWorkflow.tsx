@@ -67,7 +67,7 @@ export function NewWorkflowButton() {
           >
             <div className="flex flex-col gap-0.5">
               <div className="text-sm/4.5 font-semibold text-ink">Find leads</div>
-              <p className="text-xs/4.25 font-medium text-[#200D0D8C]">
+              <p className="text-xs/4.25 font-medium text-muted">
                 The agent searches for companies that match your profile and adds them with sources. This starts a paid agent run.
               </p>
             </div>
@@ -84,7 +84,7 @@ export function NewWorkflowButton() {
               leads
             </label>
             {err ? (
-              <div role={err.calm ? "status" : "alert"} className={err.calm ? "text-xs/4 font-medium text-[#200D0D99]" : "text-xs/4 font-medium text-[#B42318]"}>
+              <div role={err.calm ? "status" : "alert"} className={err.calm ? "text-xs/4 font-medium text-muted" : "text-xs/4 font-medium text-[#B42318]"}>
                 {err.title}. {err.body}
               </div>
             ) : null}

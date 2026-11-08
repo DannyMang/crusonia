@@ -17,8 +17,9 @@ import type { Draft } from "../db.ts";
 
 type DraftRow = Draft & { workspace_id: string; sending_at: Date | null; delivered_at: Date | null };
 
-/** `ws`: the approver's workspace; an approval of another workspace is "not found". */
-export type SendDeps = { sql: Sql; ws: string; env: Env; fetch?: FetchFn; actor: string; now?: Date };
+/** `ws`: the approver's workspace (an approval of another workspace is "not found"). `via` is recorded as the
+ * approval's `decided_via` ('api' by default, 'imessage' from the bridge). */
+export type SendDeps = { sql: Sql; ws: string; env: Env; fetch?: FetchFn; actor: string; now?: Date; via?: "api" | "imessage" };
 
 export type SendResult =
   | { status: "sent"; draft_id: string; message_id: string; thread_id: string }
@@ -32,6 +33,7 @@ function agentMail(env: Env, fetchFn?: FetchFn) {
 
 export async function approveAndSend(deps: SendDeps, code: string): Promise<SendResult> {
   const { sql, ws, env, actor } = deps;
+  const via = deps.via ?? "api";
   const rows = await sql`
     select a.*, to_jsonb(d) as draft, to_jsonb(l) as lead,
            (select max(version) from drafts where lead_id = a.lead_id) as latest_version,
@@ -68,7 +70,7 @@ export async function approveAndSend(deps: SendDeps, code: string): Promise<Send
 
   const claimed = await sql`
     with a as (
-      update approvals set status = 'approved', decided_at = now(), decided_via = 'api'
+      update approvals set status = 'approved', decided_at = now(), decided_via = ${via}
       where workspace_id = ${ws} and code = ${approval.code} and kind = 'send' and status = 'pending' and expires_at > now()
         and not coalesce((select w.paused from workspaces w where w.id = approvals.workspace_id), false)
         and not exists (select 1 from suppressions s where s.workspace_id = approvals.workspace_id and s.email = lower(approvals.recipient))
@@ -84,7 +86,7 @@ export async function approveAndSend(deps: SendDeps, code: string): Promise<Send
       returning *
     ), ev as (
       insert into events (workspace_id, lead_id, kind, data)
-      select workspace_id, lead_id, 'approval_approved', jsonb_build_object('code', code, 'draft_id', draft_id, 'actor', ${actor}::text) from a
+      select workspace_id, lead_id, 'approval_approved', jsonb_build_object('via', ${via}::text, 'code', code, 'draft_id', draft_id, 'actor', ${actor}::text) from a
     )
     select d.*, a.recipient from d, a`;
   if (!claimed[0]) throw new ApiError(409, "approval_not_pending", "Approval was consumed or invalidated concurrently");

@@ -1,17 +1,17 @@
 // Dashboard · Home (Paper artboard "Dashboard · Home"): pipeline strip, drafts waiting for approval,
 // active workflows, spend and recent replies. Real data from /api/summary; calm empty states when empty.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { isApiError, type ApprovalListItem, type Lead, type Pipeline, type Reply, type Summary, type SummaryApproval, type Workflow } from "../api.ts";
 import { useApi, useSession } from "../auth.tsx";
 import { Page } from "../components/AppShell.tsx";
 import { ChevronRight, XIcon } from "../components/icons.tsx";
-import { Button, ButtonLink, Card, EmptyState, LiveChip, Pill, QueryError, ReplyLabel, Skeleton } from "../components/ui.tsx";
+import { Button, ButtonLink, Card, EmptyState, LiveChip, Pill, QueryError, ReplyLabel, Skeleton, tabListKeys } from "../components/ui.tsx";
 import { cx, duration, greeting, hostOf, num, plural, shortDate, timeAgo, usd, weekdayDate } from "../lib/format.ts";
 import { keys, useApprovals, useLeads, usePause, useProfile, useSummary } from "../queries.ts";
 
-const label = "text-[13px]/4 font-medium text-[#200D0D8C]";
+const label = "text-[13px]/4 font-medium text-muted";
 const sectionTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
 
 export default function Home() {
@@ -36,12 +36,13 @@ export default function Home() {
         </div>
       ) : null}
       <PipelineStrip data={data} partial={missing} />
-      <div className="flex items-start gap-6">
+      {/* Below 1280px the side column (spend, replies) moves under the main one so neither gets squeezed. */}
+      <div className="flex flex-col gap-7 xl:flex-row xl:items-start xl:gap-6">
         <div className="flex min-w-0 grow basis-0 flex-col gap-7">
           <WaitingForYou approvals={data?.pending_approvals} total={data?.pending_approvals_total ?? 0} loading={!data && !summary.isError} />
           <ActiveWorkflows workflows={data?.active_workflows} loading={!data && !summary.isError} partial={missing} />
         </div>
-        <div className="flex w-90 shrink-0 flex-col gap-6">
+        <div className="flex w-full shrink-0 flex-col gap-6 min-[1280px]:w-80 min-[1440px]:w-90">
           <Spend spend={data?.spend} loading={!data && !summary.isError} />
           <RecentReplies replies={data?.recent_replies} loading={!data && !summary.isError} partial={missing} />
         </div>
@@ -81,11 +82,31 @@ function fallbackSummary(leads: Lead[], approvals: ApprovalListItem[], paused: b
 
 // ---------- header ----------
 
+/** "6 drafts and 2 agent requests need your OK." */
+function WaitingOnYou({ drafts, others }: { drafts: number; others: number }) {
+  const parts = [drafts ? (drafts === 1 ? "1 draft" : `${drafts} drafts`) : null, others ? (others === 1 ? "1 agent request" : `${others} agent requests`) : null].filter(
+    (p): p is string => p !== null,
+  );
+  return (
+    <>
+      {parts.map((p, i) => (
+        <Fragment key={p}>
+          {i ? " and " : null}
+          <span className="text-ink">{p}</span>
+        </Fragment>
+      ))}{" "}
+      {drafts + others === 1 ? "needs" : "need"} your OK.
+    </>
+  );
+}
+
 function Header({ data }: { data: Summary | undefined }) {
   const { user } = useSession();
   const first = user?.name?.split(" ")[0];
   const total = data?.total_leads ?? 0;
   const waiting = data?.pending_approvals_total ?? 0;
+  // Only send approvals are drafts; tool calls and agent questions are counted separately.
+  const drafts = Math.min(waiting, data?.pending_sends_total ?? data?.pending_approvals.filter((a) => a.kind === "send").length ?? 0);
   return (
     <div className="flex items-start justify-between gap-6">
       <div className="flex flex-col gap-1.5">
@@ -93,25 +114,17 @@ function Header({ data }: { data: Summary | undefined }) {
           {greeting()}
           {first ? `, ${first}` : ""}
         </h1>
-        <p className="text-sm/5 font-medium text-[#200D0D99]">
+        <p className="text-sm/5 font-medium text-muted">
           {weekdayDate()} ·{" "}
           {!data ? (
             "Loading your pipeline…"
           ) : total > 0 ? (
             <>
-              You have <span className="text-ink">{total === 1 ? "1 lead" : `${num(total)} leads`}</span> and{" "}
-              {waiting ? (
-                <>
-                  <span className="text-ink">{waiting === 1 ? "1 draft" : `${waiting} drafts`}</span> {waiting === 1 ? "needs" : "need"} your OK.
-                </>
-              ) : (
-                <>nothing is waiting on you.</>
-              )}
+              You have <span className="text-ink">{total === 1 ? "1 lead" : `${num(total)} leads`}</span>.{" "}
+              {waiting ? <WaitingOnYou drafts={drafts} others={waiting - drafts} /> : "Nothing is waiting on you."}
             </>
           ) : waiting ? (
-            <>
-              <span className="text-ink">{waiting === 1 ? "1 draft" : `${waiting} drafts`}</span> need your OK.
-            </>
+            <WaitingOnYou drafts={drafts} others={waiting - drafts} />
           ) : (
             "No leads yet. Tell Crusonia about your company and your agents start finding them."
           )}
@@ -178,9 +191,9 @@ function Stat({ title, value, note, accent }: { title: string; value: string | u
       {value === undefined ? (
         <Skeleton className="my-1 h-5 w-12" />
       ) : (
-        <div className={cx("tabular-nums text-[22px]/7 font-semibold tracking-[-0.02em]", accent ? "text-green" : "text-ink")}>{value}</div>
+        <div className={cx("tabular-nums text-[22px]/7 font-semibold tracking-[-0.02em]", accent ? "text-green-dark" : "text-ink")}>{value}</div>
       )}
-      <div className="text-xs/4 font-medium text-[#200D0D8C]">{note}</div>
+      <div className="text-xs/4 font-medium text-muted">{note}</div>
     </div>
   );
 }
@@ -230,7 +243,7 @@ function PipelineStrip({ data, partial }: { data: Summary | undefined; partial: 
             )}
             {p && p.awaiting_approval > 0 ? <Pill tone="lime">needs you</Pill> : null}
           </div>
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">
+          <div className="text-xs/4 font-medium text-muted">
             {oldest !== null ? `oldest waiting ${duration(oldest)}` : data?.pending_approvals_total ? plural(data.pending_approvals_total, "open approval") : "nothing waiting"}
           </div>
         </div>
@@ -287,17 +300,17 @@ function WaitingRow({ a }: { a: SummaryApproval }) {
     <div className="flex items-center gap-3.5 border-t border-t-[#200D0D14] px-4.5 py-3.5">
       <div className="flex w-34 shrink-0 flex-col gap-0.5">
         <div className="truncate text-sm/4.5 font-medium text-ink">{company}</div>
-        <div className="truncate text-[11px]/3.5 text-[#200D0D8C]">{hostOf(domain)}</div>
+        <div className="truncate text-[11px]/3.5 text-muted">{hostOf(domain)}</div>
       </div>
       <div className="flex min-w-0 grow basis-0 flex-col gap-0.75">
         <div className="truncate text-[13px]/4 font-medium text-ink">{a.subject ? `“${a.subject}”` : a.summary}</div>
-        <div className="truncate text-xs/4 font-medium text-[#200D0D8C]">
+        <div className="truncate text-xs/4 font-medium text-muted">
           {[a.company ? a.lead_name : null, workflow ?? (a.draft ? `draft v${a.draft.version}` : a.kind)].filter(Boolean).join(" · ")}
         </div>
       </div>
       <div className="flex w-19 shrink-0 flex-col items-end gap-0.5">
         <div className="whitespace-pre text-[13px]/4 font-semibold text-ink tabular-nums">{a.code}</div>
-        <div className="whitespace-pre text-[11px]/3.5 font-medium text-[#200D0D8C]">waiting {duration(Date.now() - new Date(a.created_at).getTime())}</div>
+        <div className="whitespace-pre text-[11px]/3.5 font-medium text-muted">waiting {duration(Date.now() - new Date(a.created_at).getTime())}</div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
         <ButtonLink to={`/app/approvals/${a.code}`} variant="outline" size="sm">
@@ -314,13 +327,13 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
   const rest = Math.max(0, total - shown.length);
   return (
     <Card className="flex w-full flex-col overflow-clip">
-      <div className="flex items-center justify-between px-4.5 pb-3.5 pt-4">
-        <div className="flex items-center gap-2.5">
-          <h2 className={sectionTitle}>Waiting for you</h2>
+      <div className="flex items-center justify-between gap-4 px-4.5 pb-3.5 pt-4">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <h2 className={cx(sectionTitle, "shrink-0 whitespace-nowrap")}>Waiting for you</h2>
           {total ? <Pill tone="lime" mono>{total}</Pill> : null}
-          <div className={label}>drafts held until you approve · nothing sends on its own</div>
+          <div className={cx(label, "min-w-0")}>drafts held until you approve · nothing sends on its own</div>
         </div>
-        <Link to="/app/approvals" className="flex items-center gap-1 text-[13px]/4 font-medium text-ink hover:underline">
+        <Link to="/app/approvals" className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[13px]/4 font-medium text-ink hover:underline">
           All approvals
           <ChevronRight className="text-green" />
         </Link>
@@ -345,7 +358,7 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
       )}
       {shown.length ? (
         <div className="flex items-center justify-between border-t border-t-[#200D0D14] bg-[#200D0D06] px-4.5 py-3">
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">
+          <div className="text-xs/4 font-medium text-muted">
             {rest ? (
               <Link to="/app/approvals" className="hover:text-ink hover:underline">
                 {rest} more in Approvals
@@ -354,7 +367,7 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
               "That's everything"
             )}
           </div>
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">Every claim in a draft links to its source</div>
+          <div className="text-xs/4 font-medium text-muted">Every claim in a draft links to its source</div>
         </div>
       ) : null}
     </Card>
@@ -364,6 +377,7 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
 // ---------- active workflows ----------
 
 const RUNNING = new Set(["running", "idle"]);
+const WORKFLOW_TABS = ["running", "paused"] as const;
 
 function WorkflowCard({ w }: { w: Workflow }) {
   const [open, setOpen] = useState(true);
@@ -374,7 +388,7 @@ function WorkflowCard({ w }: { w: Workflow }) {
       <div className="flex items-center justify-between gap-3">
         <Link to={to} className="flex min-w-0 items-baseline gap-2.5 hover:underline">
           <span className="truncate text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink">{w.name}</span>
-          <span className="shrink-0 text-xs/4 text-[#200D0D7A]">{w.purpose}</span>
+          <span className="shrink-0 text-xs/4 text-faint">{w.purpose}</span>
         </Link>
         <div className="flex items-center gap-2.5">
           {w.status === "running" ? (
@@ -399,7 +413,7 @@ function WorkflowCard({ w }: { w: Workflow }) {
           </button>
         </div>
       </div>
-      <div className="text-[13px]/3.75 font-medium text-[#200D0D80]">
+      <div className="text-[13px]/3.75 font-medium text-faint">
         {plural(w.run_count, "run")} · {w.active_runs} active · started {shortDate(w.first_started_at)}
         {w.last_event_at ? ` · last activity ${timeAgo(w.last_event_at)}` : ""}
       </div>
@@ -417,8 +431,8 @@ function WorkflowCard({ w }: { w: Workflow }) {
 
 function WfStat({ title, value, first }: { title: string; value: string; first?: boolean }) {
   return (
-    <div className={cx("flex w-37.5 shrink-0 flex-col gap-1", !first && "border-l border-l-[#200D0D1A] pl-4.75")}>
-      <div className="text-[13px]/4 font-medium text-[#200D0D80]">{title}</div>
+    <div className={cx("flex w-37.5 min-w-0 flex-col gap-1", !first && "border-l border-l-[#200D0D1A] pl-4.75")}>
+      <div className="text-[13px]/4 font-medium text-faint">{title}</div>
       <div className="tabular-nums text-sm/4.5 font-semibold text-ink">{value}</div>
     </div>
   );
@@ -434,8 +448,13 @@ function ActiveWorkflows({ workflows, loading, partial }: { workflows: Workflow[
     <section className="flex flex-col gap-3.5">
       <div className="flex items-center justify-between">
         <h2 className={sectionTitle}>Active workflows</h2>
-        <div className="flex items-center gap-1 rounded-full border border-[#200D0D1A] bg-[#200D0D0A] p-1" role="tablist">
-          {(["running", "paused"] as const).map((t) => {
+        <div
+          className="flex items-center gap-1 rounded-full border border-[#200D0D1A] bg-[#200D0D0A] p-1"
+          role="tablist"
+          aria-label="Workflows"
+          onKeyDown={tabListKeys(WORKFLOW_TABS, tab, setTab)}
+        >
+          {WORKFLOW_TABS.map((t) => {
             const active = tab === t;
             const n = t === "running" ? running.length : paused.length;
             return (
@@ -444,11 +463,12 @@ function ActiveWorkflows({ workflows, loading, partial }: { workflows: Workflow[
                 type="button"
                 role="tab"
                 aria-selected={active}
+                tabIndex={active ? 0 : -1}
                 onClick={() => setTab(t)}
                 className={cx("flex h-7 items-center gap-2 rounded-full pr-2", active ? "bg-lime pl-3.5" : "pl-3 hover:bg-[#200D0D08]")}
               >
-                <span className={cx("text-[13px]/4 font-medium", active ? "text-ink" : "text-[#200D0D94]")}>{t === "running" ? "Running" : "Paused"}</span>
-                <span className={cx("flex h-4 items-center rounded-full px-1.5 tabular-nums text-xs/3 font-medium", active ? "bg-[#BDE6893D] text-ink" : "bg-[#200D0D14] text-[#200D0D94]")}>
+                <span className={cx("text-[13px]/4 font-medium", active ? "text-ink" : "text-faint")}>{t === "running" ? "Running" : "Paused"}</span>
+                <span className={cx("flex h-4 items-center rounded-full px-1.5 tabular-nums text-xs/3 font-medium", active ? "bg-[#BDE6893D] text-ink" : "bg-[#200D0D14] text-muted")}>
                   {n}
                 </span>
               </button>
@@ -493,7 +513,7 @@ function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loadin
     <Card className="flex flex-col gap-3.5 px-4.5 pb-4.5 pt-4">
       <div className="flex items-baseline justify-between">
         <h2 className={sectionTitle}>Spend this week</h2>
-        <div className="text-xs/4 font-medium text-[#200D0D8C]">last 7 days</div>
+        <div className="text-xs/4 font-medium text-muted">last 7 days</div>
       </div>
       {loading ? (
         <Skeleton className="h-7.5 w-40" />
@@ -501,7 +521,7 @@ function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loadin
         <>
           <div className="flex items-baseline gap-2">
             <div className="text-[26px]/7.5 font-semibold tracking-[-0.03em] text-ink tabular-nums">{usd(used ?? 0)}</div>
-            <div className="text-[13px]/4 font-medium text-[#200D0D8C]">
+            <div className="text-[13px]/4 font-medium text-muted">
               {budget !== null ? (
                 <>
                   of <span className="text-ink tabular-nums">{usd(budget)}</span> budget
@@ -521,9 +541,9 @@ function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loadin
           >
             <div className="h-full bg-ink" style={{ width: `${share}%` }} />
           </div>
-          <div className="border-t border-t-[#200D0D14] pt-3 text-xs/4 font-medium text-[#200D0D8C]">
+          <div className="border-t border-t-[#200D0D14] pt-3 text-xs/4 font-medium text-muted">
             {used === null
-              ? "Agent spend shows up here once Naive reports usage for a run."
+              ? "No agent spend recorded this week yet."
               : budget !== null
                 ? `${usd(Math.max(0, budget - used))} left of this week's budget`
                 : "Naive usage across every run active this week"}
@@ -541,11 +561,11 @@ function ReplyRow({ r }: { r: Reply }) {
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 truncate text-[13px]/4 font-medium text-ink">
           {who}
-          {r.lead?.company ? <span className="text-[#200D0D8C]"> · {r.lead.company}</span> : null}
+          {r.lead?.company ? <span className="text-muted"> · {r.lead.company}</span> : null}
         </div>
         <ReplyLabel label={r.label} />
       </div>
-      <div className="line-clamp-2 text-xs/4.25 font-medium text-[#200D0D99]">{r.preview ? `“${r.preview}”` : (r.subject ?? "")}</div>
+      <div className="line-clamp-2 text-xs/4.25 font-medium text-muted">{r.preview ? `“${r.preview}”` : (r.subject ?? "")}</div>
     </>
   );
   return r.lead_id ? (
@@ -562,7 +582,7 @@ function RecentReplies({ replies, loading, partial }: { replies: Reply[] | undef
     <Card className="flex flex-col overflow-clip">
       <div className="flex items-baseline justify-between px-4.5 pb-3 pt-4">
         <h2 className={sectionTitle}>Recent replies</h2>
-        <Link to="/app/replies" className="text-xs/4 font-medium text-[#200D0D8C] hover:text-ink">
+        <Link to="/app/replies" className="text-xs/4 font-medium text-muted hover:text-ink">
           sorted by agent
         </Link>
       </div>
@@ -578,7 +598,7 @@ function RecentReplies({ replies, loading, partial }: { replies: Reply[] | undef
       ) : (
         <div className="border-t border-t-[#200D0D14] px-4.5 py-6 text-center">
           <div className="text-[13px]/4 font-semibold text-ink">No replies yet</div>
-          <div className="mt-1 text-xs/4.25 font-medium text-[#200D0D8C]">
+          <div className="mt-1 text-xs/4.25 font-medium text-muted">
             {partial ? "Replies are not available on this deployment yet." : "Replies land here, sorted into Interested, Not now and Unsubscribed."}
           </div>
         </div>

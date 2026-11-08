@@ -45,7 +45,7 @@ function Header({ current }: { current: number }) {
         })}
       </nav>
       <div className="flex shrink-0 items-center justify-end gap-2.5 xl:w-60">
-        {email ? <span className="hidden truncate text-[13px]/4 font-medium text-[#200D0D99] xl:block">{email}</span> : null}
+        {email ? <span className="hidden truncate text-[13px]/4 font-medium text-muted xl:block">{email}</span> : null}
         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-highlight text-[13px]/4 font-semibold text-ink" aria-hidden>
           {letter}
         </span>
@@ -62,11 +62,11 @@ function StepPill({ n, label, state }: { n: number; label: string; state: "done"
           <WhiteCheck size={11} />
         </span>
       ) : (
-        <span className={cx("flex size-5 shrink-0 items-center justify-center rounded-full text-[11px]/3.5 font-semibold", state === "current" ? "bg-white text-ink" : "bg-pill text-[#200D0D99]")}>
+        <span className={cx("flex size-5 shrink-0 items-center justify-center rounded-full text-[11px]/3.5 font-semibold", state === "current" ? "bg-white text-ink" : "bg-pill text-muted")}>
           {n}
         </span>
       )}
-      <span className={cx("whitespace-nowrap text-[13px]/4 font-medium", state === "todo" ? "text-[#200D0D99]" : "text-ink", state === "current" ? "hidden sm:inline" : "hidden lg:inline")}>{label}</span>
+      <span className={cx("whitespace-nowrap text-[13px]/4 font-medium", state === "todo" ? "text-muted" : "text-ink", state === "current" ? "hidden sm:inline" : "hidden lg:inline")}>{label}</span>
     </>
   );
   const cls = cx("flex h-7.5 shrink-0 items-center gap-2 rounded-full pl-1.5 pr-1.5 sm:pr-3", state === "current" && "bg-lime", state !== "current" && "lg:pr-3");

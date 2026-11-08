@@ -24,7 +24,7 @@ function ClerkSsoCallback() {
     <div className="grid min-h-screen place-items-center bg-white p-8 text-ink" aria-busy={!slow}>
       <div className="flex flex-col items-center gap-3 text-center">
         <span aria-hidden className="size-5 rounded-full border-2 border-[#200D0D26] border-t-ink [animation:crusonia-spin_0.8s_linear_infinite]" />
-        <div className="text-[13px]/4.5 font-medium text-[#200D0D99]" role="status">
+        <div className="text-[13px]/4.5 font-medium text-muted" role="status">
           {slow ? "This is taking longer than it should." : "Signing you in…"}
         </div>
         {slow ? (

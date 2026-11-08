@@ -9,7 +9,17 @@ import type { Env } from "../env.ts";
 import { sqlFor } from "../lib/context.ts";
 import { errorBody } from "../lib/errors.ts";
 import { handleStripeEvent, StripeEventSchema } from "../billing/webhook.ts";
-import { verifyNaive, verifyStripe, verifySvix } from "../lib/signatures.ts";
+import { BRIDGE_SIGNATURE_HEADER, BRIDGE_TIMESTAMP_HEADER, verifyBridge, verifyNaive, verifyStripe, verifySvix } from "../lib/signatures.ts";
+import {
+  BridgePollSchema,
+  handleBridgePoll,
+  handlePhotonEvent,
+  imessageConfig,
+  normalizeHandle,
+  PHOTON_POLL_PATH,
+  PHOTON_WEBHOOK_PATH,
+  PhotonEventSchema,
+} from "../services/imessage.ts";
 import { AgentMailEventSchema, handleAgentMailEvent } from "../services/inbound.ts";
 import { claimWebhookEvent, releaseWebhookEvent } from "../services/webhook-events.ts";
 import { handleSessionIdle } from "../services/workflows.ts";
@@ -126,4 +136,48 @@ webhooks.post("/stripe", async (c) => {
     await releaseWebhookEvent(sql, event.id).catch(() => {});
     throw err;
   }
+});
+
+// iMessage bridge (bridge/, Photon Spectrum). Both routes are signed with BRIDGE_SECRET over
+// `${timestamp}.${path}.${body}` (5 minute window). See src/services/imessage.ts.
+async function verifiedBridgeBody(c: Context<{ Bindings: Env }>, path: string): Promise<string | Response> {
+  const secret = c.env.BRIDGE_SECRET;
+  if (!secret) return c.json(errorBody("not_configured", "BRIDGE_SECRET is not set"), 503);
+  const raw = await c.req.text();
+  const verified = await verifyBridge({
+    secret,
+    path,
+    signature: c.req.header(BRIDGE_SIGNATURE_HEADER),
+    timestamp: c.req.header(BRIDGE_TIMESTAMP_HEADER),
+    body: raw,
+    now: nowSeconds(),
+  });
+  if (!verified.ok) return c.json(errorBody("invalid_signature", verified.reason), 401);
+  return raw;
+}
+
+// The bridge's poll (every ~5 s): delivery acks + its status in, notices to text the owner out.
+webhooks.post("/photon/poll", async (c) => {
+  const raw = await verifiedBridgeBody(c, PHOTON_POLL_PATH);
+  if (raw instanceof Response) return raw;
+  const poll = parseBody(c, raw, BridgePollSchema);
+  if (poll instanceof Response) return poll;
+  return c.json(await handleBridgePoll(() => sqlFor(c.env), c.env, poll));
+});
+
+// One owner command from iMessage, already parsed by the bridge. The reply text goes back to the owner.
+webhooks.post("/photon", async (c) => {
+  const raw = await verifiedBridgeBody(c, PHOTON_WEBHOOK_PATH);
+  if (raw instanceof Response) return raw;
+  const event = parseBody(c, raw, PhotonEventSchema);
+  if (event instanceof Response) return event;
+  if (!imessageConfig(c.env).enabled) {
+    return c.json({ ok: false, reply: "iMessage approvals are switched off in Crusonia (IMESSAGE_ENABLED). Use the app for now." });
+  }
+  // Defense in depth: the bridge already drops every other sender.
+  if (c.env.OWNER_PHONE && normalizeHandle(event.from) !== normalizeHandle(c.env.OWNER_PHONE)) {
+    console.warn("photon: command from a handle that is not OWNER_PHONE refused");
+    return c.json(errorBody("forbidden_sender", "Only the owner can send commands"), 403);
+  }
+  return c.json(await handlePhotonEvent(sqlFor(c.env), c.env, event));
 });

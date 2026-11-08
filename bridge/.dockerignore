@@ -1,0 +1,7 @@
+node_modules
+test
+deploy
+.env
+.env.*
+*.log
+.DS_Store

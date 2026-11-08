@@ -12,7 +12,7 @@ const pill = (label: string, className: string, spin?: boolean): PillSpec => ({ 
 const LIME = "bg-lime text-ink";
 const GRAY = "bg-[#200D0D0F] text-[#200D0DB3]";
 const RED = "bg-[#FDECEB] text-[#B42318]";
-const OUTLINE = "border border-[#200D0D26] text-[#200D0D99]";
+const OUTLINE = "border border-[#200D0D26] text-muted";
 
 /** Workflow-level status (a purpose aggregated over its runs). */
 export function workflowPill(status: RunStatus | string): PillSpec {

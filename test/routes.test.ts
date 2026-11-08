@@ -149,7 +149,29 @@ describe("with a static-assets binding (the SPA)", () => {
 
   test("app routes and / are served by ASSETS", async () => {
     expect(await (await call("/", {}, withAssets)).text()).toBe("spa:/");
-    expect(await (await call("/leads/lead_1", {}, withAssets)).text()).toBe("spa:/leads/lead_1");
+    // A client-side route gets the SPA shell (index.html, which ASSETS serves at "/").
+    const route = await call("/app/leads/lead_1", {}, withAssets);
+    expect(route.status).toBe(200);
+    expect(await route.text()).toBe("spa:/");
+  });
+
+  test("a missing build or media file is a real 404, not the app's HTML", async () => {
+    for (const path of ["/assets/index-nope.js", "/assets/x.css", "/media/nope.mp4"]) {
+      const res = await call(path, {}, withAssets);
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-type")).toStartWith("text/plain");
+    }
+  });
+
+  test("only the production host (PUBLIC_URL) is indexable", async () => {
+    const prod = env({ ASSETS: assets, PUBLIC_URL: "https://example.test" });
+    expect((await call("/app", {}, prod)).headers.get("x-robots-tag")).toBeNull();
+    const preview = env({ ASSETS: assets, PUBLIC_URL: "https://crusonia.example.dev" });
+    expect((await call("/app", {}, preview)).headers.get("x-robots-tag")).toBe("noindex");
+  });
+
+  test("other methods on an app route are a JSON 404", async () => {
+    expect((await call("/app/leads", { method: "POST" }, withAssets)).status).toBe(404);
   });
 
   test("/health, /api/*, /mcp and /webhooks/* stay on the Worker", async () => {

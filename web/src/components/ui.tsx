@@ -1,5 +1,5 @@
 // Shared building blocks in the veri style. Values come from the Paper designs (Dashboard · Home etc.).
-import { useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Link, type LinkProps } from "react-router";
 import { isApiError } from "../api.ts";
 import { useSession } from "../auth.tsx";
@@ -189,7 +189,7 @@ export function EmptyState({
     <div className={cx("flex flex-col items-center justify-center gap-2 px-6 py-12 text-center", className)}>
       {icon ? <div className="mb-1 flex size-9 items-center justify-center rounded-full bg-panel text-green">{icon}</div> : null}
       <div className="text-[15px]/5 font-semibold tracking-[-0.01em] text-ink">{title}</div>
-      {body ? <div className="max-w-md text-[13px]/5 font-medium text-[#200D0D8C]">{body}</div> : null}
+      {body ? <div className="max-w-md text-[13px]/5 font-medium text-muted">{body}</div> : null}
       {action ? <div className="mt-2">{action}</div> : null}
     </div>
   );
@@ -245,7 +245,7 @@ export function QueryError({ error, what, onRetry, className }: { error: unknown
       <span className={cx("mt-1.5 size-1.5 shrink-0 rounded-full", c.calm ? "bg-green" : "bg-[#B42318]")} />
       <div className="grow">
         <div className="font-semibold text-ink">{c.title}</div>
-        <div className="font-medium text-[#200D0D99]">{c.body}</div>
+        <div className="font-medium text-muted">{c.body}</div>
       </div>
       {onRetry && !c.calm ? (
         <Button variant="soft" size="sm" onClick={onRetry}>
@@ -254,6 +254,25 @@ export function QueryError({ error, what, onRetry, className }: { error: unknown
       ) : null}
     </div>
   );
+}
+
+// ---------- tabs ----------
+
+/**
+ * onKeyDown for a role="tablist" of buttons: Left / Right (wrapping), Home and End select the neighbouring tab
+ * and move focus to it. Give the selected tab tabIndex 0 and the others -1, so Tab enters the list once.
+ */
+export function tabListKeys<T extends string>(ids: readonly T[], current: T, select: (id: T) => void) {
+  return (e: ReactKeyboardEvent<HTMLElement>) => {
+    const i = ids.indexOf(current);
+    const n = ids.length;
+    const next =
+      e.key === "ArrowRight" ? ids[(i + 1) % n] : e.key === "ArrowLeft" ? ids[(i - 1 + n) % n] : e.key === "Home" ? ids[0] : e.key === "End" ? ids[n - 1] : undefined;
+    if (next === undefined) return;
+    e.preventDefault();
+    select(next);
+    e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[ids.indexOf(next)]?.focus();
+  };
 }
 
 // ---------- misc ----------
@@ -271,7 +290,7 @@ export function CopyButton({ text, label = "Copy", className, iconOnly }: { text
   }
   if (iconOnly) {
     return (
-      <button type="button" onClick={copy} aria-label={copied ? "Copied" : label} className={cx("inline-flex size-6 items-center justify-center rounded-md text-[#200D0D80] hover:bg-[#200D0D0A]", className)}>
+      <button type="button" onClick={copy} aria-label={copied ? "Copied" : label} className={cx("inline-flex size-6 items-center justify-center rounded-md text-faint hover:bg-[#200D0D0A]", className)}>
         {copied ? <CheckIcon className="text-green" /> : <CopyIcon />}
       </button>
     );

@@ -1,6 +1,7 @@
 // A decorative clip that plays once and holds its last frame (no loop). Until it plays it shows its first
 // frame, so nothing jumps when playback starts. With prefers-reduced-motion, or when the browser refuses to
 // autoplay (iOS Low Power Mode, data saver), it shows the finished frame as a still image instead.
+// An optional `small` variant (smaller files for phones) is picked once, when the clip mounts.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
@@ -16,19 +17,26 @@ export function usePrefersReducedMotion(): boolean {
   );
 }
 
-type Props = {
+type Sources = {
   webm: string;
   mp4: string;
   /** First frame: shown until playback starts. */
   firstFrame: string;
   /** Last frame: the still shown instead of the clip (reduced motion, autoplay refused). */
   poster: string;
+};
+
+type Props = Sources & {
+  /** Used instead when `media` (a media query) matches on mount, e.g. a smaller encode for phones. */
+  small?: Sources & { media: string };
   /** "load": autoplay right away (hero). "view": start when it scrolls into view (closing plant). */
   play: "load" | "view";
   className?: string;
 };
 
-export function PlayOnceVideo({ webm, mp4, firstFrame, poster, play, className }: Props) {
+export function PlayOnceVideo({ small, play, className, ...large }: Props) {
+  // Chosen once: switching <source>s later would not reload the clip anyway, and it must not restart.
+  const [{ webm, mp4, firstFrame, poster }] = useState<Sources>(() => (small && window.matchMedia(small.media).matches ? small : large));
   const reduced = usePrefersReducedMotion();
   const [failed, setFailed] = useState(false);
   const ref = useRef<HTMLVideoElement>(null);

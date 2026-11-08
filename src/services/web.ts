@@ -36,6 +36,8 @@ export function normalizeUrl(raw: string): URL {
     throw new ServiceError("invalid", `Not a valid URL: ${raw}`);
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") throw new ServiceError("invalid", `Only http(s) URLs can be read: ${raw}`);
+  // "dan@gmail.com" parses as user "dan" at gmail.com; never crawl the email provider for an email address.
+  if (url.username || url.password) throw new ServiceError("invalid", `That is an email address or a login, not a website: ${raw}`);
   if (!url.hostname.includes(".")) throw new ServiceError("invalid", `Not a public website: ${raw}`);
   url.hash = "";
   return url;
