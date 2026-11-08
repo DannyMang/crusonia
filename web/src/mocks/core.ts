@@ -82,8 +82,31 @@ function status(): Status {
 
 const me: Me = { user: { id: "user_mock", email: "daniel@acme.com", name: "Daniel Ung" }, auth: "clerk", workspace: { id: "ws_acme", name: "Acme", owner: false, role: "owner" } };
 
+let autopilotOn = true;
+const autopilot = () => ({
+  available: true,
+  enabled: autopilotOn,
+  paused,
+  running: autopilotOn ? [{ session_id: "ses_mock", lead_id: null, waiting_on_you: false, text: "Researching Nessie" }] : [],
+  feed: isEmpty()
+    ? []
+    : [
+        { id: "5", at: new Date(Date.now() - 2 * 60_000).toISOString(), text: "Waiting for your 👍 on the email to Dub", by: "agent", lead_id: null, waiting: true },
+        { id: "4", at: new Date(Date.now() - 6 * 60_000).toISOString(), text: "Drafted intro for Weave", by: "agent", lead_id: null },
+        { id: "3", at: new Date(Date.now() - 7 * 60_000).toISOString(), text: "Researched Weave · fit 90", by: "agent", lead_id: null },
+        { id: "2", at: new Date(Date.now() - 12 * 60_000).toISOString(), text: "Found Weave · Hiring a founding AE after a seed round", by: "agent", lead_id: null },
+        { id: "1", at: new Date(Date.now() - 60 * 60_000).toISOString(), text: "Looked for 5 more companies like Weave", detail: "You liked Weave and passed on two agencies, so I added agencies to Avoid.", by: "agent", lead_id: null },
+      ],
+  counts: { agent_actions: isEmpty() ? 0 : 42, owner_actions: isEmpty() ? 0 : 3, days: 7 },
+});
+
 export const coreHandlers = [
   http.get("/api/me", () => ok(me)),
+  http.get("/api/autopilot", () => ok(autopilot())),
+  http.put("/api/autopilot", async ({ request }) => {
+    autopilotOn = Boolean((await body<{ enabled?: boolean }>(request)).enabled);
+    return ok(autopilot());
+  }),
   http.get("/api/summary", () => ok(summary())),
   http.get("/api/status", () => ok(status())),
   http.get("/api/settings/pause", () => ok({ paused })),

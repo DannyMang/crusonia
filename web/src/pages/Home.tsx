@@ -3,13 +3,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { isApiError, type ApprovalListItem, type Lead, type Pipeline, type Reply, type Summary, type SummaryApproval, type Workflow } from "../api.ts";
+import { isApiError, type Autopilot, type AutopilotFeedItem, type ApprovalListItem, type Lead, type Pipeline, type Reply, type Summary, type SummaryApproval, type Workflow } from "../api.ts";
 import { useApi, useSession } from "../auth.tsx";
 import { Page } from "../components/AppShell.tsx";
 import { ChevronRight, XIcon } from "../components/icons.tsx";
-import { Button, ButtonLink, Card, EmptyState, LiveChip, Pill, QueryError, ReplyLabel, Skeleton, tabListKeys } from "../components/ui.tsx";
+import { Button, ButtonLink, Card, EmptyState, LiveChip, Pill, QueryError, ReplyLabel, RingSpinner, Skeleton, tabListKeys } from "../components/ui.tsx";
 import { cx, duration, greeting, hostOf, num, plural, shortDate, timeAgo, usd, weekdayDate } from "../lib/format.ts";
-import { keys, useApprovals, useLeads, usePause, useSummary } from "../queries.ts";
+import { keys, useApprovals, useAutopilot, useLeads, usePause, useSetAutopilot, useSummary } from "../queries.ts";
 
 const label = "text-[13px]/4 font-medium text-muted";
 const sectionTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
@@ -35,6 +35,7 @@ export default function Home() {
           Sends are paused. Nothing goes out and no new research starts until you turn sends back on in the sidebar.
         </div>
       ) : null}
+      <AutopilotCard />
       <PipelineStrip data={data} partial={missing} />
       {/* Below 1280px the side column (spend, replies) moves under the main one so neither gets squeezed. */}
       <div className="flex flex-col gap-7 xl:flex-row xl:items-start xl:gap-6">
@@ -167,6 +168,95 @@ function AgentPill() {
         <XIcon />
       </button>
     </div>
+  );
+}
+
+// ---------- autopilot ----------
+
+function AutopilotSwitch({ state }: { state: Autopilot }) {
+  const set = useSetAutopilot();
+  const on = set.isPending ? Boolean(set.variables) : state.enabled;
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label="Autopilot"
+      disabled={set.isPending}
+      onClick={() => set.mutate(!state.enabled)}
+      className={cx("flex h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors", on ? "justify-end bg-green" : "justify-start bg-[#200D0D33]")}
+    >
+      <span className="size-4 shrink-0 rounded-full bg-white" />
+    </button>
+  );
+}
+
+function FeedRow({ item }: { item: AutopilotFeedItem }) {
+  const text = (
+    <span className="flex min-w-0 grow basis-0 flex-col gap-0.5">
+      <span className={cx("text-[13px]/4.5 text-ink", item.waiting ? "font-semibold" : "font-medium")}>{item.text}</span>
+      {item.detail ? <span className="text-[13px]/4.5 text-muted">{item.detail}</span> : null}
+    </span>
+  );
+  const when = <span className="w-16 shrink-0 text-xs/4.5 font-medium tabular-nums text-faint">{timeAgo(item.at)}</span>;
+  const row = "flex items-start gap-3.5 border-b border-b-[#200D0D0D] px-4.5 py-2.5 last:border-b-0";
+  const to = item.waiting && !item.lead_id ? "/app/outreach" : item.lead_id ? `/app/leads/${encodeURIComponent(item.lead_id)}` : null;
+  return to ? (
+    <Link to={to} className={cx(row, "hover:bg-[#200D0D05]")}>
+      {when}
+      {text}
+    </Link>
+  ) : (
+    <div className={row}>
+      {when}
+      {text}
+    </div>
+  );
+}
+
+/** Autopilot on or off, what the agents are doing right now, and the honest tally. Polls; hidden where it isn't available. */
+function AutopilotCard() {
+  const autopilot = useAutopilot();
+  const state = autopilot.data;
+  if (!state?.available) return null;
+  return (
+    <Card className="flex flex-col overflow-clip md:flex-row">
+      <div className="flex shrink-0 flex-col gap-5.5 border-b border-b-[#200D0D14] px-5 py-4.5 md:w-70 md:border-b-0 md:border-r md:border-r-[#200D0D14]">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className={sectionTitle}>Autopilot</h2>
+          <AutopilotSwitch state={state} />
+        </div>
+        <div className="flex gap-8 md:flex-col md:gap-5.5">
+          <div className="flex flex-col gap-0.5">
+            <div className="text-[30px]/9 font-semibold tracking-[-0.03em] text-ink tabular-nums">{num(state.counts.agent_actions)}</div>
+            <div className={label}>{state.counts.agent_actions === 1 ? "thing your agents did this week" : "things your agents did this week"}</div>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <div className="text-[30px]/9 font-semibold tracking-[-0.03em] text-ink tabular-nums">{num(state.counts.owner_actions)}</div>
+            <div className={label}>{state.counts.owner_actions === 1 ? "time you stepped in" : "times you stepped in"}</div>
+          </div>
+        </div>
+      </div>
+      <div className="flex min-w-0 grow basis-0 flex-col" aria-live="polite">
+        {state.running.length ? (
+          <div className="flex flex-wrap gap-x-5 gap-y-1.5 border-b border-b-[#200D0D14] px-4.5 py-3.5">
+            {state.running.slice(0, 4).map((r) => (
+              <div key={r.session_id} className="flex items-center gap-2 text-[13px]/4 font-medium text-ink">
+                {r.waiting_on_you ? null : <RingSpinner />}
+                {r.text}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <div className="flex max-h-72 flex-col overflow-y-auto">
+          {state.feed.length ? (
+            state.feed.slice(0, 30).map((item) => <FeedRow key={item.id} item={item} />)
+          ) : (
+            <div className="px-4.5 py-8 text-center text-[13px]/4 font-medium text-muted">Nothing yet</div>
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
 

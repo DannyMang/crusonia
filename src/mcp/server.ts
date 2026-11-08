@@ -35,7 +35,7 @@ import {
 import { addNote, addNoteInputSchema, excludedCompanies, recentOwnerNotes } from "../services/notes.ts";
 import { getProfile, profileInputSchema, saveProfile } from "../services/profile.ts";
 import { activityFeed } from "../services/activity.ts";
-import { agentFindMore, agentResearch, agentRunWorkflow, autopilotConfig, getAutopilot } from "../services/autopilot.ts";
+import { agentFindMore, agentResearch, agentRunWorkflow, autopilotConfig, getAutopilot, leadsWaitingOnOwner } from "../services/autopilot.ts";
 import { listSummaryVersions } from "../services/company-summary.ts";
 import { patchLead, searchLeads } from "../services/crm.ts";
 import { CRM_TARGETS } from "../services/crm-fields.ts";
@@ -516,6 +516,10 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
       run(async () => {
         const sql = db();
         await requireTarget(args.lead_id, run_id);
+        // A new version would close the approval the owner is about to give.
+        if (role === "operator" && (await leadsWaitingOnOwner(sql, ws, [args.lead_id])).length) {
+          throw new ServiceError("conflict", "An email to this lead waits for the owner's approval: leave it until they decide.");
+        }
         // A draft written in a run records that run and its workflow version.
         const found = await resolveRun(sql, ws, ctx.bearer, run_id);
         return createDraft(sql, ws, args, { ttlMinutes: sendTtlMinutes, sessionId: found?.id ?? null, workflowVersion: found?.workflow_version ?? null });

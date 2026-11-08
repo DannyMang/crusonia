@@ -13,7 +13,7 @@ export type FeedRow = {
   score: number | null;
   why: string | null;
 };
-export type FeedItem = { id: string; at: string; text: string; by: "agent" | "you" | "system"; lead_id: string | null };
+export type FeedItem = { id: string; at: string; text: string; detail?: string; by: "agent" | "you" | "system"; lead_id: string | null; waiting?: boolean };
 
 const CHANNEL_WORD: Record<string, string> = { linkedin: "LinkedIn note", x: "X message", intro: "intro", email_manual: "email" };
 
@@ -46,10 +46,10 @@ export function feedItem(r: FeedRow): FeedItem | null {
     case "lead_scored":
       return row(`Researched ${name} · fit ${d.score ?? "?"}`);
     case "lead_needs_review":
-      return row(`Waiting for your answer on ${name}`);
+      return { ...row(`Waiting for your answer on ${name}`), waiting: true };
     case "draft_created": {
       if (d.via === "api" && !isAutomated(d.actor)) return row(`You wrote an email to ${name}`, "you");
-      if (d.channel === "email" || !d.channel) return row(`Waiting for your 👍 on the email to ${name}`);
+      if (d.channel === "email" || !d.channel) return { ...row(`Waiting for your 👍 on the email to ${name}`), waiting: true };
       return row(`Drafted ${CHANNEL_WORD[d.channel as string] ?? "message"} for ${name}`);
     }
     case "followup_scheduled":
@@ -59,7 +59,7 @@ export function feedItem(r: FeedRow): FeedItem | null {
         ? row("You edited the Company summary", "you")
         : row(`Updated the Company summary${d.note ? ` · ${String(d.note).slice(0, 80)}` : ""}`);
     case "operator_cycle":
-      return row(String(d.did ?? "Operator cycle"));
+      return { ...row(String(d.did ?? "Operator cycle")), ...(typeof d.why === "string" ? { detail: d.why } : {}) };
     case "operate_started":
       return row("Operator is deciding what to do next");
     case "workflow_run_started":

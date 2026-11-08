@@ -154,6 +154,12 @@ describe("the feed", () => {
     expect(text(row("operator_cycle", { did: "Looked for 5 more like Weave", why: "You liked it" }))).toBe("Looked for 5 more like Weave");
   });
 
+  test("the Operator's reason comes with its row, and what waits for the owner is marked", () => {
+    expect(feedItem(row("operator_cycle", { did: "Did it", why: "You liked it" }))).toMatchObject({ text: "Did it", detail: "You liked it" });
+    expect(feedItem(row("draft_created", { channel: "email" }))?.waiting).toBe(true);
+    expect(feedItem(row("lead_scored", { score: 1 }))?.waiting).toBeUndefined();
+  });
+
   test("says who did it", () => {
     expect(feedItem(row("lead_scored", { score: 1 }))?.by).toBe("agent");
     expect(feedItem(row("approval_approved", { via: "imessage" }))).toMatchObject({ by: "you", text: "You approved the email to Weave by iMessage" });

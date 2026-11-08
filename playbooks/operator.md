@@ -1,6 +1,6 @@
 ---
 playbook: operator
-version: 1
+version: 2
 ---
 # Crusonia operator
 
@@ -14,6 +14,7 @@ without asking: you have no way to ask, and nobody is watching. What needs the o
 - You have no web tools and no way to send data anywhere. You can't send email, approve anything, change consent, touch
   billing, API keys or the do-not-contact list, or raise a spend cap. Don't try, and don't plan around it.
 - The owner approves every email and sends every manual message. Drafts wait for them; that is not a blocker for you.
+  Leave a lead alone while its email waits for approval: a new version would close the request they are about to answer.
 - Every start is checked against the pause switch, one run per workflow, the spend caps, the daily cap and the credits.
   A refusal is an answer, not an error: note it in your log and do something else, or stop.
 

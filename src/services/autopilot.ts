@@ -753,6 +753,23 @@ async function autopilotDef(sql: Sql, env: Env, ws: string): Promise<DueDef> {
   return def as DueDef;
 }
 
+/**
+ * A lead whose email waits for the owner keeps that draft: a new version would close the approval they are about to give.
+ * So agents don't research or redraft it until the owner has decided.
+ */
+export async function leadsWaitingOnOwner(sql: Sql, ws: string, leadIds: string[]): Promise<string[]> {
+  if (!leadIds.length) return [];
+  const rows = await sql`
+    select distinct lead_id from approvals
+    where workspace_id = ${ws} and kind = 'send' and status = 'pending' and expires_at > now() and lead_id = any(${leadIds}::text[])`;
+  return rows.map((r) => r.lead_id as string);
+}
+
+async function refuseWaiting(sql: Sql, ws: string, leadIds: string[] | undefined) {
+  const waiting = await leadsWaitingOnOwner(sql, ws, leadIds ?? []);
+  if (waiting.length) throw new ServiceError("conflict", `An email to ${waiting.join(", ")} waits for the owner's approval: leave it until they decide.`);
+}
+
 /** MCP find_more_leads: a run of the default workflow, optionally looking for companies like one lead. */
 export async function agentFindMore(sql: Sql, env: Env, ws: string, input: { count?: number; likeLeadId?: string | null; actor: string; respectSwitch: boolean; fetch?: FetchFn }) {
   const def = await autopilotDef(sql, env, ws);
@@ -762,6 +779,7 @@ export async function agentFindMore(sql: Sql, env: Env, ws: string, input: { cou
 
 /** MCP start_research: research sessions on named leads, under the default workflow (lead ids only, never free text). */
 export async function agentResearch(sql: Sql, env: Env, ws: string, input: { leadIds: string[]; actor: string; respectSwitch: boolean; fetch?: FetchFn }) {
+  await refuseWaiting(sql, ws, input.leadIds);
   const def = await autopilotDef(sql, env, ws);
   await requireAgentStart(sql, env, ws, def, { respectSwitch: input.respectSwitch });
   return runWorkflow(sql, env, ws, def.id, { lead_ids: input.leadIds, trigger: "operator" }, input.actor, { fetch: input.fetch, research: { autopilot: true } });
@@ -777,6 +795,7 @@ export async function agentRunWorkflow(
 ) {
   const [def] = (await sql`select id, workspace_id, trigger, latest_version, enabled, next_run_at from workflow_defs where id = ${workflowId} and workspace_id = ${ws}`) as DueDef[];
   if (!def) throw new ServiceError("not_found", `No workflow with id ${workflowId}. list_workflows lists them.`);
+  await refuseWaiting(sql, ws, input.leadIds);
   await requireAgentStart(sql, env, ws, def, { respectSwitch: input.respectSwitch });
   const version = (await loadVersion(sql, def.id, input.version ?? def.latest_version)) as VersionRow;
   if (!input.leadIds?.length && !input.cohort && hasFindStep(version.steps ?? [])) {
