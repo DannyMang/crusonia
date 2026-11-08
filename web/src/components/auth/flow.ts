@@ -49,9 +49,11 @@ export function clerkMessage(e: ErrorLike): string | null {
 
 /**
  * Social providers this Clerk instance has turned on (`oauth_github`, `oauth_google`), read from Clerk's loaded
- * environment. Clerk exposes it only as an internal getter, so anything unexpected falls back to `all`.
+ * environment; null until Clerk has loaded, so no button shows that is about to disappear. Clerk exposes the
+ * environment only as an internal getter, so anything unexpected once loaded falls back to `all`.
  */
-export function enabledProviders<P extends string>(clerk: unknown, all: P[]): P[] {
+export function enabledProviders<P extends string>(clerk: unknown, all: P[], isLoaded: boolean): P[] | null {
+  if (!isLoaded) return null;
   const env = (clerk as { __internal_environment?: { userSettings?: { authenticatableSocialStrategies?: unknown } } | null } | null)
     ?.__internal_environment;
   const on = env?.userSettings?.authenticatableSocialStrategies;
