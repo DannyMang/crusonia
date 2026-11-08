@@ -49,8 +49,8 @@ export default function SettingsApiKeys() {
       <Page>
         <div className="flex w-240 max-w-full flex-col gap-4 px-4 pb-14 pt-6 sm:px-12 sm:pt-8">
           <SettingsTabs />
-          <div className="flex items-end justify-between gap-4 pb-2 pt-3">
-            <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">API keys</h1>
+          <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3 pb-2 pt-3">
+            <h1 className="whitespace-nowrap text-xl/5.75 font-medium tracking-[-0.01em] text-ink">API keys</h1>
             <div className="flex shrink-0 items-center gap-2">
               <Link to="?connect=1" className={connectLink}>
                 Connect your agent
@@ -124,7 +124,8 @@ export function ApiKeysCard({
       ) : data.length ? (
         <KeyTable rows={data} />
       ) : (
-        <div className="border-t border-t-[#200D0D1A]">
+        // The rule only separates the empty state from a create form or a new key above it.
+        <div className={cx((creating || created) && "border-t border-t-[#200D0D1A]")}>
           <EmptyState
             className="py-9"
             title="No API keys yet"

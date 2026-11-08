@@ -24,8 +24,8 @@ export function AgentSteps({ sessionId, className }: { sessionId: string; classN
 
   return (
     <section aria-label="What the agent did" className={cx("flex flex-col bg-[#200D0D06] px-5.5 pb-2.5 pt-3.5", className)}>
-      <div className="flex items-center justify-between gap-3 pb-1.5">
-        <h3 className="text-[13px]/4.5 font-semibold text-ink">What the agent did</h3>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 pb-1.5">
+        <h3 className="whitespace-nowrap text-[13px]/4.5 font-semibold text-ink">What the agent did</h3>
         <div className="flex shrink-0 items-center gap-2.5">
           {run ? (
             active ? (
@@ -56,7 +56,7 @@ export function AgentSteps({ sessionId, className }: { sessionId: string; classN
         <ol className="flex flex-col">
           {steps.slice(-8).map((s) => (
             <li key={s.seq} className="flex gap-3 py-1.5">
-              <span className="w-14 shrink-0 text-xs/4.25 tabular-nums text-[#200D0D8C]">{s.started_at ? clock(s.started_at) : ""}</span>
+              <span className="w-16 shrink-0 whitespace-nowrap text-xs/4.25 tabular-nums text-muted">{s.started_at ? clock(s.started_at) : ""}</span>
               <span className={cx("min-w-0 grow basis-0 text-[13px]/4.25 [overflow-wrap:anywhere]", s.is_error ? "text-[#B42318]" : "text-ink")}>{s.summary}</span>
             </li>
           ))}
