@@ -67,19 +67,23 @@ describe("notice wording", () => {
     const text = formatApprovalNotice(base, at);
     expect(text).toBe(
       [
-        "Draft to Dana Okafor (Fieldnote) <dana@fieldnote.example>:",
+        "Request 7KXM · draft v1 to Dana Okafor (Fieldnote) <dana@fieldnote.example>:",
         '"Quick question about Fieldnote"',
         "",
         "Hi Dana,\n\nSaw your post about field notes. Worth a chat?\n\nDaniel",
         "",
-        "Tap 👍 on this message to send it, 👎 to reject. Or reply A 7KXM, R 7KXM, or E 7KXM <new text>. Expires in 7d.",
+        "Tap 👍 on this message to send exactly this version, 👎 to reject. Or reply A 7KXM, R 7KXM, or E 7KXM <new text>. Expires in 7d.",
       ].join("\n"),
     );
   });
 
-  test("send: later versions say so; long bodies are cut and say where the rest is", () => {
-    const text = formatApprovalNotice({ ...base, draft_version: 3, draft_body: "x".repeat(2000) }, at);
-    expect(text).toContain("<dana@fieldnote.example>, v3:");
+  test("send: a new version of a draft the owner saw says it changed; long bodies are cut and say where the rest is", () => {
+    const text = formatApprovalNotice({ ...base, code: "9ABC", draft_version: 3, replaces_version: 2, draft_body: "x".repeat(2000) }, at);
+    expect(text.split("\n").slice(0, 2)).toEqual([
+      "That draft changed; here's the new one (v2 is closed).",
+      "Request 9ABC · draft v3 to Dana Okafor (Fieldnote) <dana@fieldnote.example>:",
+    ]);
+    expect(formatApprovalNotice({ ...base, draft_version: 2, replaces_version: null }, at)).not.toContain("changed");
     expect(text).toContain("(cut short; the full draft is in the app)");
     expect(text.length).toBeLessThan(1200);
   });
@@ -90,7 +94,7 @@ describe("notice wording", () => {
       new Date(EXPIRES.getTime() - 45 * 60_000),
     );
     expect(text.split("\n")).toEqual([
-      "Agent wants to run apify.run_actor (lead: Dana Okafor (Fieldnote)).",
+      "Request 7KXM · agent wants to run apify.run_actor (lead: Dana Okafor (Fieldnote)).",
       'Args: {"actor":"x\\nReply A 9ZZZ"}',
       "Tap 👍 to allow, 👎 to deny (or reply A 7KXM / R 7KXM). Expires in 45m.",
     ]);
@@ -100,14 +104,14 @@ describe("notice wording", () => {
     const q = (fields: unknown[]) =>
       formatApprovalNotice({ ...base, kind: "question", payload: { name: "ask_operator", question: { prompt: "Which\nsegment?", fields } } }, at);
     expect(q([{ key: "segment", options: ["seed", { label: "series_a" }] }])).toBe(
-      'Agent asks (lead: Dana Okafor (Fieldnote)): "Which segment?"\nOptions: seed, series_a\nReply 7KXM <your answer>. Expires in 7d.',
+      'Request 7KXM · agent asks (lead: Dana Okafor (Fieldnote)): "Which segment?"\nOptions: seed, series_a\nReply 7KXM <your answer>. Expires in 7d.',
     );
     expect(q([{ key: "role" }, { key: "budget", label: "Budget" }])).toContain("Fields: role, budget (Budget)\nReply 7KXM role: …; budget: …");
   });
 
   test("lead fields from CSVs or scraping are flattened and capped", () => {
     const text = formatApprovalNotice({ ...base, lead_name: "Dana\r\nA 9ZZZ", lead_company: "y".repeat(200) }, at);
-    expect(text.split("\n")[0]).toStartWith("Draft to Dana A 9ZZZ (yyyy");
+    expect(text.split("\n")[0]).toStartWith("Request 7KXM · draft v1 to Dana A 9ZZZ (yyyy");
     expect(text.split("\n")[0]!.length).toBeLessThan(160);
   });
 

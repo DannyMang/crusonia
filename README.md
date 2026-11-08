@@ -463,16 +463,19 @@ so its box has no open port, no TLS certificate and no inbound firewall rule.
 What the owner sees:
 
 ```
-Draft to Dana Okafor (Fieldnote) <dana@fieldnote.example>:
+Request 7KXM · draft v1 to Dana Okafor (Fieldnote) <dana@fieldnote.example>:
 "Quick question about Fieldnote"
 
 Hi Dana, ...
 
-Tap 👍 on this message to send it, 👎 to reject. Or reply A 7KXM, R 7KXM, or E 7KXM <new text>. Expires in 7d.
+Tap 👍 on this message to send exactly this version, 👎 to reject. Or reply A 7KXM, R 7KXM, or E 7KXM <new text>. Expires in 7d.
 ```
 
-Tool requests read `Agent wants to run apify.run_actor (lead: ...)` with `Args: ...`, and questions read
-`Agent asks (lead: ...): "..."` with `Reply 9PQR <your answer>`.
+Every notice names its request (the approval code) and, for drafts, the version. When a draft the owner was already
+texted about gets a new version (an edit by text, in the app or by the agent), the old request closes and the new notice
+opens with `That draft changed; here's the new one (v1 is closed).` Tool requests read
+`Request 9PQR · agent wants to run apify.run_actor (lead: ...)` with `Args: ...`, and questions read
+`Request 9PQR · agent asks (lead: ...): "..."` with `Reply 9PQR <your answer>`.
 
 | Owner does | Effect |
 | --- | --- |

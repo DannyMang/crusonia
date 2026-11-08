@@ -115,6 +115,8 @@ export type NoticeRow = {
   draft_version: number | null;
   draft_subject: string | null;
   draft_body: string | null;
+  /** The newest older version of this lead's draft that the owner was texted about, if any (it is now closed). */
+  replaces_version?: number | null;
 };
 
 /** "Dana Okafor (Fieldnote)", falling back to the email. Lead fields can come from CSVs and scraping: one line, capped. */
@@ -146,21 +148,26 @@ function answerHint(code: string, fields: QuestionField[]): string {
   return `Reply ${code} ${fields.map((f) => `${oneLine(f.key, 30)}: …`).join("; ")}`;
 }
 
-/** The text sent when an approval opens. Agent-written parts are labeled as the agent's and flattened. */
+/**
+ * The text sent when an approval opens. It always names the request (the approval code) and, for drafts, the exact
+ * version: a 👍 or `A <code>` approves that version only. A new version of a draft the owner was already texted about
+ * says so first. Agent-written parts are labeled as the agent's and flattened.
+ */
 export function formatApprovalNotice(r: NoticeRow, now: Date = new Date()): string {
   const expires = `Expires in ${timeLeft(r.expires_at, now)}.`;
   if (r.kind === "send") {
     const to = leadLabel(r);
     const email = oneLine(r.recipient, 120);
-    const header = `Draft to ${to}${email && !to.includes(email) ? ` <${email}>` : ""}${r.draft_version && r.draft_version > 1 ? `, v${r.draft_version}` : ""}:`;
+    const version = r.draft_version ?? 1;
     const body = block(r.draft_body ?? "", 700);
     return [
-      header,
+      ...(r.replaces_version ? [`That draft changed; here's the new one (v${r.replaces_version} is closed).`] : []),
+      `Request ${r.code} · draft v${version} to ${to}${email && !to.includes(email) ? ` <${email}>` : ""}:`,
       `"${oneLine(r.draft_subject, 150)}"`,
       "",
       body.text + (body.cut ? "\n(cut short; the full draft is in the app)" : ""),
       "",
-      `Tap 👍 on this message to send it, 👎 to reject. Or reply A ${r.code}, R ${r.code}, or E ${r.code} <new text>. ${expires}`,
+      `Tap 👍 on this message to send exactly this version, 👎 to reject. Or reply A ${r.code}, R ${r.code}, or E ${r.code} <new text>. ${expires}`,
     ].join("\n");
   }
   const lead = r.lead_name || r.lead_company || r.lead_email ? ` (lead: ${leadLabel(r)})` : "";
@@ -168,13 +175,13 @@ export function formatApprovalNotice(r: NoticeRow, now: Date = new Date()): stri
     const name = oneLine(typeof r.payload?.name === "string" ? r.payload.name : "a tool", 80);
     const args = r.payload?.args === undefined ? "" : oneLine(JSON.stringify(r.payload.args), 300);
     return [
-      `Agent wants to run ${name}${lead}.`,
+      `Request ${r.code} · agent wants to run ${name}${lead}.`,
       ...(args && args !== "{}" ? [`Args: ${args}`] : []),
       `Tap 👍 to allow, 👎 to deny (or reply A ${r.code} / R ${r.code}). ${expires}`,
     ].join("\n");
   }
   const { prompt, fields } = questionOf(r);
-  const lines = [`Agent asks${lead}: "${oneLine(prompt, 500)}"`];
+  const lines = [`Request ${r.code} · agent asks${lead}: "${oneLine(prompt, 500)}"`];
   if (fields.length > 1) lines.push(`Fields: ${fields.map((f) => oneLine(f.label ? `${f.key} (${f.label})` : f.key, 60)).join(", ")}`);
   const options = fields.length === 1 ? (fields[0]!.options ?? []).map(optionLabel).filter(Boolean) : [];
   if (options.length) lines.push(`Options: ${oneLine(options.join(", "), 200)}`);
@@ -229,7 +236,11 @@ const noticeRows = async (sql: Sql, codes: string[]): Promise<NoticeRow[]> =>
   (await sql`
     select a.code, a.kind, a.recipient, a.payload, a.expires_at,
            l.name as lead_name, l.company as lead_company, l.email as lead_email,
-           d.version as draft_version, d.subject as draft_subject, d.body as draft_body
+           d.version as draft_version, d.subject as draft_subject, d.body as draft_body,
+           (select max(d2.version) from drafts d2
+              join approvals a2 on a2.draft_id = d2.id
+              join imessage_outbox o2 on o2.id = 'approval:' || a2.code and o2.delivered_at is not null
+            where d2.lead_id = a.lead_id and d2.version < d.version) as replaces_version
     from approvals a
     left join leads l on l.id = a.lead_id
     left join drafts d on d.id = a.draft_id
@@ -535,7 +546,7 @@ export async function handleOwnerCommand(ctx: { sql: Sql; env: Env; fetch?: Fetc
         const c = await contextOf(sql, created.approval.code);
         return {
           ok: true,
-          reply: `Saved as v${created.draft.version} for ${leadLabel(c)} (${approval.code} is closed). The new draft follows: tap 👍 on it to send, or reply A ${created.approval.code}.`,
+          reply: `Saved as v${created.draft.version} for ${leadLabel(c)}; ${approval.code} (v${created.draft.version - 1}) no longer sends. Request ${created.approval.code} with the new version follows: tap 👍 on it to send, or reply A ${created.approval.code}.`,
         };
       }
       case "answer": {

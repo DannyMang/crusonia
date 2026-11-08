@@ -135,7 +135,7 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     const seen = await pollFor([`approval:${code}`]);
     const notice = seen.get(`approval:${code}`)!;
     expect(notice.type).toBe("approval");
-    expect(notice.text).toContain("Draft to notice Tester (Fieldnote)");
+    expect(notice.text).toContain(`Request ${code} · draft v1 to notice Tester (Fieldnote)`);
     expect(notice.text).toContain(`Hi notice, worth a chat?`);
     expect(notice.text).toContain(`reply A ${code}`);
     const [row] = await sql`select delivered_at, message_id, draft_id, attempts from imessage_outbox where id = ${`approval:${code}`}`;
@@ -220,12 +220,13 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     const res = await say({ action: "edit", code, text: "Hi edit, shorter: 15 minutes this week?" });
     expect(res.ok).toBe(true);
     const newCode = /reply A ([2-9A-Z]{4})/.exec(res.reply)![1]!;
-    expect(res.reply).toContain(`Saved as v2 for edit Tester (Fieldnote) (${code} is closed)`);
+    expect(res.reply).toContain(`Saved as v2 for edit Tester (Fieldnote); ${code} (v1) no longer sends. Request ${newCode} with the new version follows`);
     expect(await approvalRow(code)).toMatchObject({ status: "expired" });
     const [d] = await sql`select d.version, d.body from approvals a join drafts d on d.id = a.draft_id where a.code = ${newCode}`;
     expect(d).toEqual({ version: 2, body: "Hi edit, shorter: 15 minutes this week?" });
+    // v1 was never texted in this test, so the v2 notice does not claim a change.
     const notice = (await pollFor([`approval:${newCode}`])).get(`approval:${newCode}`)!;
-    expect(notice.text).toContain(", v2:");
+    expect(notice.text).toStartWith(`Request ${newCode} · draft v2 to edit Tester`);
     expect(notice.text).toContain("15 minutes this week?");
   });
 
@@ -238,8 +239,11 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     const sent = calls.length;
     expect((await say({ action: "react", reaction: "like", message_id: n1.bubble })).reply).toBe(`${v1.code} is already closed: expired.`);
     expect(calls.length).toBe(sent);
-    // Tapping the v2 bubble sends v2.
+    // v1 was texted, so the v2 notice opens with "That draft changed"; tapping the v2 bubble sends v2.
     const n2 = (await pollFor([`approval:${v2code}`])).get(`approval:${v2code}`)!;
+    const [changed, request] = n2.text.split("\n");
+    expect(changed).toBe("That draft changed; here's the new one (v1 is closed).");
+    expect(request).toStartWith(`Request ${v2code} · draft v2 to tap Tester`);
     expect((await say({ action: "react", reaction: "like", message_id: n2.bubble })).reply).toContain("Approved. Sent");
     expect(calls.at(-1)!.body).toMatchObject({ text: "v2 body" });
     expect(await approvalRow(v2code)).toMatchObject({ status: "approved", decided_via: "imessage" });
@@ -256,7 +260,7 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
   test("tool approval: 👍 on its bubble allows the call at Naive; R <code> on another denies it", async () => {
     const allow = await newAgentApproval("toolok", "tool");
     const n = (await pollFor([`approval:${allow.code}`])).get(`approval:${allow.code}`)!;
-    expect(n.text).toContain("Agent wants to run apify.run_actor");
+    expect(n.text).toStartWith(`Request ${allow.code} · agent wants to run apify.run_actor`);
     expect((await say({ action: "react", reaction: "like", message_id: n.bubble })).reply).toBe("Allowed. The agent can run apify.run_actor and continues.");
     expect(calls.at(-1)).toMatchObject({ url: expect.stringContaining(`/v1/sessions/${allow.sessionId}/tool_confirmations`), body: { tool_call_id: "tc_toolok", decision: "allow" } });
     expect(await approvalRow(allow.code)).toMatchObject({ status: "approved", decided_via: "imessage" });
