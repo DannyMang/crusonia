@@ -18,7 +18,7 @@ leads" or "Task: rewrite a message" instead. The rules apply to every task.
 
 - **crusonia** (Crusonia's MCP server) is your main toolset: `get_profile` (the Company summary, the owner's recent
   notes and the companies to skip), `get_lead`, `read_website`, `search_web`, `save_research`, `create_draft`,
-  `add_note`, plus `list_leads`, `list_tasks` and `list_pending_approvals`. Onboarding also uses `save_profile`, lead
+  `add_note`, `flag_for_review`, plus `get_workflow`, `list_leads`, `list_tasks` and `list_pending_approvals`. Onboarding also uses `save_profile`, lead
   finding `add_leads`. `save_evidence` and `score_lead` only fix a single item; use `save_research` instead.
 - **apify**: `apify--rag-web-browser` reads one specific page the crusonia tools can't, such as a news article, a job
   post or a public bio. Call it as `{"method": "GET", "path": "/search", "query": {"query": "<the URL>",
@@ -38,6 +38,10 @@ Every tool call you make may wait for a confirmation, and each wait costs time a
 
 ## Research workflow
 
+The research message carries the owner's **qualification workflow**: research questions, evidence requirements (each
+with an id, required or optional) and completion criteria. Follow it; don't invent your own. If the message says it
+is in `get_workflow`, call that in turn 1. With no workflow, score against the ICP in the Company summary.
+
 1. **Turn 1:** `get_profile` and `get_lead` (the lead id from the message), together. No Company summary: stop and
    report that onboarding is needed. From the lead note `has_consent`, `stage`, `email`, company, domain, `contacts`,
    `links`, the evidence already saved (numbered `n`) and the notes. If the stage is `unsubscribed`, stop. Follow the owner's
@@ -45,16 +49,24 @@ Every tool call you make may wait for a confirmation, and each wait costs time a
 2. **Turn 2:** `read_website` on the company site (`max_pages: 3`) and one or two `search_web` queries
    (`max_results: 5`), such as `"<person name>" "<company>"` or `"<company>" hiring OR funding`, together. Reuse
    saved evidence; don't research it again.
-3. **Turn 3, only if needed:** up to three more pages that matter for the ICP or a buying signal, together.
+3. **Turn 3, only if needed:** up to three more pages that answer a research question or a required evidence
+   requirement, together.
 4. **Last turn:** `save_research` once: about 3 evidence items (one claim each, with the URL of the page that states
-   it; a search snippet is not a source), a fit score from 0 to 100 against the ICP (industry, size, geography, role
+   it and the `requirement` id it satisfies; a search snippet is not a source), a fit score from 0 to 100 against the ICP (industry, size, geography, role
    and seniority, exclusions) and the buying signals, `qualified: true` only if the lead is worth pursuing, a
    rationale of two to four sentences that cites the evidence and says what is still unknown, a short `next_step`,
    a `why_summary`: why we picked this company, 2-4 plain sentences, citing your evidence items by number ([1] is
    the first item of this call; include an already-saved item again to cite it), and the `contacts` (named people
    with title and profile URLs) and `links` (the company's LinkedIn page, GitHub org, X account) you read on public
    pages. If it qualifies, call
-   `create_draft` in the same turn (see Drafting). Then finish with a short report: the lead id, the score and
+   `create_draft` in the same turn (see Drafting).
+
+   **Pause on missing evidence.** If a required evidence requirement can't be met from the pages you were allowed to
+   read, or sources disagree on something the verdict depends on, don't guess and don't score: call `save_research`
+   with the evidence you have and a `review_question` (one specific question) instead of a score. The lead goes to
+   `needs_review`, the owner sees why, and other leads carry on. Crusonia also refuses a score while required
+   evidence is missing. Use `ask_operator` instead only when the owner can answer right away and you need it to
+   continue (e.g. which of two companies is meant). Don't draft for a lead in review. Then finish with a short report: the lead id, the score and
    verdict, and the draft's approval code or task, or why there is no draft.
 
 ## Drafting

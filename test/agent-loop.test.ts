@@ -12,7 +12,9 @@ import { draftInputSchema } from "../src/services/drafts.ts";
 import { normalizeDomain, registrableDomain, whyNoDomain } from "../src/services/domains.ts";
 import { leadInputSchema, linkKind, renumberCitations, researchInputSchema } from "../src/services/leads.ts";
 import { buildSteps, type AuditEvent, type StoredEvent } from "../src/services/runs.ts";
+import { missingEvidenceQuestion, missingRequirements, qualificationWorkflowSchema, workflowBrief } from "../src/services/qualification.ts";
 import { LANDING_LINES, siteCopy } from "../src/services/site-copy.ts";
+import { researchMessage } from "../src/services/workflows.ts";
 import { cumulativePipeline } from "../src/services/summary.ts";
 import { DEFAULT_TRACE_RETENTION_DAYS, traceRetentionDays } from "../src/services/traces.ts";
 import { isOwnHost, readWebsite } from "../src/services/web.ts";
@@ -355,5 +357,46 @@ describe("MCP tools", () => {
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toContain("subject");
     await client.close();
+  });
+});
+
+describe("qualification workflow: pause on missing evidence", () => {
+  const workflow = {
+    ...qualificationWorkflowSchema.parse({
+      name: "Seed GTM",
+      research_questions: [{ id: "owner", question: "Who runs outbound today?" }],
+      evidence_requirements: [
+        { id: "stage", description: "Funding stage (seed to Series A)" },
+        { id: "hiring", description: "A sales or GTM hire in the last 90 days" },
+        { id: "stack", description: "Tools they use", required: false },
+      ],
+      completion_criteria: ["Every required requirement has a source"],
+    }),
+    version: 2,
+    updated_at: "2026-11-08T00:00:00Z",
+  };
+
+  test("required requirements without evidence are the gaps; optional ones never block", () => {
+    expect(missingRequirements(workflow, ["stage"]).map((g) => g.id)).toEqual(["hiring"]);
+    expect(missingRequirements(workflow, ["stage", "hiring", null])).toEqual([]);
+    expect(missingRequirements(null, [])).toEqual([]);
+    expect(missingEvidenceQuestion([{ id: "hiring", description: "A sales hire" }])).toContain("Missing required evidence: A sales hire");
+    expect(qualificationWorkflowSchema.safeParse({ evidence_requirements: [{ id: "Has Space", description: "x" }] }).success).toBe(false);
+  });
+
+  test("the research message carries the workflow (not hardcoded, no extra call), or says there is none", () => {
+    const msg = researchMessage("lead_1", workflow);
+    expect(msg).toStartWith("Research lead lead_1 for Crusonia.");
+    for (const part of ['"Seed GTM" v2', "[owner] Who runs outbound today?", "[hiring] (required) A sales or GTM hire", "[stack] (optional)", "Every required requirement has a source", "review_question"]) {
+      expect(msg).toContain(part);
+    }
+    expect(researchMessage("lead_1")).toContain("No qualification workflow is set");
+    expect(workflowBrief(null)).toBeNull();
+  });
+
+  test("save_research takes a review question instead of a score; manual drafts wait while a lead is in review", () => {
+    expect(researchInputSchema.safeParse({ lead_id: "l", review_question: "Which Acme is it?" }).success).toBe(true);
+    expect(researchInputSchema.safeParse({ lead_id: "l" }).success).toBe(false);
+    expect(checkChannel(lead({ stage: "needs_review" }), { channel: "intro" })).toMatchObject({ ok: false, message: expect.stringContaining("waiting for review") });
   });
 });

@@ -260,6 +260,9 @@ const AUDIT_SUMMARY: Record<string, (d: Record<string, unknown>) => string> = {
   naive_tool_decided: (d) => `Owner ${d.decision === "allow" ? "allowed" : "denied"} ${d.tool ?? "a tool call"} (${d.code ?? ""})`,
   naive_question_answered: (d) => `Owner answered question ${d.code ?? ""}`,
   naive_webhook: (d) => `Naive webhook: ${d.type ?? "event"}`,
+  lead_needs_review: (d) => `Needs review: ${typeof d.question === "string" ? clip(oneLine(d.question), SUMMARY_CHARS) : "an open question"}`,
+  lead_scored: (d) => `Scored ${d.score ?? "?"}: ${d.qualified ? "qualified" : "not qualified"}`,
+  draft_created: (d) => (d.task ? `Manual ${d.channel ?? ""} message in the owner's queue` : `Email draft waiting for approval${d.approval_code ? ` (${d.approval_code})` : ""}`),
 };
 
 // Our audit events the timeline folds away: auto-allowed confirmations become part of their tool step, and our idle
@@ -581,8 +584,13 @@ export async function getRunDetail(sql: Sql, env: Env, sessionId: string, fetchF
   const [events, audit, leads, approvals, pausedRows] = await sql.transaction(
     [
       sql`select seq, type, data, created_at from naive_session_events where session_id = ${sessionId} order by seq limit 2000`,
-      sql`select id, kind, data, created_at from events where data->>'session_id' = ${sessionId} order by id limit 500`,
-      sql`select id, email, name, title, company, domain, stage, score, qualified, consent_at is not null as has_consent
+      // Plus what happened to the run's lead meanwhile that the UI must explain (e.g. it now waits for review).
+      sql`select id, kind, data, created_at from events
+          where data->>'session_id' = ${sessionId}
+             or (${row.lead_id}::text is not null and lead_id = ${row.lead_id} and kind in ('lead_needs_review', 'lead_scored', 'draft_created')
+                 and created_at >= ${row.created_at}::timestamptz and created_at <= ${row.updated_at}::timestamptz + interval '1 minute')
+          order by id limit 500`,
+      sql`select id, email, name, title, company, domain, stage, score, qualified, review_question, consent_at is not null as has_consent
           from leads where id = ${row.lead_id}`,
       sql`select a.code, a.kind, a.status, a.summary, a.lead_id, a.draft_id, a.naive_session_id, a.tool_call_id, a.payload,
                  a.expires_at, a.decided_at, a.decided_via, a.created_at,

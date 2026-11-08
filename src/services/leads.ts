@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { Approval, Draft, Lead, Sql } from "../db.ts";
 import { newId, variantFor } from "../ids.ts";
 import { normalizeDomain, whyNoDomain } from "./domains.ts";
+import { getQualificationWorkflow, missingEvidenceQuestion, missingRequirements, type RequirementGap } from "./qualification.ts";
 import { ServiceError } from "./errors.ts";
 
 // Stages a lead can be in (see schema.sql). Agent-found leads start in `no_consent` (found, not scored yet). Scoring
@@ -44,6 +45,13 @@ const text = (max: number) => z.string().trim().min(1).max(max);
 export const evidenceItemSchema = z.object({
   claim: text(2000).describe("One factual statement about the lead or their company, e.g. 'Hiring 3 SDRs (job post, Oct 2026)'."),
   source_url: z.httpUrl().max(2048).describe("Public URL of the page that states it (not a search results page)."),
+  requirement: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .nullish()
+    .describe("The id of the qualification workflow's evidence requirement this item satisfies, if any (get_workflow)."),
 });
 
 const url = z.httpUrl().max(2048);
@@ -503,7 +511,7 @@ export function renumberCitations(text: string, positions: (number | undefined)[
 export type LeadSummary = Pick<
   Lead,
   "id" | "email" | "name" | "title" | "company" | "domain" | "stage" | "score" | "qualified" | "source" | "updated_at"
-> & { has_consent: boolean; linkedin_url?: string | null; next_step?: string | null; why_summary?: string | null };
+> & { has_consent: boolean; linkedin_url?: string | null; next_step?: string | null; why_summary?: string | null; review_question?: string | null };
 
 export async function listLeads(sql: Sql, opts: { stage?: LeadStage | null; limit?: number } = {}): Promise<LeadSummary[]> {
   const limit = Math.min(Math.max(opts.limit ?? 25, 1), 200);
@@ -582,13 +590,30 @@ export const scoreInputSchema = z.object({
   qualified: z.boolean().describe("Your verdict: is this lead worth pursuing?"),
 });
 
+/** Required evidence the lead doesn't have yet (the qualification workflow's), counting `adding` (this call's items). */
+async function evidenceGaps(sql: Sql, leadId: string, adding: { requirement?: string | null }[] = []): Promise<RequirementGap[]> {
+  const workflow = await getQualificationWorkflow(sql);
+  if (!workflow?.evidence_requirements.some((r) => r.required !== false)) return [];
+  const rows = await sql`select distinct requirement from evidence where lead_id = ${leadId} and requirement is not null`;
+  return missingRequirements(workflow, [...rows.map((r) => r.requirement as string), ...adding.map((e) => e.requirement)]);
+}
+
 export async function scoreLead(sql: Sql, input: z.infer<typeof scoreInputSchema>): Promise<LeadSummary> {
+  // Pause on missing evidence: never a verdict without the workflow's required evidence.
+  const gaps = await evidenceGaps(sql, input.lead_id);
+  if (gaps.length) {
+    throw new ServiceError(
+      "invalid",
+      `Lead ${input.lead_id} lacks required evidence (${gaps.map((g) => g.id).join(", ")}): save it with save_research, or flag the lead with flag_for_review instead of scoring.`,
+    );
+  }
   const rows = await sql`
     with up as (
       update leads set
         score = ${input.score},
         qualified = ${input.qualified},
         rationale = ${input.rationale},
+        review_question = null,
         stage = case when stage = any(${SCORABLE_STAGES}::text[])
                      then (case when ${input.qualified}::boolean then 'qualified' else 'disqualified' end)
                      else stage end,
@@ -616,9 +641,12 @@ export const researchInputSchema = z.object({
     .max(MAX_EVIDENCE_PER_CALL)
     .default([])
     .describe("The strongest facts you rely on (about 3), each with the URL of the page that states it. Already-saved items are skipped."),
-  score: z.number().int().min(0).max(100).describe("Fit with the saved profile, 0 (no fit) to 100 (perfect fit)."),
-  qualified: z.boolean().describe("Your verdict: is this lead worth pursuing?"),
-  rationale: text(4000).describe("Two to four sentences citing the evidence, and what is still unknown."),
+  score: z.number().int().min(0).max(100).nullish().describe("Fit with the saved profile, 0 (no fit) to 100 (perfect fit). Omit when you set review_question."),
+  qualified: z.boolean().nullish().describe("Your verdict: is this lead worth pursuing? Omit when you set review_question."),
+  rationale: text(4000).nullish().describe("Two to four sentences citing the evidence, and what is still unknown."),
+  review_question: text(500)
+    .nullish()
+    .describe("Set instead of a score when required evidence is missing or sources conflict: the one question that must be answered first. The lead goes to needs_review; never guess."),
   next_step: text(500)
     .nullish()
     .describe("Suggested next step for the owner, e.g. 'LinkedIn note to the CEO about the SDR job post' or 'none: not a fit'."),
@@ -627,12 +655,15 @@ export const researchInputSchema = z.object({
     .describe("Why we picked this company: 2-4 plain sentences citing the evidence items of this call by number ([1] = the first item). To cite something already saved, include it in evidence again (it is not saved twice)."),
   contacts: z.array(contactSchema).max(10).default([]).describe("Named people at the company you read about on public pages (merged by name)."),
   links: z.array(linkSchema).max(10).default([]).describe("Company links you read on public pages: LinkedIn page, GitHub org, X account... (merged by URL)."),
+}).refine((v) => Boolean(v.review_question) || (scoreComplete(v) && v.score !== undefined && v.score !== null), {
+  message: "Send score, qualified and rationale, or a review_question when evidence is missing.",
+  path: ["score"],
 });
 export type ResearchSaveInput = z.input<typeof researchInputSchema>;
 
 type ResearchInput = {
   lead_id: string;
-  evidence: { claim: string; source_url: string }[];
+  evidence: { claim: string; source_url: string; requirement?: string | null }[];
   score?: number;
   qualified?: boolean;
   rationale?: string;
@@ -677,7 +708,7 @@ export async function saveResearchBatch(sql: Sql, items: ResearchInput[]): Promi
   // Deduped here (not with DISTINCT ON) so the insert keeps the call's order: evidence ids follow `ord`.
   const seen = new Set<string>();
   const evidence = items
-    .flatMap((i) => i.evidence.map((e) => ({ lead_id: i.lead_id, claim: e.claim, source_url: e.source_url })))
+    .flatMap((i) => i.evidence.map((e) => ({ lead_id: i.lead_id, claim: e.claim, source_url: e.source_url, requirement: e.requirement ?? null })))
     .filter((e) => {
       const k = JSON.stringify([e.lead_id, e.claim, e.source_url]);
       return seen.has(k) ? false : (seen.add(k), true);
@@ -694,11 +725,17 @@ export async function saveResearchBatch(sql: Sql, items: ResearchInput[]): Promi
     sql`select count(pg_advisory_xact_lock(hashtext('crusonia:lead:' || id)))::int as locked from (select unnest(${ids}::text[]) as id order by 1) s`,
     sql`
       with input as (
-        select * from jsonb_to_recordset(${JSON.stringify(evidence)}::jsonb) as x(lead_id text, claim text, source_url text, ord int)
+        select * from jsonb_to_recordset(${JSON.stringify(evidence)}::jsonb) as x(lead_id text, claim text, source_url text, requirement text, ord int)
+      ),
+      tag as (
+        -- An item saved before without its requirement id gets it now.
+        update evidence e set requirement = i.requirement
+        from input i
+        where e.lead_id = i.lead_id and e.claim = i.claim and e.source_url = i.source_url and i.requirement is not null and e.requirement is null
       ),
       ins as (
-        insert into evidence (lead_id, claim, source_url)
-        select i.lead_id, i.claim, i.source_url from input i
+        insert into evidence (lead_id, claim, source_url, requirement)
+        select i.lead_id, i.claim, i.source_url, i.requirement from input i
         where exists (select 1 from leads l where l.id = i.lead_id)
           and not exists (select 1 from evidence e where e.lead_id = i.lead_id and e.claim = i.claim and e.source_url = i.source_url)
         order by i.ord
@@ -719,6 +756,7 @@ export async function saveResearchBatch(sql: Sql, items: ResearchInput[]): Promi
           score = i.score,
           qualified = i.qualified,
           rationale = i.rationale,
+          review_question = null,
           next_step = coalesce(i.next_step, l.next_step),
           stage = case when l.stage = any(${SCORABLE_STAGES}::text[])
                        then (case when i.qualified then 'qualified' else 'disqualified' end)
@@ -794,15 +832,19 @@ async function saveWhySummaries(sql: Sql, items: ResearchInput[]): Promise<void>
 
 /** MCP save_research: one lead's evidence, score, rationale, next step and why-summary in one call. */
 export async function saveResearch(sql: Sql, input: z.infer<typeof researchInputSchema>) {
-  const [row] = input.links.length ? await sql`select domain from leads where id = ${input.lead_id}` : [];
-  const domain = (row?.domain as string | null | undefined) ?? null;
+  const [row] = await sql`select domain from leads where id = ${input.lead_id}`;
+  if (!row) throw new ServiceError("not_found", `No lead with id ${input.lead_id}. Use list_leads to find lead ids.`);
+  const domain = (row.domain as string | null) ?? null;
+  // Pause on missing evidence: with required evidence missing (or the agent's own question), no score is stored and
+  // the lead goes to needs_review with the question; the evidence, contacts and links found so far are kept.
+  const gaps = await evidenceGaps(sql, input.lead_id, input.evidence);
+  const review = input.review_question ?? (gaps.length ? missingEvidenceQuestion(gaps) : null);
+  const scoring = !review && input.score !== undefined && input.score !== null;
   const [result] = await saveResearchBatch(sql, [
     {
       lead_id: input.lead_id,
       evidence: input.evidence,
-      score: input.score,
-      qualified: input.qualified,
-      rationale: input.rationale,
+      ...(scoring ? { score: input.score!, qualified: input.qualified!, rationale: input.rationale! } : {}),
       next_step: input.next_step,
       why_summary: input.why_summary,
       why_mode: "set",
@@ -810,19 +852,51 @@ export async function saveResearch(sql: Sql, input: z.infer<typeof researchInput
       links: input.links.map((l) => toLink(l, domain)),
     },
   ]);
-  if (!result?.scored) throw new ServiceError("not_found", `No lead with id ${input.lead_id}. Use list_leads to find lead ids.`);
+  if (scoring && !result?.scored) throw new ServiceError("not_found", `No lead with id ${input.lead_id}. Use list_leads to find lead ids.`);
+  if (review) await flagForReview(sql, { lead_id: input.lead_id, question: review, missing: gaps.map((g) => g.id) });
   const [lead] = await sql`
-    select id, email, name, title, company, domain, linkedin_url, stage, score, qualified, next_step, why_summary, source, updated_at,
+    select id, email, name, title, company, domain, linkedin_url, stage, score, qualified, next_step, why_summary, review_question, source, updated_at,
            consent_at is not null as has_consent,
            (select count(*)::int from evidence where lead_id = leads.id) as evidence_total
     from leads where id = ${input.lead_id}`;
   const summary = lead as LeadSummary & { evidence_total: number };
   return {
     lead: summary,
-    evidence_saved: result.evidence_saved,
-    contacts_added: result.contacts_added,
-    links_added: result.links_added,
+    evidence_saved: result?.evidence_saved ?? 0,
+    contacts_added: result?.contacts_added ?? 0,
+    links_added: result?.links_added ?? 0,
+    // Set when the lead was not scored: required evidence ids still missing, and the question it waits on.
+    ...(review ? { needs_review: true, missing_requirements: gaps, review_question: review } : {}),
     // What the agent may do next, so it never has to ask: email only with consent, manual channels otherwise.
-    draft_channels: !summary.qualified ? [] : summary.has_consent && summary.email ? ["email"] : ["linkedin", "x", "intro", ...(summary.email ? ["email_manual"] : [])],
+    draft_channels: !summary.qualified || summary.stage === "needs_review" ? [] : summary.has_consent && summary.email ? ["email"] : ["linkedin", "x", "intro", ...(summary.email ? ["email_manual"] : [])],
   };
+}
+
+export const flagInputSchema = z.object({
+  lead_id: text(64).describe("Lead id to flag."),
+  question: text(500).describe("The one specific question that must be answered before the lead can be scored, e.g. 'Is acme.io the same company as Acme Labs?'"),
+  missing: z.array(text(64)).max(20).default([]).describe("Ids of the workflow's evidence requirements you could not source, if any."),
+});
+
+/**
+ * The lead waits for a person: stage needs_review (from a found, researching or scored stage; leads in the send flow
+ * keep theirs) with the question. Research of other leads goes on; scoring it later clears the question.
+ */
+export async function flagForReview(sql: Sql, input: { lead_id: string; question: string; missing?: string[] }) {
+  const rows = await sql`
+    with up as (
+      update leads set review_question = ${input.question},
+             stage = case when stage = any(${SCORABLE_STAGES}::text[]) then 'needs_review' else stage end,
+             updated_at = now()
+      where id = ${input.lead_id}
+      returning id, stage, review_question
+    ),
+    ev as (
+      insert into events (lead_id, kind, data)
+      select id, 'lead_needs_review', jsonb_build_object('via', 'mcp', 'question', review_question, 'missing', ${JSON.stringify(input.missing ?? [])}::jsonb, 'stage', stage)
+      from up
+    )
+    select * from up`;
+  if (!rows[0]) throw new ServiceError("not_found", `No lead with id ${input.lead_id}. Use list_leads to find lead ids.`);
+  return rows[0] as { id: string; stage: string; review_question: string };
 }

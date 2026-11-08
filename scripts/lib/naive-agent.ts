@@ -30,6 +30,8 @@ export const CRUSONIA_TOOLS = [
   "list_pending_approvals",
   "list_tasks",
   "add_note",
+  "get_workflow",
+  "flag_for_review",
 ] as const;
 
 // Apify tools that run without asking: the single-page reader the playbook uses (charged per request, starts

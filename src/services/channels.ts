@@ -78,6 +78,9 @@ export function checkChannel(lead: ChannelLead, input: { channel: DraftChannel; 
   }
 
   if (lead.suppressed || lead.stage === "unsubscribed") return fail(`Lead ${lead.id} unsubscribed or is on the suppression list: do not contact on any channel.`);
+  if (lead.stage === "needs_review") {
+    return fail(`Lead ${lead.id} is waiting for review (missing evidence or an open question): no messages until it is resolved and scored.`);
+  }
   if (lead.qualified !== true) {
     return fail(`Lead ${lead.id} is not scored qualified. Research it and save a qualified verdict (save_research) before drafting a manual message.`);
   }

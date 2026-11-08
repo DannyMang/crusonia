@@ -15,6 +15,8 @@ import {
   MAX_LEADS_PER_CALL,
   MAX_EVIDENCE_PER_CALL,
   addLeads,
+  flagForReview,
+  flagInputSchema,
   evidenceInputSchema,
   getLeadDetail,
   leadInputSchema,
@@ -28,6 +30,7 @@ import {
 import { addNote, addNoteInputSchema, excludedCompanies, recentOwnerNotes } from "../services/notes.ts";
 import { getProfile, profileInputSchema, saveProfile } from "../services/profile.ts";
 import { getStatus } from "../services/status.ts";
+import { getWorkflowForAgent } from "../services/qualification.ts";
 import { listTasks, listTasksSchema } from "../services/tasks.ts";
 import { readWebsite, readWebsiteInputSchema } from "../services/web.ts";
 
@@ -194,11 +197,34 @@ export function createMcpServer(env: Env, deps: Deps = {}): McpServer {
     "save_research",
     {
       title: "Save research",
-      description: `Saves a lead's research in one call: the strongest evidence (up to ${MAX_EVIDENCE_PER_CALL} items, about 3; each a claim plus the URL of the page that states it; already-saved items are skipped), your fit score (0-100), qualified verdict, a 2-4 sentence rationale citing the evidence, and a suggested next step. Moves the lead to 'qualified' or 'disqualified' unless it is already in the send flow. Returns the lead and the channels you may draft on.`,
+      description: `Saves a lead's research in one call: the strongest evidence (up to ${MAX_EVIDENCE_PER_CALL} items, about 3; each a claim plus the URL of the page that states it and the workflow requirement id it satisfies; already-saved items are skipped), your fit score (0-100), qualified verdict, a 2-4 sentence rationale citing the evidence, a suggested next step, a why-summary, contacts and links. Moves the lead to 'qualified' or 'disqualified' unless it is already in the send flow. If the qualification workflow's required evidence is still missing, or you set review_question, no score is stored and the lead goes to 'needs_review' with the question (needs_review: true in the result). Returns the lead and the channels you may draft on.`,
       inputSchema: researchInputSchema,
       annotations: { ...WRITE, idempotentHint: true },
     },
     (args) => run(() => saveResearch(db(), args)),
+  );
+
+  server.registerTool(
+    "get_workflow",
+    {
+      title: "Get the qualification workflow",
+      description:
+        "Returns the owner's qualification workflow (research questions, evidence requirements with ids and whether each is required, completion criteria; null if none is set) and the ICP it scores against, from the Company summary. Research messages usually include it already.",
+      annotations: READ,
+    },
+    () => run(() => getWorkflowForAgent(db())),
+  );
+
+  server.registerTool(
+    "flag_for_review",
+    {
+      title: "Flag a lead for review",
+      description:
+        "Pauses a lead on a question instead of guessing: stage 'needs_review' with your question (e.g. required evidence you could not find on public pages, or sources that disagree). The owner sees why; scoring the lead later clears it. Use ask_operator instead when the owner can answer right away and you need the answer to continue.",
+      inputSchema: flagInputSchema,
+      annotations: WRITE,
+    },
+    (args) => run(() => flagForReview(db(), { lead_id: args.lead_id, question: args.question, missing: args.missing })),
   );
 
   server.registerTool(

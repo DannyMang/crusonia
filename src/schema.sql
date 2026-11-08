@@ -478,3 +478,8 @@ create table if not exists lead_notes (
 );
 create index if not exists lead_notes_lead_idx on lead_notes (lead_id, id desc);
 create index if not exists lead_notes_author_idx on lead_notes (id desc) where author like 'user:%';
+
+-- Pause on missing evidence: evidence items name the qualification workflow requirement they satisfy (settings key
+-- 'qualification_workflow', src/services/qualification.ts). A lead missing required evidence is never scored: it
+-- goes to needs_review with `review_question` (a column that predates this).
+alter table evidence add column if not exists requirement text;

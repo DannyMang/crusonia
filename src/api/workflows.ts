@@ -7,6 +7,7 @@ import { billingOwnerOf, requireCredits } from "../billing/accounts.ts";
 import { actorOf, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
 import { LEAD_STAGES } from "../services/crm.ts";
 import { getRunDetail, listWorkflows } from "../services/runs.ts";
+import { getQualificationWorkflow, qualificationWorkflowSchema, saveQualificationWorkflow } from "../services/qualification.ts";
 import { exportTrace, getTrace } from "../services/traces.ts";
 import { MAX_RESEARCH_BATCH, startResearch } from "../services/workflows.ts";
 
@@ -21,6 +22,15 @@ workflows.get("/", async (c) => {
 
 // Steps come from cached Naive events (refreshed from Naive's free events API) plus our audit events.
 workflows.get("/runs/:session_id", async (c) => c.json(await getRunDetail(sqlFor(c.env), c.env, c.req.param("session_id"))));
+
+// The qualification workflow research follows: research questions, evidence requirements, completion criteria. PUT
+// saves a new version; research sessions started afterwards get it.
+workflows.get("/qualification", async (c) => c.json({ workflow: await getQualificationWorkflow(sqlFor(c.env)) }));
+
+workflows.put("/qualification", async (c) => {
+  const body = await parseJson(c, qualificationWorkflowSchema);
+  return c.json({ workflow: await saveQualificationWorkflow(sqlFor(c.env), body, actorOf(c.get("principal"))) });
+});
 
 // The full trace ("View full trace"): every stored event, paginated by Naive seq, plus audit events, approvals and spend.
 const TraceQuery = z.object({

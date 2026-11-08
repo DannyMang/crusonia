@@ -14,10 +14,11 @@ import { createLead } from "../src/services/crm.ts";
 import { createDraft } from "../src/services/drafts.ts";
 import { addLeads, getLeadDetail, saveResearch, scoreLead } from "../src/services/leads.ts";
 import { addNote, deleteNote, editNote, excludeLead, recentOwnerNotes, unexcludeLead } from "../src/services/notes.ts";
+import { getQualificationWorkflow, saveQualificationWorkflow } from "../src/services/qualification.ts";
 import { getRunDetail } from "../src/services/runs.ts";
 import { listTasks, markTaskSent, skipTask } from "../src/services/tasks.ts";
 import { exportTrace, getTrace, pruneTraces } from "../src/services/traces.ts";
-import { handleSessionIdle } from "../src/services/workflows.ts";
+import { handleSessionIdle, startResearch } from "../src/services/workflows.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -333,6 +334,71 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
     expect(await failure(deleteNote(sql, { leadId: id, noteId: mine.id, author: "user:someone-else" }))).toBe("invalid");
     await deleteNote(sql, { leadId: id, noteId: mine.id, author: "user:owner" });
     expect((await getLeadDetail(sql, id)).notes).toHaveLength(1);
+  });
+
+  test("qualification workflow: research gets it, missing required evidence pauses the lead in needs_review instead of a score", async () => {
+    const before = (await sql`select value from settings where key = 'qualification_workflow'`)[0]?.value ?? null;
+    try {
+      const v1 = await saveQualificationWorkflow(sql, { name: `IT ${run}`, evidence_requirements: [{ id: "hiring", description: "A sales hire in the last 90 days" }] }, "test");
+      const v2 = await saveQualificationWorkflow(
+        sql,
+        { name: `IT ${run}`, research_questions: [{ id: "owner", question: "Who runs outbound?" }], evidence_requirements: [{ id: "hiring", description: "A sales hire in the last 90 days" }, { id: "stack", description: "Their tools", required: false }], completion_criteria: ["All required evidence sourced"] },
+        "test",
+      );
+      expect(v2.version).toBe(v1.version + 1);
+      expect((await getQualificationWorkflow(sql))?.version).toBe(v2.version);
+
+      const { results } = await addLeads(sql, [found("review")]);
+      const id = results[0]!.id!;
+      // Research sessions get the workflow in their first message.
+      const nv = provider((c) => (c.url.endsWith("/v1/sessions") ? Response.json({ id: sid("review"), status: "running" }) : undefined));
+      await startResearch(sql, env, { lead_ids: [id] }, "test", nv.fn);
+      expect(nv.calls[0]!.body.message).toContain("[hiring] (required) A sales hire in the last 90 days");
+      expect((await sql`select input from naive_sessions where id = ${sid("review")}`)[0]!.input).toEqual({ workflow_version: v2.version });
+      await sql`update naive_sessions set status = 'done' where id = ${sid("review")}`;
+
+      // A score without the required evidence is not stored: the lead pauses with a question.
+      const paused = await saveResearch(sql, {
+        lead_id: id,
+        evidence: [{ claim: "Uses Clay", source_url: `https://${domain("review")}/stack`, requirement: "stack" }],
+        score: 90,
+        qualified: true,
+        rationale: "Looks great.",
+        contacts: [],
+        links: [],
+      });
+      expect(paused).toMatchObject({ needs_review: true, missing_requirements: [{ id: "hiring" }], lead: { stage: "needs_review", score: null } });
+      expect(paused.lead.review_question).toContain("A sales hire in the last 90 days");
+      expect(paused.draft_channels).toEqual([]);
+      expect(await failure(scoreLead(sql, { lead_id: id, score: 90, qualified: true, rationale: "x" }))).toBe("invalid");
+      expect(await failure(createDraft(sql, { lead_id: id, channel: "intro", body: "They use Clay.", citations: [{ text: "use Clay", source_url: `https://${domain("review")}/stack` }] }, { ttlMinutes: 60 }))).toBe("invalid");
+
+      // The run view explains it.
+      const runView = await getRunDetail(sql, { PUBLIC_URL: "https://example.test" }, sid("review"));
+      expect(runView.lead).toMatchObject({ stage: "needs_review" });
+      expect(runView.steps.some((st) => st.summary.startsWith("Needs review: Missing required evidence"))).toBe(true);
+
+      // With the evidence (tagged with its requirement), the lead is scored and the question cleared.
+      const done = await saveResearch(sql, {
+        lead_id: id,
+        evidence: [{ claim: "Hired a first AE in October", source_url: `https://${domain("review")}/blog/ae`, requirement: "hiring" }],
+        score: 88,
+        qualified: true,
+        rationale: "Hired an AE.",
+        contacts: [],
+        links: [],
+      });
+      expect(done).toMatchObject({ lead: { stage: "qualified", score: 88, review_question: null } });
+      expect("needs_review" in done).toBe(false);
+
+      // The agent's own question pauses a lead too, even with every requirement met.
+      const asked = await saveResearch(sql, { lead_id: id, review_question: "Is acme.io the same company?", contacts: [], links: [], evidence: [] });
+      expect(asked).toMatchObject({ needs_review: true, lead: { stage: "needs_review", review_question: "Is acme.io the same company?" } });
+    } finally {
+      if (before) await sql`update settings set value = ${JSON.stringify(before)}::jsonb where key = 'qualification_workflow'`;
+      else await sql`delete from settings where key = 'qualification_workflow'`;
+      await sql`delete from events where kind = 'qualification_workflow_saved' and data->>'actor' = 'test' and data->'workflow'->>'name' = ${`IT ${run}`}`;
+    }
   });
 
   test("traces: the full event trace is stored and paginated, exported, and pruned after the retention window", async () => {
