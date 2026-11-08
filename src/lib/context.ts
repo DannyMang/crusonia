@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { z } from "zod";
 import { getSql, type Sql } from "../db.ts";
 import type { Env } from "../env.ts";
-import type { Workspace } from "../services/workspaces.ts";
+import type { Workspace, WorkspaceRole } from "../services/workspaces.ts";
 import { ApiError, invalidRequest } from "./errors.ts";
 
 /** Who made an /api/* call. Every principal acts on exactly one workspace (AppEnv Variables.workspace). */
@@ -13,7 +13,11 @@ export type Principal =
   // email/name are set only when the session token carries them (custom session claims).
   | { kind: "clerk"; userId: string; sessionId: string | null; email?: string; name?: string };
 
-export type AppEnv = { Bindings: Env; Variables: { principal: Principal; workspace: Workspace } };
+/**
+ * `role`: the caller's role in `workspace`. A signed-in person's comes from workspace_members on every request.
+ * MCP_TOKEN counts as owner and an API key as admin, but what only a person may do is refused by src/api/guards.ts.
+ */
+export type AppEnv = { Bindings: Env; Variables: { principal: Principal; workspace: Workspace; role: WorkspaceRole } };
 
 /** A short label for the audit trail: `owner_token`, `api_key:<key id>` or `clerk:<user id>`. */
 export function actorOf(principal: Principal | undefined): string {

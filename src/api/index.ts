@@ -1,5 +1,6 @@
 // REST API under /api: every route requires auth (Clerk session JWT, an API key, or the MCP_TOKEN owner bypass),
-// and every request acts on exactly one workspace (src/api/auth.ts).
+// and every request acts on exactly one workspace (src/api/auth.ts). The one exception is the invite link, which comes
+// before all of that: whoever follows it may not have a workspace yet.
 import { Hono } from "hono";
 import type { AppEnv } from "../lib/context.ts";
 import { admin } from "./admin.ts";
@@ -16,11 +17,14 @@ import { notes } from "./notes.ts";
 import { companySummary, onboarding, profile } from "./onboarding.ts";
 import { settings, suppressions } from "./settings.ts";
 import { tasks } from "./tasks.ts";
+import { inviteLinks, team, workspaces } from "./team.ts";
 import { workflowDefs } from "./workflow-defs.ts";
 import { workflows } from "./workflows.ts";
 
 export const api = new Hono<AppEnv>();
 
+// Must stay above requireAuth: a route registered before a middleware answers without running it.
+api.route("/invites", inviteLinks);
 api.use("*", requireAuth);
 // Decisions an agent holding an API key must not make through REST either (src/api/guards.ts).
 guardHumanRoutes(api);
@@ -43,6 +47,9 @@ api.route("/company-summary", companySummary);
 api.route("/profile", profile);
 api.route("/onboarding", onboarding);
 api.route("/keys", keys);
+// The workspaces a person belongs to, and the current workspace's members and invites.
+api.route("/workspaces", workspaces);
+api.route("/team", team);
 api.route("/billing", billing);
 // CRM sync: /integrations/crm (status), /integrations/sync, /integrations/hubspot/import.
 api.route("/integrations", integrations);

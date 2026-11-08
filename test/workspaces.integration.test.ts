@@ -19,7 +19,6 @@ import { addLeads } from "../src/services/leads.ts";
 import { paidStartAllowance } from "../src/services/limits.ts";
 import { naiveAgentFor, resetTemplateVersionCache, workspaceMcpUrl } from "../src/services/naive-agents.ts";
 import { addSuppression } from "../src/services/settings.ts";
-import { resetWorkspaceCache } from "../src/services/workspaces.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -150,7 +149,9 @@ suite("workspaces (database, faked Naive)", () => {
       }
       expect((await sql`select id from workspaces where id = 'ws_owner'`).length).toBe(1);
       const idx = (await sql`select indexname from pg_indexes where schemaname = 'public'`).map((r) => r.indexname as string);
-      expect(idx).toEqual(expect.arrayContaining(["leads_ws_email_uq", "leads_ws_company_uq", "suppressions_ws_email_uq", "billing_accounts_ws_uq", "workspace_members_user_uq"]));
+      expect(idx).toEqual(expect.arrayContaining(["leads_ws_email_uq", "leads_ws_company_uq", "suppressions_ws_email_uq", "billing_accounts_ws_uq"]));
+      // A user can belong to several workspaces.
+      expect(idx).not.toContain("workspace_members_user_uq");
       expect(idx).not.toContain("leads_no_email_uq");
       expect((await sql`select 1 from pg_constraint where conname = 'leads_email_key'`).length).toBe(0);
       // At most one billing account and one free-sample grant per workspace.
@@ -239,7 +240,6 @@ suite("workspaces (database, faked Naive)", () => {
 
   describe("first sign-in", () => {
     test("a new Clerk user gets a private workspace with the free credits, once, even with concurrent first requests", async () => {
-      resetWorkspaceCache();
       const user = `user_it_${run}_new`;
       const token = await clerkToken(user);
       const results = await Promise.all([1, 2, 3].map(() => call(token, "GET", "/api/me")));
@@ -255,14 +255,12 @@ suite("workspaces (database, faked Naive)", () => {
       expect(billing.body).toMatchObject({ workspace_id: ws, balance: 300, billing: { enforced: true } });
       expect(billing.body.ledger.map((r: any) => r.source)).toEqual([`signup:${ws}`]);
       // Later sign-ins: the same workspace, no second grant.
-      resetWorkspaceCache();
       expect((await call(token, "GET", "/api/me")).body.workspace.id).toBe(ws);
       expect(await getBalance(sql, ws)).toBe(300);
       expect((await sql`select count(*)::int as n from events where workspace_id = ${ws} and kind = 'workspace_created'`)[0]!.n).toBe(1);
     });
 
     test("SIGNUPS_OPEN=false refuses new users but lets members in; BLOCKED_USER_IDS is refused; the owner user maps to the owner workspace", async () => {
-      resetWorkspaceCache();
       const closed = env({ SIGNUPS_OPEN: "false" });
       const stranger = await clerkToken(`user_it_${run}_late`);
       const r = await call(stranger, "GET", "/api/me", undefined, closed);
@@ -275,9 +273,8 @@ suite("workspaces (database, faked Naive)", () => {
       // OWNER_CLERK_USER_ID is the owner workspace, whatever else the user has.
       const ownerUser = `user_it_${run}_owner`;
       const me = await call(await clerkToken(ownerUser), "GET", "/api/me", undefined, env({ OWNER_CLERK_USER_ID: ownerUser }));
-      expect(me.body.workspace).toEqual({ id: "ws_owner", name: expect.any(String), owner: true });
+      expect(me.body.workspace).toEqual({ id: "ws_owner", name: expect.any(String), owner: true, role: "owner" });
       await sql`delete from workspace_members where clerk_user_id = ${ownerUser}`;
-      resetWorkspaceCache();
     });
   });
 
@@ -453,7 +450,6 @@ suite("workspaces (database, faked Naive)", () => {
       const ws = await createTestWorkspace(sql, `sum_${run}`, { clerkUserId: `user_it_${run}_sum` });
       created.push(ws);
       const user = await clerkToken(`user_it_${run}_sum`);
-      resetWorkspaceCache();
       const v1 = await call(user, "PUT", "/api/company-summary", { markdown: "# Sum Co\n\n## What we sell\n\nSoftware\n\n## Avoid\n", note: "first" });
       expect(v1.body).toMatchObject({ version: 1, updated_by: `user:user_it_${run}_sum`, change_note: "first", unchanged: false });
       const same = await call(user, "PUT", "/api/company-summary", { markdown: "# Sum Co\n\n## What we sell\n\nSoftware\n\n## Avoid", note: "again" });
@@ -624,7 +620,6 @@ suite("workspaces (database, faked Naive)", () => {
       const adminUser = `user_it_${run}_admin`;
       const adminWs = await createTestWorkspace(sql, `admin_${run}`, { clerkUserId: adminUser });
       created.push(adminWs);
-      resetWorkspaceCache();
       const e = env({ PLATFORM_ADMIN_USER_IDS: `someone, ${adminUser}` });
       const admin = await clerkToken(adminUser);
       const member = await clerkToken(`user_it_${run}_a`);
@@ -654,7 +649,6 @@ suite("workspaces (database, faked Naive)", () => {
       // OWNER_CLERK_USER_ID is a platform admin by default.
       const ownerAdmin = await call(admin, "GET", `/api/admin/runs?workspace=${B}`, undefined, env({ OWNER_CLERK_USER_ID: adminUser }));
       expect(ownerAdmin.status).toBe(200);
-      resetWorkspaceCache();
     });
   });
 

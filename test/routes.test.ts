@@ -93,7 +93,7 @@ describe("web app routes without a database", () => {
     expect(await res.json()).toEqual({
       user: { id: "owner", name: "Owner (MCP_TOKEN)" },
       auth: "token",
-      workspace: { id: "ws_owner", name: "Owner", owner: true },
+      workspace: { id: "ws_owner", name: "Owner", owner: true, role: "owner" },
     });
   });
 

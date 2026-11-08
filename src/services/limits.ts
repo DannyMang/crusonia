@@ -4,7 +4,9 @@
 //   - rate limits on paid starts for every workspace but the owner's: PAID_STARTS_PER_HOUR (default 20) and
 //     MAX_ACTIVE_SESSIONS (default 5) sessions running at once;
 //   - for every workspace but the owner's, the Apify-backed web tools (search_web, read_website) need credits and
-//     are limited to WEB_CALLS_PER_HOUR (default 60), since they spend the instance's Apify account.
+//     are limited to WEB_CALLS_PER_HOUR (default 60), since they spend the instance's Apify account;
+//   - invite emails go out from the instance's own inbox, so they are limited over the last 24 hours per workspace,
+//     per sender, per address and per instance (src/services/invites.ts), and a person can make only so many workspaces.
 import { logEvent, type Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { ApiError } from "../lib/errors.ts";
@@ -20,6 +22,11 @@ export const limitsConfig = (env: Env) => ({
   startsPerHour: Math.trunc(positive(env.PAID_STARTS_PER_HOUR, 20)),
   maxActiveSessions: Math.trunc(positive(env.MAX_ACTIVE_SESSIONS, 5)),
   webCallsPerHour: Math.trunc(positive(env.WEB_CALLS_PER_HOUR, 60)),
+  invitesPerWorkspacePerDay: Math.trunc(positive(env.INVITES_PER_WORKSPACE_PER_DAY, 20)),
+  invitesPerUserPerDay: Math.trunc(positive(env.INVITES_PER_USER_PER_DAY, 30)),
+  invitesPerEmailPerDay: Math.trunc(positive(env.INVITES_PER_EMAIL_PER_DAY, 3)),
+  invitesPerInstancePerDay: Math.trunc(positive(env.INVITES_PER_INSTANCE_PER_DAY, 200)),
+  maxWorkspacesPerUser: Math.trunc(positive(env.MAX_WORKSPACES_PER_USER, 5)),
 });
 
 export type SpendStatus = { spent_micro_usd: number; cap_micro_usd: number; started_last_hour: number; active_sessions: number };

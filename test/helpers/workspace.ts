@@ -7,7 +7,7 @@ import { createApiKey } from "../../src/services/api-keys.ts";
 export async function createTestWorkspace(sql: Sql, label: string, opts: { clerkUserId?: string } = {}): Promise<string> {
   const id = `ws_it_${label}_${crypto.randomUUID().replaceAll("-", "").slice(0, 10)}`;
   await sql`insert into workspaces (id, name) values (${id}, ${`Test ${label}`})`;
-  if (opts.clerkUserId) await sql`insert into workspace_members (workspace_id, clerk_user_id) values (${id}, ${opts.clerkUserId})`;
+  if (opts.clerkUserId) await sql`insert into workspace_members (workspace_id, clerk_user_id, role) values (${id}, ${opts.clerkUserId}, 'owner')`;
   return id;
 }
 

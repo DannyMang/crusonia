@@ -37,11 +37,7 @@ try {
     `Workspaces: ${s.workspaces}. Owner workspace: ${s.owner_members} member(s), ${s.billing_accounts} billing account(s), ${s.signup_grants} free-sample grant(s).`,
   );
   if (!s.owner_members) {
-    console.log(
-      ownerClerkUserId
-        ? "Note: OWNER_CLERK_USER_ID is already a member of another workspace, so it was not added to the owner workspace."
-        : "Note: OWNER_CLERK_USER_ID is not set, so the owner workspace has no member yet (set it on the Worker; the owner joins on first sign-in).",
-    );
+    console.log("Note: OWNER_CLERK_USER_ID is not set, so the owner workspace has no member yet (set it on the Worker; the owner joins on first sign-in).");
   }
 } catch (err) {
   console.error("Migration failed:", err instanceof Error ? err.message : err);

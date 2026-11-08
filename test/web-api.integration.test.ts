@@ -99,7 +99,7 @@ suite("web app API (database, mocked Naive)", () => {
       user: { id: `api_key:${api_key.id}`, name: `it-${run}` },
       auth: "token",
       key: { id: api_key.id, name: `it-${run}` },
-      workspace: { id: WS, name: `Test web_${run}`, owner: false },
+      workspace: { id: WS, name: `Test web_${run}`, owner: false, role: "admin" },
     });
     const mcp = await get("/mcp", {
       method: "POST",

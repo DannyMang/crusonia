@@ -41,7 +41,8 @@ export type LedgerRow = {
 /**
  * Creates the workspace's billing account on first sight and grants the free sample once per workspace (source
  * `signup:<workspace>`; a workspace that already has a signup grant, like the owner's legacy `signup:owner`, gets
- * none). Safe to call on every request: both statements are no-ops after the first time.
+ * none, and so does one marked no_free_sample: the free sample is one per person, not one per workspace they make).
+ * Safe to call on every request: both statements are no-ops after the first time.
  */
 export async function ensureAccount(sql: Sql, env: Env, ws: string): Promise<void> {
   const credits = freeSampleCredits(env.BILLING_FREE_CREDITS);
@@ -52,6 +53,7 @@ export async function ensureAccount(sql: Sql, env: Env, ws: string): Promise<voi
         select ${ws}, ${ws}, ${credits}::bigint, 'grant', ${source}, '{"kind":"free_sample"}'::jsonb
         where ${credits}::bigint > 0
           and not exists (select 1 from credit_ledger where workspace_id = ${ws} and reason = 'grant' and source like 'signup:%')
+          and not exists (select 1 from workspaces where id = ${ws} and no_free_sample)
         on conflict (source) do nothing
         returning id`,
   ]);
