@@ -1,12 +1,13 @@
 // The minute cron: expire stale approvals, reconcile Naive sessions that missed a webhook, settle sends
-// AgentMail did not confirm, debit finished sessions that still owe credits, and expire unused plan credits
-// after their rollover month. Each step is independent; one failing does not skip the others.
+// AgentMail did not confirm, drain the CRM sync queue, debit finished sessions that still owe credits, and expire
+// unused plan credits after their rollover month. Each step is independent; one failing does not skip the others.
 import { expireCredits } from "../billing/expiry.ts";
 import { settleUsage } from "../billing/usage.ts";
 import { getSql } from "../db.ts";
 import type { Env } from "../env.ts";
 import type { FetchFn } from "../providers/http.ts";
 import { expireStaleApprovals } from "./approvals.ts";
+import { runCrmSync } from "./crm-sync.ts";
 import { reconcileSending } from "./send.ts";
 import { reconcileSessions } from "./workflows.ts";
 
@@ -18,6 +19,7 @@ export async function runScheduled(env: Env, fetchFn?: FetchFn): Promise<Record<
     ["expired_approvals", () => expireStaleApprovals(sql, env, fetchFn)],
     ["reconciled_sessions", () => reconcileSessions(sql, env, fetchFn)],
     ["reconciled_sends", () => reconcileSending(sql, env, fetchFn)],
+    ["crm_sync", () => runCrmSync(sql, env, fetchFn)],
     // Debit finished Naive sessions that still owe credits (missed or failed debits, spend reported later).
     ["settled_usage", () => settleUsage(sql, env, fetchFn)],
     // Write off included plan credits whose rollover month ended unused.

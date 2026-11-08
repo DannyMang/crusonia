@@ -53,6 +53,23 @@ export interface Env {
   // Weekly Naive spend budget in USD, shown next to the week's spend on the dashboard (display only).
   WEEKLY_BUDGET_USD?: string;
 
+  // CRM sync (src/services/crm-sync.ts). Both switches default to off: nothing is written to HubSpot or Notion
+  // until one is "true". The HubSpot import only reads from HubSpot and works with just the token.
+  HUBSPOT_SYNC_ENABLED?: string;
+  NOTION_SYNC_ENABLED?: string;
+  // Which leads are pushed: "qualified" (default: opted in, qualified, in the send flow, or already in HubSpot
+  // and scored) or "all".
+  HUBSPOT_SYNC_SCOPE?: string;
+  NOTION_SYNC_SCOPE?: string;
+  // HubSpot import: the contact property that records an email opt-in, and the values that count as yes
+  // (comma list, case-insensitive; default yes/true/1/...). Unset = imported contacts never get consent.
+  HUBSPOT_CONSENT_PROPERTY?: string;
+  HUBSPOT_CONSENT_VALUES?: string;
+  // The "Crusonia leads" database (written by `bun run setup --crm --write`).
+  NOTION_LEADS_DATABASE_ID?: string;
+  // Leads synced per target per cron run (default 5). Keep it small on the Workers Free plan (50 subrequests).
+  CRM_SYNC_BATCH_SIZE?: string;
+
   // secrets: later (Photon / iMessage)
   SPECTRUM_PROJECT_ID?: string;
   SPECTRUM_PROJECT_SECRET?: string;

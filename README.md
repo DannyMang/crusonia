@@ -17,16 +17,16 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 | `src/auth.ts` | Bearer tokens for `/mcp` and `/api`: an API key (`crs_live_...`, looked up by SHA-256) or `MCP_TOKEN` (constant-time compare) |
 | `src/mcp/route.ts` | `/mcp`: MCP Streamable HTTP (stateless, JSON responses), fresh server per request |
 | `src/mcp/server.ts` | MCP tool definitions: a thin layer over `src/services` |
-| `src/api/*.ts` | REST routers: `auth` (Clerk, API key or `MCP_TOKEN`), `leads`, `approvals`, `workflows`, `settings`, signed `webhooks`; web app: `dashboard` (me, summary, status, replies), `onboarding` (profile, read-website, propose), `experiments`, `keys`, `billing` |
+| `src/api/*.ts` | REST routers: `auth` (Clerk, API key or `MCP_TOKEN`), `leads`, `approvals`, `workflows`, `settings`, signed `webhooks`; web app: `dashboard` (me, summary, status, replies), `onboarding` (profile, read-website, propose), `experiments`, `keys`; `billing` (Stripe); `integrations` (CRM sync) |
 | `src/billing/*.ts` | Stripe billing: `plans` (tiers, packs, the credit definition: the one file to edit), `accounts` (billing owner, ledger, 402 gate), `checkout` (Checkout and Customer Portal), `webhook` (Stripe events), `usage` (debits for finished Naive sessions), `expiry` (plan credit rollover), `overview`, `constants` |
-| `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron`; web app: `runs` (workflows/runs from Naive sessions and events, onboarding and find-leads sessions), `summary`, `replies`, `experiments`, `api-keys` |
-| `src/providers/*.ts` | Thin REST clients: `agentmail`, `naive`, `stripe` (no SDK, pinned API version) |
+| `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron`; web app: `runs` (workflows/runs from Naive sessions and events, onboarding and find-leads sessions), `summary`, `replies`, `experiments`, `api-keys`; CRM sync: `crm-sync` (HubSpot/Notion push, HubSpot import, status), `crm-queue` (queue, retry, backoff), `crm-fields` (field mapping and ownership) |
+| `src/providers/*.ts` | Thin REST clients: `agentmail`, `naive`, `hubspot`, `notion` (the last two paced under their rate limits, 429-aware), `stripe` (no SDK, pinned API version) |
 | `src/lib/*.ts` | Errors (`{error: {code, message}}`), request helpers, Web Crypto, webhook signatures |
 | `test/*.test.ts` | `bun test`; `db.integration.test.ts` runs only with `TEST_DATABASE_URL` (a dev branch) |
 | `src/db.ts` | Neon HTTP driver (`getSql`), row types, `getLead`, `logEvent` |
 | `src/schema.sql` | Idempotent Postgres schema |
 | `scripts/migrate.ts` | Applies the schema to Neon (Bun) |
-| `scripts/setup.ts` | Creates the AgentMail inbox/webhook and the Naive webhook, vault and research agent; `--stripe` sets up billing (`scripts/lib/stripe-setup.ts`) (Bun) |
+| `scripts/setup.ts` | Creates the AgentMail inbox/webhook and the Naive webhook, vault and research agent; `--stripe`: billing products, prices, portal and webhook (`scripts/lib/stripe-setup.ts`); `--crm`: HubSpot properties and the Notion leads database (`scripts/lib/crm-setup.ts`) (Bun) |
 | `scripts/lib/naive-agent.ts` | The Naive agent definition: tools and permissions, MCP servers, model, budget |
 | `playbooks/research.md` | The research agent's system prompt (versioned in its front matter) |
 | `wrangler.jsonc` | Worker config (cron every minute, `PUBLIC_URL`) |
@@ -46,6 +46,7 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
    Idempotent; providers without a key are skipped. See [The research agent](#the-research-agent).
 6. **Upload again and redeploy**: `bun run secrets && bun run deploy`.
 7. **Billing (optional)**: see [Billing (Stripe)](#billing-stripe).
+8. **CRM sync (optional)**: off until you turn it on; see [CRM sync](#crm-sync).
 
 ## Connect your agent (MCP)
 
@@ -182,7 +183,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | DELETE | `/api/suppressions/:email` | Remove |
 | GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token"}` |
 | GET | `/api/summary` | Home: `pipeline` (found, researched, drafted, awaiting_approval, sent, replied, meetings: where leads are now), top 5 `pending_approvals`, `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` from Naive session usage, `budget_usd` from `WEEKLY_BUDGET_USD`), `paused` |
-| GET | `/api/status` | `get_status` data plus `inbox_address`, `naive_agent_configured`, `mcp_url`, `billing` (`configured`, `webhook_configured`, `mode`, `enforced`) |
+| GET | `/api/status` | `get_status` data plus `inbox_address`, `naive_agent_configured`, `mcp_url`, `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error) |
 | GET, PUT | `/api/profile` | `{profile}`: company, website, sells, icp_description, segments, signals, sources (PUT replaces it) |
 | POST | `/api/onboarding/read-website` | `{url}` -> `{pages: [{url, title, text}]}`. Synchronous; Apify crawler with `APIFY_TOKEN` (a few cents), else a plain fetch |
 | POST | `/api/onboarding/propose` | `{url?, description?}` -> `{session_id}`: a Naive session reads the site and saves a proposed profile |
@@ -199,6 +200,9 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | GET | `/api/billing` | The caller's `plan` (key, status, `current_period_end`, `cancel_at_period_end`), `balance` (credits) and `balance_usd`, `expiring` included credits, the last 20 `ledger` rows, and the `plans` and `packs` with display prices |
 | POST | `/api/billing/checkout` | `{plan}` or `{pack}` -> `{url}`: a Stripe Checkout Session (subscription or one-time). 409 `already_subscribed` for a second plan |
 | POST | `/api/billing/portal` | -> `{url}`: the Stripe Customer Portal (change or cancel the plan, invoices, payment methods) |
+| GET | `/api/integrations/crm` | CRM sync per target (`hubspot`, `notion`): `enabled`, `configured`, `active`, `missing`, `scope`, `last_success_at`, `last_error`, `queue {pending, due, failed}`, `recent_errors`, `warnings`; HubSpot also `import` (running job) and `last_import` |
+| POST | `/api/integrations/sync` | `{target, lead_ids?}`: queue those leads (even outside the scope) or every lead in the scope. 409 `sync_disabled` while the target's switch is off |
+| POST | `/api/integrations/hubspot/import` | Queue the HubSpot import (contacts, then companies, 100 per minute). Needs only the token; 409 while one runs |
 | POST | `/webhooks/agentmail` | Svix-signed. `message.received` (match by thread, then sender; classify; stop follow-ups; unsubscribe suppresses), `message.bounced` (permanent: suppress), `message.complained`, `message.delivered` |
 | POST | `/webhooks/naive` | `Vetta-Signature`-signed. `session.idle`: allowlisted tools (`AUTO_CONFIRM_TOOLS`) are allowed, other tools and `ask_operator` questions become approvals |
 | POST | `/webhooks/stripe` | `Stripe-Signature`-signed (`STRIPE_WEBHOOK_SECRET`; no secret, no processing). Credits packs and monthly plans, tracks subscriptions, claws back refunds; see [Billing](#billing-stripe) |
@@ -218,8 +222,8 @@ experiment runs carry its id; `sent` counts those drafts once sent, `replies` th
 send, `positive` those labeled `interested`. Stop rules are reported (`stop_rule_met`); stopping is a `PATCH`.
 
 The minute cron expires stale approvals (an expired tool call is denied to the agent), reconciles running Naive
-sessions that missed a webhook (events after `last_seq`), settles unconfirmed sends, debits finished Naive sessions
-that still owe credits, and expires unused plan credits after their rollover month.
+sessions that missed a webhook (events after `last_seq`), settles unconfirmed sends, drains the CRM sync queue,
+debits finished Naive sessions that still owe credits, and expires unused plan credits after their rollover month.
 
 ## Billing (Stripe)
 
@@ -293,16 +297,90 @@ without `--live`), upload `.dev.vars.stripe.live` and the key as in step 4, and 
 access to Products, Prices, Customer portal and Webhook endpoints for setup, and write access to Customers, Checkout
 Sessions and Customer portal plus read access to Prices and Invoices (invoice payments, for refunds) for the Worker.
 
+## CRM sync
+
+Crusonia keeps HubSpot and a Notion database up to date with its leads, and imports HubSpot contacts and companies.
+Both targets are **off by default**: nothing is written to HubSpot or Notion until `HUBSPOT_SYNC_ENABLED` /
+`NOTION_SYNC_ENABLED` is `true`. The HubSpot import only reads HubSpot and works with just the token.
+
+### Field ownership
+
+HubSpot owns relationship data; Crusonia owns research, experiment and operational history. The rules
+(`src/services/crm-fields.ts`):
+
+| Field | Owner | Rule |
+| --- | --- | --- |
+| `email`, `firstname`, `lastname`, `jobtitle`, `company`, `website`; company `name`, `domain` | HubSpot | Set when Crusonia creates the record; afterwards only filled in where HubSpot is blank, never overwritten |
+| `crusonia_fit_score`, `crusonia_fit_rationale` (summary, 500 chars), `crusonia_stage`, `crusonia_last_outreach_at`, `crusonia_source`, `crusonia_lead_id` | Crusonia | Overwritten whenever they differ. Custom properties in a "Crusonia" group, created by `bun run setup --crm` |
+| `hs_lead_status` | Shared | Our stage's status is written only while HubSpot holds nothing or the value Crusonia wrote last (kept in `leads.hubspot_state`). Once someone changes it in HubSpot, Crusonia leaves it alone |
+| `lifecyclestage`, owners, deals, everything else | HubSpot | Never written |
+| Evidence | Crusonia | One HubSpot note per claim, with its source URL. Identical claims (same text and URL) share one note |
+| Sent emails and replies | Crusonia | Logged as **notes** (not email engagements): one object type and one dedupe path for everything we log, and a note says plainly that Crusonia sent it. Bodies are escaped excerpts; inbound mail stays untrusted data |
+| Our leads' evidence, score, stage, variant, experiment, consent | Crusonia | The HubSpot import never overwrites them: it fills blank fields, links the HubSpot ids, and grants consent only through a mapped opt-in property |
+| Notion columns (Company, Contact, Email, Stage, Fit, Signal, Evidence count, Last activity, Source, Crusonia link, Lead ID) | Crusonia | Overwritten on the next change. Add your own columns freely; the sync never touches them |
+
+Stage to `hs_lead_status`: `new` NEW; `researching`, `qualified`, `needs_review` OPEN; `awaiting_approval`
+IN_PROGRESS; `sent` ATTEMPTED_TO_CONTACT; `replied`, `interested` CONNECTED; `meeting_booked` OPEN_DEAL;
+`disqualified`, `not_interested`, `unsubscribed` UNQUALIFIED. `no_consent` sets nothing: those leads are only
+researched, so their relationship status is not ours to set. Signal (Notion) is the lead's first evidence claim,
+usually the buying signal that surfaced it.
+
+Each note carries a `[crusonia:<ref>]` marker. If a sync dies after creating a note but before saving its id, the
+retry finds the note by that marker instead of adding a second one. External ids live on our rows (`leads.hubspot_id`,
+`hubspot_company_id`, `notion_page_id`, `evidence.hubspot_note_id`, `messages.hubspot_note_id`), so every push is an
+upsert; a Notion page is also found by its Lead ID column if its id was lost.
+
+### What syncs, and when
+
+- **Which leads** (`HUBSPOT_SYNC_SCOPE` / `NOTION_SYNC_SCOPE`, default `qualified`): opted-in contacts, leads scored
+  as qualified, leads in the send flow (awaiting approval, sent, replied, ..., unsubscribed), and (HubSpot only)
+  records that came from HubSpot once Crusonia has scored them. Agent-found leads that were never qualified stay out
+  of your CRM. `all` syncs every lead.
+- **Triggers**: every state change already writes an `events` row; a trigger on it queues the lead when it is
+  created or updated, scored, gets evidence, gets a draft, is emailed, replies, or changes stage or consent. A burst
+  of events collapses into one queued sync per lead and target. Events from the HubSpot import itself queue nothing,
+  so imported contacts are not pushed straight back.
+- **Queue** (`crm_sync_queue`: target, entity, lead_id, attempts, last_error, next_attempt_at): the minute cron syncs
+  `CRM_SYNC_BATCH_SIZE` leads per target (default 5) and one import page. Calls are paced under each provider's
+  limit (HubSpot 220 ms apart, Notion about 3 per second). A 429 honors Retry-After (HubSpot's 10 s window when it
+  sends none) without counting an attempt; other failures retry with backoff (1, 2, 4, ... minutes, 8 attempts),
+  then the row is marked `failed` until the lead changes again or you sync it manually. Data errors (HTTP 400) fail
+  at once. An unchanged lead costs no write (HubSpot) or no call at all (Notion).
+- **Companies**: a person lead's company is upserted by domain and associated with the contact. Without the
+  companies scopes, contacts and notes still sync and the status shows a warning.
+
+### Turn it on
+
+1. **HubSpot private app scopes** (Settings > Integrations > Private Apps > your app > Scopes):
+   `crm.objects.contacts.read` and `.write` (contacts and notes), `crm.objects.companies.read` and `.write`
+   (companies and associations), `crm.schemas.contacts.write` and `crm.schemas.companies.write` (setup creates the
+   crusonia_* properties). The import needs only the read scopes.
+2. **Notion**: share a page with the integration (page menu > Connections > your integration) and put the page id in
+   `NOTION_PARENT_PAGE_ID` in `.dev.vars`.
+3. `bun run setup --crm --write`: creates the HubSpot properties and the "Crusonia leads" database under that page,
+   and writes `NOTION_LEADS_DATABASE_ID` into `.dev.vars`. Safe to re-run: it reuses what exists and adds what is
+   missing (new stage options, missing columns). Without it, HubSpot sync still writes standard fields and notes.
+4. Set `HUBSPOT_SYNC_ENABLED=true` and/or `NOTION_SYNC_ENABLED=true` in `.dev.vars`, then `bun run secrets`. From then
+   on changes sync within a minute or two. To push existing leads, `POST /api/integrations/sync {"target": "hubspot"}`.
+5. Optional: `POST /api/integrations/hubspot/import` pulls HubSpot contacts and companies into leads. Imported
+   contacts get **no consent** (stage `no_consent`, never emailed) unless you map an opt-in property with
+   `HUBSPOT_CONSENT_PROPERTY` (and `HUBSPOT_CONSENT_VALUES`); a contact that opted out in HubSpot never gets consent.
+
+Watch it in `GET /api/integrations/crm`. Deleting a lead in Crusonia does not delete anything in HubSpot or Notion.
+On the Workers Free plan (50 subrequests per invocation) keep `CRM_SYNC_BATCH_SIZE` small.
+
 ## Day to day
 
 - `bun run dev`: local Worker on :8787 (reads `.dev.vars`). `bunx wrangler dev --test-scheduled` to trigger the cron at `/__scheduled`.
 - `bun run typecheck`: Worker (`tsconfig.json`), Bun scripts (`scripts/tsconfig.json`) and tests (`test/tsconfig.json`).
 - `bun test`: unit tests (signatures, approval rules and lifetimes, CSV, allowlist, classifier, providers with mocked
-  fetch, auth, API keys, routes, the Naive agent definition and playbook, summary/experiment/run-step logic, billing
-  with an in-memory Stripe). With `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts` (send/reply/Naive
-  flows), `test/web-api.integration.test.ts` (keys, summary, experiments, replies, workflows, onboarding) and
-  `test/billing.integration.test.ts` (webhook, ledger, refunds, usage debits, the 402 gate) also run against a real
-  database with mocked providers (never point it at production; they clean up their rows).
+  fetch, auth, API keys, routes, the Naive agent definition and playbook, summary/experiment/run-step logic; CRM sync
+  field mapping, queue retry/backoff and 429s, and HubSpot/Notion pushes and setup against in-memory fakes; billing with
+  an in-memory Stripe). With `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts` (send/reply/Naive flows),
+  `test/web-api.integration.test.ts` (keys, summary, experiments, replies, workflows, onboarding),
+  `test/crm-sync.integration.test.ts` (trigger, queue, pushes, import) and `test/billing.integration.test.ts` (webhook,
+  ledger, refunds, rollover, usage debits, the 402 gate) also run against a real database with mocked providers (never
+  point it at production; they clean up their rows).
 - `bun run deploy:dry`: build without deploying.
 - `bun run cf-typegen`: regenerate runtime types after changing `compatibility_date` or flags.
 
