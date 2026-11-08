@@ -28,6 +28,8 @@ const list = (raw: string | undefined) =>
 /** SIGNUPS_OPEN: anyone who signs up gets a workspace (default). "false" lets only existing members in. */
 export const signupsOpen = (env: Env) => !/^(0|false|no|off)$/i.test(env.SIGNUPS_OPEN?.trim() ?? "");
 export const isBlockedUser = (env: Env, userId: string) => list(env.BLOCKED_USER_IDS).includes(userId);
+/** SIGNUP_ALLOWED_USER_IDS: Clerk users the owner has approved; they may create a workspace while sign-ups are closed. */
+export const isInvitedUser = (env: Env, userId: string) => Boolean(userId) && list(env.SIGNUP_ALLOWED_USER_IDS).includes(userId);
 export const isOwnerUser = (env: Env, userId: string) => Boolean(userId) && env.OWNER_CLERK_USER_ID?.trim() === userId;
 /**
  * Every workspace sends from this instance's one AgentMail inbox (AGENTMAIL_INBOX_ID: the owner's address and domain),
@@ -72,7 +74,7 @@ export async function workspaceForClerkUser(
     memberCache.set(userId, { id: existing.workspace_id as string, at: Date.now() });
     return { ...workspaceRef(existing.workspace_id as string), created: false };
   }
-  if (!signupsOpen(env)) {
+  if (!signupsOpen(env) && !isInvitedUser(env, userId)) {
     throw new ApiError(403, "signups_closed", "Sign-ups are closed on this Crusonia instance; ask the owner for access");
   }
 

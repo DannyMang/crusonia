@@ -29,6 +29,8 @@ export interface Env {
   SIGNUPS_OPEN?: string;
   // Clerk user ids refused with 403 (comma list).
   BLOCKED_USER_IDS?: string;
+  /** Comma list of Clerk user ids allowed to sign up while SIGNUPS_OPEN=false. */
+  SIGNUP_ALLOWED_USER_IDS?: string;
   // Workspace ids besides the owner's that may send email (comma list). All of them send from AGENTMAIL_INBOX_ID,
   // the owner's inbox, so other workspaces can draft but not send until they are listed here.
   SEND_WORKSPACE_IDS?: string;
