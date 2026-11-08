@@ -17,6 +17,7 @@ export function getSql(databaseUrl: string | undefined): Sql {
 
 export type Lead = {
   id: string;
+  workspace_id: string;
   // Lowercased. Null for agent-found leads without a known email (deduped by domain + name instead).
   email: string | null;
   name: string | null;
@@ -38,6 +39,8 @@ export type Lead = {
   rationale: string | null;
   review_question: string | null;
   reply_label: string | null;
+  // The batch that first brought the lead in ('import:<id>', 'run:<session id>', 'hubspot_import:<time>', 'manual').
+  cohort?: string | null;
   // HubSpot contact id (a person lead) and company id; set by the HubSpot import and sync.
   hubspot_id: string | null;
   hubspot_company_id?: string | null;
@@ -46,8 +49,6 @@ export type Lead = {
   notion_page_id?: string | null;
   notion_hash?: string | null;
   notion_synced_at?: Date | null;
-  // Experiment the lead is enrolled in (its arm is `variant`).
-  experiment_id?: string | null;
   // Named people and links found on public pages the agent read (src/services/leads.ts Contact, Link).
   contacts?: { name: string; title: string | null; linkedin_url: string | null; x_url: string | null; github_url: string | null; source_url: string; found_at: string }[];
   links?: { kind: string; url: string; source_url: string; found_at: string }[];
@@ -72,8 +73,9 @@ export type Draft = {
   provider_message_id: string | null;
   provider_thread_id: string | null;
   error: string | null;
-  // Set when the lead's experiment was running at draft time; the draft counts toward that experiment.
-  experiment_id?: string | null;
+  // The agent run that wrote it and that run's workflow version (null for drafts written by a person).
+  session_id?: string | null;
+  workflow_version?: string | null;
   // email (AgentMail, approval) | email_manual | linkedin | x | intro (manual tasks; see src/services/channels.ts).
   channel?: string;
   // Manual tasks: the profile the owner opens to send it.
@@ -101,11 +103,12 @@ export type Approval = {
   created_at: Date;
 };
 
-export async function getLead(sql: Sql, id: string): Promise<Lead | undefined> {
-  const rows = await sql`select * from leads where id = ${id}`;
+export async function getLead(sql: Sql, ws: string, id: string): Promise<Lead | undefined> {
+  const rows = await sql`select * from leads where workspace_id = ${ws} and id = ${id}`;
   return rows[0] as Lead | undefined;
 }
 
-export async function logEvent(sql: Sql, leadId: string | null, kind: string, data: Record<string, unknown> = {}) {
-  await sql`insert into events (lead_id, kind, data) values (${leadId}, ${kind}, ${JSON.stringify(data)}::jsonb)`;
+/** Appends an audit event to workspace `ws`. */
+export async function logEvent(sql: Sql, ws: string, leadId: string | null, kind: string, data: Record<string, unknown> = {}) {
+  await sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, ${leadId}, ${kind}, ${JSON.stringify(data)}::jsonb)`;
 }

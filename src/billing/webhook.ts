@@ -3,6 +3,10 @@
 // it: ledger rows are idempotent on their source (checkout:<session>, invoice:<id>, refund:<charge>:<amount>),
 // so a redelivered event or two events about the same payment never credit twice.
 //
+// Every object maps to one workspace: the account linked to the Stripe customer, else the metadata
+// (crusonia_workspace_id, or the legacy crusonia_user_id from before workspaces). Events that map to no workspace
+// are audited in the owner workspace.
+//
 // Rules: only objects carrying metadata app=crusonia are acted on (refunds: the charge's metadata, or a customer we
 // created); credits come from src/billing/plans.ts, never from the amount paid; a Checkout payment is credited
 // only once payment_status is "paid"; every event is written to the events audit table.
@@ -11,6 +15,7 @@ import { logEvent, type Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import type { FetchFn } from "../providers/http.ts";
 import type { StripeList } from "../providers/stripe.ts";
+import { OWNER_WORKSPACE_ID } from "../services/workspaces.ts";
 import { addLedgerRow } from "./accounts.ts";
 import { offerForPriceId, stripeFor } from "./checkout.ts";
 import { INCLUDED_CREDIT_ROLLOVER_MONTHS, offerForPrice, packByKey, type CreditPack } from "./plans.ts";
@@ -36,6 +41,8 @@ const metadataOf = (v: unknown): Record<string, string> => {
   return out;
 };
 const ours = (meta: Record<string, string>) => meta.app === "crusonia";
+/** The paying workspace from our metadata (or the legacy billing owner id on objects from before workspaces). */
+const metadataOwner = (meta: Record<string, string>): string | null => meta.crusonia_workspace_id || meta.crusonia_user_id || null;
 
 export type BillingAction =
   | { kind: "ignore"; reason: string }
@@ -94,8 +101,8 @@ export function interpretStripeEvent(event: StripeEvent): BillingAction {
     case "checkout.session.async_payment_succeeded": {
       const meta = metadataOf(o.metadata);
       if (!ours(meta)) return { kind: "ignore", reason: "metadata.app is not crusonia" };
-      const owner = meta.crusonia_user_id;
-      if (!owner) return { kind: "ignore", reason: "metadata has no crusonia_user_id" };
+      const owner = metadataOwner(meta);
+      if (!owner) return { kind: "ignore", reason: "metadata has no crusonia_workspace_id" };
       const session = str(o.id) ?? "";
       if (o.mode === "subscription") {
         const subscription = idOf(o.subscription);
@@ -134,7 +141,7 @@ export function interpretStripeEvent(event: StripeEvent): BillingAction {
       });
       return {
         kind: "invoice_paid",
-        owner: meta.crusonia_user_id ?? null,
+        owner: metadataOwner(meta),
         customer: idOf(o.customer),
         invoice: str(o.id) ?? "",
         subscription: idOf(details.subscription),
@@ -153,7 +160,7 @@ export function interpretStripeEvent(event: StripeEvent): BillingAction {
       const offer = offerForPrice(obj(item.price) as { lookup_key?: string | null; metadata?: Record<string, string> });
       return {
         kind: "subscription",
-        owner: meta.crusonia_user_id ?? null,
+        owner: metadataOwner(meta),
         customer: idOf(o.customer),
         subscription: str(o.id) ?? "",
         status: str(o.status),
@@ -188,25 +195,42 @@ export function clawbackTarget(granted: number, amount: number, amountRefunded: 
   return Math.min(granted, Math.round((granted * amountRefunded) / amount));
 }
 
-type Owner = { owner: string } | { error: string };
+type Owner = { workspace: string } | { error: string };
 
 /**
- * The billing owner for a Stripe customer: the account linked to that customer (we created it), else the
- * metadata owner, linked now if that owner has no customer yet. A disagreement is refused, not guessed.
+ * The workspace a metadata owner id names: a workspace id, or a legacy billing owner id from before workspaces
+ * ('owner', or a Clerk user id) mapped through the merged billing account or the user's membership.
+ */
+async function workspaceForOwnerId(sql: Sql, ownerId: string): Promise<string | null> {
+  if (ownerId === "owner") return OWNER_WORKSPACE_ID;
+  const [row] = await sql`
+    select coalesce(
+      (select id from workspaces where id = ${ownerId}),
+      (select workspace_id from billing_accounts where owner_id = ${ownerId}),
+      (select workspace_id from workspace_members where clerk_user_id = ${ownerId})
+    ) as workspace_id`;
+  return (row?.workspace_id as string | null) ?? null;
+}
+
+/**
+ * The workspace for a Stripe customer: the account linked to that customer (we created it), else the metadata
+ * workspace, linked now if that workspace has no customer yet. A disagreement is refused, not guessed.
  */
 async function resolveOwner(sql: Sql, customer: string | null, metadataOwner: string | null): Promise<Owner> {
+  const named = metadataOwner ? await workspaceForOwnerId(sql, metadataOwner) : null;
+  if (metadataOwner && !named) return { error: "metadata names no known workspace" };
   if (customer) {
-    const linked = (await sql`select owner_id from billing_accounts where stripe_customer_id = ${customer}`)[0]?.owner_id as string | undefined;
-    if (linked) return metadataOwner && metadataOwner !== linked ? { error: "customer belongs to another owner" } : { owner: linked };
+    const linked = (await sql`select workspace_id from billing_accounts where stripe_customer_id = ${customer}`)[0]?.workspace_id as string | undefined;
+    if (linked) return named && named !== linked ? { error: "customer belongs to another workspace" } : { workspace: linked };
   }
-  if (!metadataOwner) return { error: "unknown customer and no crusonia_user_id" };
-  if (!customer) return { owner: metadataOwner };
+  if (!named) return { error: "unknown customer and no crusonia_workspace_id" };
+  if (!customer) return { workspace: named };
   const [row] = await sql`
-    insert into billing_accounts (owner_id, stripe_customer_id) values (${metadataOwner}, ${customer})
-    on conflict (owner_id) do update
+    insert into billing_accounts (owner_id, workspace_id, stripe_customer_id) values (${named}, ${named}, ${customer})
+    on conflict (workspace_id) do update
       set stripe_customer_id = coalesce(billing_accounts.stripe_customer_id, excluded.stripe_customer_id), updated_at = now()
     returning stripe_customer_id`;
-  return row?.stripe_customer_id === customer ? { owner: metadataOwner } : { error: "owner already has a different customer" };
+  return row?.stripe_customer_id === customer ? { workspace: named } : { error: "workspace already has a different customer" };
 }
 
 export type HandleResult = { action: BillingAction["kind"]; credits?: number; duplicate_source?: boolean; reason?: string };
@@ -214,7 +238,9 @@ export type HandleResult = { action: BillingAction["kind"]; credits?: number; du
 /** Applies a verified, deduped Stripe event. Throws on transient failures so Stripe retries the delivery. */
 export async function handleStripeEvent(sql: Sql, env: Env, event: StripeEvent, deps: { fetchFn?: FetchFn } = {}): Promise<HandleResult> {
   const action = interpretStripeEvent(event);
-  const audit = (kind: string, data: Record<string, unknown>) => logEvent(sql, null, kind, { event_id: event.id, type: event.type, ...data });
+  // Audited in the event's workspace once known; events that map to none land in the owner workspace.
+  const audit = (kind: string, data: Record<string, unknown>, ws: string = OWNER_WORKSPACE_ID) =>
+    logEvent(sql, ws, null, kind, { event_id: event.id, type: event.type, ...data });
 
   switch (action.kind) {
     case "ignore":
@@ -222,7 +248,7 @@ export async function handleStripeEvent(sql: Sql, env: Env, event: StripeEvent, 
       return { action: action.kind, reason: action.reason };
 
     case "checkout_pending":
-      await audit("billing_checkout_pending", { owner_id: action.owner, checkout_session: action.session, payment_status: action.payment_status });
+      await audit("billing_checkout_pending", { metadata_owner: action.owner, checkout_session: action.session, payment_status: action.payment_status });
       return { action: action.kind };
 
     case "credit_pack": {
@@ -233,14 +259,18 @@ export async function handleStripeEvent(sql: Sql, env: Env, event: StripeEvent, 
       }
       const source = `checkout:${action.session}`;
       const written = await addLedgerRow(sql, {
-        ownerId: who.owner,
+        workspaceId: who.workspace,
         amount: action.pack.credits,
         reason: "pack",
         source,
         paymentIntent: action.paymentIntent,
         data: { pack: action.pack.key, amount_total: action.amountTotal, currency: action.currency },
       });
-      await audit("billing_credited", { owner_id: who.owner, reason: "pack", pack: action.pack.key, credits: action.pack.credits, source, duplicate: !written });
+      await audit(
+        "billing_credited",
+        { workspace_id: who.workspace, reason: "pack", pack: action.pack.key, credits: action.pack.credits, source, duplicate: !written },
+        who.workspace,
+      );
       return { action: action.kind, credits: written ? action.pack.credits : 0, duplicate_source: !written };
     }
 
@@ -251,8 +281,8 @@ export async function handleStripeEvent(sql: Sql, env: Env, event: StripeEvent, 
         return { action: "ignore", reason: who.error };
       }
       await sql`update billing_accounts set stripe_subscription_id = coalesce(stripe_subscription_id, ${action.subscription}), updated_at = now()
-                where owner_id = ${who.owner}`;
-      await audit("billing_subscription_linked", { owner_id: who.owner, subscription: action.subscription, checkout_session: action.session });
+                where workspace_id = ${who.workspace}`;
+      await audit("billing_subscription_linked", { workspace_id: who.workspace, subscription: action.subscription, checkout_session: action.session }, who.workspace);
       return { action: action.kind };
     }
 
@@ -270,24 +300,22 @@ export async function handleStripeEvent(sql: Sql, env: Env, event: StripeEvent, 
         ? await sql`
             update billing_accounts set plan = null, subscription_status = ${action.status ?? "canceled"}, current_period_end = ${periodEnd}::timestamptz,
                    cancel_at_period_end = false, subscription_event_at = ${eventAt}::timestamptz, updated_at = now()
-            where owner_id = ${who.owner}
+            where workspace_id = ${who.workspace}
               and (stripe_subscription_id is null or stripe_subscription_id = ${action.subscription})
               and (subscription_event_at is null or subscription_event_at <= ${eventAt}::timestamptz)
-            returning owner_id`
+            returning workspace_id`
         : await sql`
             update billing_accounts set stripe_subscription_id = ${action.subscription}, plan = ${action.plan}, subscription_status = ${action.status},
                    current_period_end = ${periodEnd}::timestamptz, cancel_at_period_end = ${action.cancelAtPeriodEnd},
                    subscription_event_at = ${eventAt}::timestamptz, updated_at = now()
-            where owner_id = ${who.owner}
+            where workspace_id = ${who.workspace}
               and (subscription_event_at is null or subscription_event_at <= ${eventAt}::timestamptz)
-            returning owner_id`;
-      await audit("billing_subscription_updated", {
-        owner_id: who.owner,
-        subscription: action.subscription,
-        status: action.status,
-        plan: action.plan,
-        applied: updated.length > 0,
-      });
+            returning workspace_id`;
+      await audit(
+        "billing_subscription_updated",
+        { workspace_id: who.workspace, subscription: action.subscription, status: action.status, plan: action.plan, applied: updated.length > 0 },
+        who.workspace,
+      );
       return { action: action.kind };
     }
 
@@ -300,19 +328,23 @@ export async function handleStripeEvent(sql: Sql, env: Env, event: StripeEvent, 
       const offer = action.priceId ? await offerForPriceId(stripeFor(env, deps.fetchFn), action.priceId) : undefined;
       if (offer?.kind !== "subscription") {
         const reason = action.priceId ? "invoice price is not a plan in plans.ts" : "invoice has no subscription line";
-        await audit("billing_needs_attention", { reason, owner_id: who.owner, invoice: action.invoice });
+        await audit("billing_needs_attention", { reason, workspace_id: who.workspace, invoice: action.invoice }, who.workspace);
         return { action: "ignore", reason };
       }
       const source = `invoice:${action.invoice}`;
       const written = await addLedgerRow(sql, {
-        ownerId: who.owner,
+        workspaceId: who.workspace,
         amount: offer.monthlyCredits,
         reason: "plan",
         source,
         data: { plan: offer.key, billing_reason: action.billingReason, subscription: action.subscription },
         expiry: { periodEnd: action.periodEnd, rolloverMonths: INCLUDED_CREDIT_ROLLOVER_MONTHS },
       });
-      await audit("billing_credited", { owner_id: who.owner, reason: "plan", plan: offer.key, credits: offer.monthlyCredits, source, duplicate: !written });
+      await audit(
+        "billing_credited",
+        { workspace_id: who.workspace, reason: "plan", plan: offer.key, credits: offer.monthlyCredits, source, duplicate: !written },
+        who.workspace,
+      );
       return { action: action.kind, credits: written ? offer.monthlyCredits : 0, duplicate_source: !written };
     }
 
@@ -321,13 +353,13 @@ export async function handleStripeEvent(sql: Sql, env: Env, event: StripeEvent, 
   }
 }
 
-type Purchase = { owner_id: string; source: string; amount: string };
+type Purchase = { workspace_id: string; source: string; amount: string };
 
 async function applyRefund(
   sql: Sql,
   env: Env,
   action: Extract<BillingAction, { kind: "refund" }>,
-  audit: (kind: string, data: Record<string, unknown>) => Promise<void>,
+  audit: (kind: string, data: Record<string, unknown>, ws?: string) => Promise<void>,
   fetchFn?: FetchFn,
 ): Promise<HandleResult> {
   const known = action.customer
@@ -344,7 +376,7 @@ async function applyRefund(
   }
   // Credit packs remember their PaymentIntent; subscription invoices are found through the Invoice Payments API.
   let purchases = (await sql`
-    select owner_id, source, amount::text from credit_ledger
+    select workspace_id, source, amount::text from credit_ledger
     where stripe_payment_intent = ${action.paymentIntent} and reason in ('pack', 'plan') and amount > 0`) as Purchase[];
   if (!purchases.length) {
     const payments = await stripeFor(env, fetchFn).get<StripeList<{ id: string; invoice: unknown }>>("/v1/invoice_payments", {
@@ -354,7 +386,7 @@ async function applyRefund(
     const sources = payments.data.map((p) => idOf(p.invoice)).filter((id): id is string => Boolean(id)).map((id) => `invoice:${id}`);
     if (sources.length) {
       purchases = (await sql`
-        select owner_id, source, amount::text from credit_ledger
+        select workspace_id, source, amount::text from credit_ledger
         where source = any(${sources}::text[]) and reason = 'plan' and amount > 0`) as Purchase[];
     }
   }
@@ -374,8 +406,8 @@ async function applyRefund(
     const [, rows] = await sql.transaction([
       sql`select pg_advisory_xact_lock(hashtext(${`refund:${p.source}`}))::text as locked`,
       sql`
-        insert into credit_ledger (owner_id, amount, reason, source, purchase_source, data)
-        select ${p.owner_id}, -(greatest(${target}::bigint - x.expired, 0) - r.clawed), 'refund', ${source}, ${p.source}, ${JSON.stringify(data)}::jsonb
+        insert into credit_ledger (workspace_id, owner_id, amount, reason, source, purchase_source, data)
+        select ${p.workspace_id}, ${p.workspace_id}, -(greatest(${target}::bigint - x.expired, 0) - r.clawed), 'refund', ${source}, ${p.source}, ${JSON.stringify(data)}::jsonb
         from (select coalesce(-sum(amount), 0)::bigint as clawed from credit_ledger where purchase_source = ${p.source} and reason = 'refund') r,
              (select coalesce(-sum(amount), 0)::bigint as expired from credit_ledger where purchase_source = ${p.source} and reason = 'expire') x
         where greatest(${target}::bigint - x.expired, 0) > r.clawed
@@ -384,7 +416,7 @@ async function applyRefund(
     ]);
     const credits = rows?.[0] ? -Number(rows[0].amount) : 0;
     clawed += credits;
-    await audit("billing_clawback", { owner_id: p.owner_id, purchase_source: p.source, credits, source, clawback_total: target });
+    await audit("billing_clawback", { workspace_id: p.workspace_id, purchase_source: p.source, credits, source, clawback_total: target }, p.workspace_id);
   }
   return { action: "refund", credits: clawed ? -clawed : 0 };
 }

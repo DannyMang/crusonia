@@ -44,7 +44,6 @@ const env = (over: Partial<Env> = {}): Env => ({
   MCP_TOKEN: "owner-token-123",
   CLERK_JWT_KEY: pem,
   CLERK_AUTHORIZED_PARTIES: "https://app.crusonia.dev",
-  CLERK_ALLOWED_USER_IDS: "user_owner, user_teammate",
   ...over,
 });
 
@@ -71,7 +70,7 @@ describe("authenticate", () => {
     expect(await failure(authenticate(bare, "Bearer anything"))).toBe("401 invalid_token");
   });
 
-  test("a valid Clerk session for an allowed user is accepted (networkless)", async () => {
+  test("a valid Clerk session is accepted (networkless); there is no allow list, sign-up is open", async () => {
     const principal = await authenticate(env(), `Bearer ${await sign(claims())}`);
     expect(principal).toEqual({ kind: "clerk", userId: "user_owner", sessionId: "sess_1" });
   });
@@ -83,9 +82,8 @@ describe("authenticate", () => {
     expect(await failure(authenticate(env(), `Bearer ${await sign(claims({ azp: "https://evil.example" }))}`))).toBe("401 invalid_token");
   });
 
-  test("a valid session for a user outside CLERK_ALLOWED_USER_IDS is 403 (signing up is not access)", async () => {
-    const token = await sign(claims({ sub: "user_stranger" }));
-    expect(await failure(authenticate(env(), `Bearer ${token}`))).toBe("403 forbidden");
-    expect(await failure(authenticate(env({ CLERK_ALLOWED_USER_IDS: undefined }), `Bearer ${token}`))).toBe("403 forbidden");
+  test("any verified user is authenticated (their workspace is resolved next); a token without a subject is 401", async () => {
+    expect(await authenticate(env(), `Bearer ${await sign(claims({ sub: "user_stranger" }))}`)).toMatchObject({ kind: "clerk", userId: "user_stranger" });
+    expect(await failure(authenticate(env(), `Bearer ${await sign(claims({ sub: "" }))}`))).toBe("401 invalid_token");
   });
 });

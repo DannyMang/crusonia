@@ -3,11 +3,11 @@ import type { ReactNode } from "react";
 import { cx } from "../../lib/format.ts";
 import { sourceLabel } from "./store.ts";
 
-/** "STEP 2 OF 4", the 32px title and the gray subtitle. */
+/** "Step 2 of 4", the 32px title and the gray subtitle (sentence case, no tracking, as in Paper). */
 export function StepTitle({ step, title, subtitle, icon }: { step: number; title: ReactNode; subtitle: ReactNode; icon?: ReactNode }) {
   return (
     <div className="flex flex-col">
-      <div className="pb-3.5 text-xs/4 font-medium uppercase tracking-[0.08em] text-muted">Step {step} of 4</div>
+      <div className="pb-3.5 text-xs/4 font-medium text-muted">Step {step} of 4</div>
       <div className="flex items-center gap-3.5">
         {icon}
         <h1 className="text-[32px]/9.25 font-bold tracking-[-0.04em] text-ink">{title}</h1>

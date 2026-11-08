@@ -6,6 +6,7 @@ import { Link } from "react-router";
 import { isApiError, type CrmSyncTarget, type ProviderStatus, type Status } from "../api.ts";
 import { clerkEnabled } from "../auth.tsx";
 import { Page } from "../components/AppShell.tsx";
+import { BrandTile, type BrandName } from "../components/BrandLogo.tsx";
 import { Card, CopyButton, QueryError, Skeleton } from "../components/ui.tsx";
 import { cx, num, timeAgo } from "../lib/format.ts";
 import { useStatus } from "../queries.ts";
@@ -113,7 +114,7 @@ export default function Integrations() {
 
           <p className="pt-1 text-xs/4 font-medium text-faint">
             Missing a tool? Your own coding agent can call Crusonia alongside any other MCP server.{" "}
-            <Link to="/app/connect" className="text-ink underline decoration-[#200D0D4D] decoration-1 underline-offset-[3px] hover:decoration-ink">
+            <Link to="?connect=1" className="text-ink underline decoration-[#200D0D4D] decoration-1 underline-offset-[3px] hover:decoration-ink">
               Connect your agent
             </Link>
           </p>
@@ -140,13 +141,6 @@ function StatusPill({ state }: { state: State }) {
   return <span className={cx(base, "bg-pill text-muted")}>Status unknown</span>;
 }
 
-function Tile({ children, muted }: { children: ReactNode; muted?: boolean }) {
-  return (
-    <span className={cx("flex size-7 shrink-0 items-center justify-center rounded-[7px] bg-pill text-[13px]/4 font-semibold", muted ? "text-faint" : "text-ink")}>
-      {children}
-    </span>
-  );
-}
 
 /** External link to the provider's own console (there is no management API in Crusonia). */
 function Manage({ href, what }: { href: string; what: string }) {
@@ -171,7 +165,7 @@ function ProviderCard({
   description,
   children,
 }: {
-  tile: string;
+  tile: BrandName;
   name: string;
   state: State;
   manage?: { href: string; what: string };
@@ -181,7 +175,7 @@ function ProviderCard({
   return (
     <Card className="flex flex-col gap-3 p-4 sm:p-6">
       <div className="flex min-h-8 shrink-0 flex-wrap items-center gap-2.5 sm:h-8 sm:flex-nowrap">
-        <Tile>{tile}</Tile>
+        <BrandTile name={tile} />
         <h2 className="text-[15px]/4.5 font-medium text-ink">{name}</h2>
         <StatusPill state={state} />
         <span className="grow" />
@@ -296,7 +290,7 @@ function AgentMailCard({ status, known }: CardProps) {
   const inbox = status?.inbox_address;
   return (
     <ProviderCard
-      tile="A"
+      tile="agentmail"
       name="AgentMail"
       state={state}
       manage={{ href: "https://console.agentmail.to", what: "the AgentMail console" }}
@@ -336,7 +330,7 @@ function HubSpotCard({ status, known }: CardProps) {
   const state = providerState(p, known);
   return (
     <ProviderCard
-      tile="H"
+      tile="hubspot"
       name="HubSpot"
       state={state}
       manage={{ href: "https://app.hubspot.com", what: "HubSpot" }}
@@ -362,7 +356,7 @@ function NotionCard({ status, known }: CardProps) {
   const state = providerState(p, known);
   return (
     <ProviderCard
-      tile="N"
+      tile="notion"
       name="Notion"
       state={state}
       manage={{ href: "https://www.notion.so/profile/integrations", what: "your Notion integrations" }}
@@ -384,7 +378,7 @@ function ApifyCard({ status, known }: CardProps) {
   const state = providerState(p, known);
   return (
     <ProviderCard
-      tile="Ap"
+      tile="apify"
       name="Apify"
       state={state}
       manage={{ href: "https://console.apify.com", what: "the Apify console" }}
@@ -419,7 +413,7 @@ function PlatformRow({
   extra,
   last,
 }: {
-  tile: string;
+  tile: BrandName;
   name: string;
   description: string;
   state: State;
@@ -430,7 +424,7 @@ function PlatformRow({
   return (
     // Phones: tile, name, status and action on one line, the description under them.
     <div className={cx("flex min-h-15 shrink-0 flex-wrap items-center gap-x-2.5 gap-y-2 py-3 sm:flex-nowrap", !last && "border-b border-b-[#200D0D1A]")}>
-      <Tile muted={state === "soon"}>{tile}</Tile>
+      <BrandTile name={tile} />
       <div className="min-w-0 grow text-sm/4.5 font-medium text-ink sm:w-33 sm:shrink-0 sm:grow-0">{name}</div>
       <div className="order-1 flex min-w-0 grow basis-full flex-col gap-1.5 pl-9.5 sm:order-none sm:basis-0 sm:pl-0">
         <div className="text-[13px]/4 font-medium text-muted">{description}</div>
@@ -453,7 +447,7 @@ function PlatformCard({ status, known }: CardProps) {
         <div className="text-[13px]/4 font-medium text-faint">Runs the agent, signs you in, and (soon) asks for approvals by text</div>
       </div>
       <PlatformRow
-        tile="N"
+        tile="naive"
         name="Naive"
         state={naiveState}
         description="Agent runtime. Runs research, scoring and drafting jobs."
@@ -474,13 +468,13 @@ function PlatformCard({ status, known }: CardProps) {
         }
       />
       <PlatformRow
-        tile="C"
+        tile="clerk"
         name="Clerk"
         state={clerkEnabled ? "connected" : "local"}
         description={clerkEnabled ? "Sign-in for your team and the dashboard." : "Sign-in for your team. This local build skips sign-in."}
         action={clerkEnabled ? <Manage href="https://dashboard.clerk.com" what="the Clerk dashboard" /> : undefined}
       />
-      <PlatformRow last tile="P" name="Photon iMessage" state="soon" description="Approve or edit drafts by replying to a text." />
+      <PlatformRow last tile="photon" name="Photon iMessage" state="soon" description="Approve or edit drafts by replying to a text." />
     </Card>
   );
 }

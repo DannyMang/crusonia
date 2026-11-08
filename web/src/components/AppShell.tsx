@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Outlet } from "react-router";
 import { cx } from "../lib/format.ts";
+import { ConnectAgentPopover } from "./ConnectAgentPopover.tsx";
 import { MobileBar, Sidebar } from "./Sidebar.tsx";
 
 /** Sidebar beside the page from `lg` (1024px) up; below that a top bar with a menu drawer above it. */
@@ -14,6 +15,7 @@ export function AppShell() {
       <main className="flex min-w-0 grow flex-col">
         <Outlet />
       </main>
+      <ConnectAgentPopover />
     </div>
   );
 }

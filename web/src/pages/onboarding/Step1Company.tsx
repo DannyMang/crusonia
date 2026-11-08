@@ -160,7 +160,7 @@ export default function Step1Company() {
             {mode === "url" ? "or tell us what you're building" : "or use your website instead"}
           </button>
           <div className="h-px shrink-0 bg-[#200D0D14]" />
-          <Link to="/app/connect" className="flex items-start gap-3 rounded-[10px] border border-panel-line bg-panel px-4 py-3.5 transition-colors hover:border-[#C9DDB6]">
+          <Link to="/app?connect=1" className="flex items-start gap-3 rounded-[10px] border border-panel-line bg-panel px-4 py-3.5 transition-colors hover:border-[#C9DDB6]">
             <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden className="shrink-0">
               <rect x="2.25" y="3.75" width="13.5" height="11.25" rx="2" fill="none" stroke="#16A34A" strokeWidth="1.3" />
               <path d="M5.25 7.5l2.25 2.25-2.25 2.25M9 12h3.75" fill="none" stroke="#16A34A" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />

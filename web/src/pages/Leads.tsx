@@ -11,9 +11,8 @@ import { Dropdown, MenuItem } from "../components/leads/Overlay.tsx";
 import { Button, ButtonLink, Card, QueryError, Skeleton, StageBadge, stageLabel } from "../components/ui.tsx";
 import { cx, duration, num, timeAgo } from "../lib/format.ts";
 import { useMedia, usePhone } from "../lib/media.ts";
-import { keys, useApprovals } from "../queries.ts";
+import { keys, useApprovals, useLeads } from "../queries.ts";
 import { AddContactDialog, AddLeadsButton } from "./leads/AddLeads.tsx";
-import { ImportCsvDialog } from "./leads/ImportCsvDialog.tsx";
 import { contactOf, GROUPS, groupOf, sourceLabel, type Group, type GroupKey } from "./leads/shared.ts";
 
 const PAGE_SIZE = 50;
@@ -75,7 +74,7 @@ function useFilters() {
 export default function Leads() {
   const api = useApi();
   const { filters, update, params } = useFilters();
-  const [importing, setImporting] = useState(false);
+  const navigate = useNavigate();
   const [adding, setAdding] = useState(false);
   const onSearch = useCallback((q: string) => update({ q }, true), [update]);
 
@@ -109,8 +108,9 @@ export default function Leads() {
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-3 sm:h-10">
         <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Leads</h1>
         <div className="flex w-full flex-wrap items-center gap-2.5 sm:w-auto">
+          <ReviewLink />
           <SearchBox value={filters.q ?? ""} onChange={onSearch} params={params} />
-          <Button variant="outline" size="md" className="gap-1.5" onClick={() => setImporting(true)}>
+          <Button variant="outline" size="md" className="gap-1.5" onClick={() => navigate("/app/leads/import")}>
             <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden className="shrink-0">
               <path
                 d="M12 15V3M7 8l5-5 5 5M4 15v4a2 2 0 002 2h12a2 2 0 002-2v-4"
@@ -141,7 +141,7 @@ export default function Leads() {
       {leads.isError && !leads.data ? (
         <QueryError error={leads.error} what="your leads" onRetry={() => void leads.refetch()} />
       ) : totallyEmpty ? (
-        <NoLeadsYet onImport={() => setImporting(true)} onAdd={() => setAdding(true)} />
+        <NoLeadsYet onImport={() => navigate("/app/leads/import")} onAdd={() => setAdding(true)} />
       ) : (
         <LeadTable
           rows={rows}
@@ -161,7 +161,6 @@ export default function Leads() {
         />
       )}
 
-      <ImportCsvDialog open={importing} onClose={() => setImporting(false)} />
       <AddContactDialog open={adding} onClose={() => setAdding(false)} />
     </Page>
   );
@@ -518,8 +517,8 @@ function groupSummary(key: GroupKey, leads: Lead[], oldestWaiting: number | null
       return {
         left: [`${leads.length} awaiting approval`, oldestWaiting !== null ? `oldest ${duration(oldestWaiting)}` : null].filter(Boolean).join(" · "),
         right: (
-          <Link to="/app/approvals" className="hover:text-ink hover:underline">
-            Review in Approvals
+          <Link to="/app/outreach" className="hover:text-ink hover:underline">
+            Review in Outreach
           </Link>
         ),
       };
@@ -737,5 +736,18 @@ function NoLeadsYet({ onImport, onAdd }: { onImport: () => void; onAdd: () => vo
         ))}
       </div>
     </Card>
+  );
+}
+
+/** "Review · 3": the leads the agent sent for review (Paper: "Final · Research · Review queue"). Hidden at zero. */
+function ReviewLink() {
+  const review = useLeads({ stage: "needs_review", limit: 100 });
+  const n = review.data?.data.length ?? 0;
+  if (!n) return null;
+  return (
+    <ButtonLink to="/app/leads/review" variant="outline" size="md" className="gap-2">
+      Review
+      <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-ink px-1.5 text-[11px]/3.5 font-semibold tabular-nums text-white">{n}</span>
+    </ButtonLink>
   );
 }

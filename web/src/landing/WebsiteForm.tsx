@@ -69,7 +69,7 @@ export function WebsiteForm({ variant }: { variant: "hero" | "closing" }) {
         <button
           type="submit"
           className={cx(
-            "flex h-12 shrink-0 items-center justify-center rounded-full bg-lime px-6 text-base/5 font-semibold tracking-[0.32px] text-ink transition-colors hover:bg-[#B3DE7C]",
+            "flex h-12 shrink-0 items-center justify-center rounded-full bg-lime px-6 text-base/5 font-semibold text-ink transition-colors hover:bg-[#B3DE7C]",
             hero && "shadow-[0_12px_28px_#16A34A3D]",
           )}
         >

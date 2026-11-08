@@ -7,6 +7,7 @@ import { createMcpServer } from "../src/mcp/server.ts";
 import {
   APIFY_ALLOWED_TOOLS,
   APIFY_MCP_URL,
+  CRUSONIA_ASK_TOOLS,
   CRUSONIA_TOOLS,
   DEFAULT_AGENT_MODEL,
   PLAYBOOK_PATH,
@@ -41,7 +42,7 @@ describe("research playbook", () => {
     }
   });
 
-  test("v3 tells the agent to batch independent calls, cite evidence, and use manual channels without consent", () => {
+  test("v3+ tells the agent to batch independent calls, cite evidence, and use manual channels without consent", () => {
     const body = parsePlaybook(playbookText).body;
     expect(Number(parsePlaybook(playbookText).version)).toBeGreaterThanOrEqual(3);
     for (const phrase of ["Batch independent calls in one turn", "about 3", "citations", "why_summary", "linkedin", "intro", "email_manual", "owner_notes", "ask_operator", "change_note", "No invented enrichment"]) {
@@ -49,6 +50,14 @@ describe("research playbook", () => {
     }
     // The research workflow no longer starts with get_status.
     expect(body).toContain("Don't call `get_status`");
+  });
+
+  test("v4 reads the Company summary first, keeps it current by section with a note, and passes the run id", () => {
+    const { body, version } = parsePlaybook(playbookText);
+    expect(Number(version)).toBeGreaterThanOrEqual(4);
+    for (const phrase of ["`get_company_summary`", "`update_company_summary`", "Read it first, every session", "`section`", "`note`", "`run_id`", "Avoid section"]) {
+      expect(body).toContain(phrase);
+    }
   });
 
   test("malformed playbooks are refused", () => {
@@ -62,7 +71,10 @@ describe("agent definition", () => {
   test("allows every crusonia tool and the research Apify tools, asks for the rest", () => {
     const { tools } = config();
     expect(tools.default_config).toEqual({ permission: "ask" });
-    for (const tool of CRUSONIA_TOOLS) expect(tools.configs[`crusonia.${tool}`]).toEqual({ enabled: true, permission: "allow" });
+    for (const tool of CRUSONIA_TOOLS) {
+      const permission = (CRUSONIA_ASK_TOOLS as readonly string[]).includes(tool) ? "ask" : "allow";
+      expect(tools.configs[`crusonia.${tool}`]).toEqual({ enabled: true, permission });
+    }
     for (const tool of APIFY_ALLOWED_TOOLS) expect(tools.configs[`apify.${tool}`]).toEqual({ enabled: true, permission: "allow" });
     expect(tools.configs.ask_operator).toEqual({ enabled: true, permission: "ask" });
     // Actor runs and anything unlisted fall through to the `ask` default, and the Apify URL loads no Actor-run tools.

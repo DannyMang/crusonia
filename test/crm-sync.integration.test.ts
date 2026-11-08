@@ -12,6 +12,9 @@ import { runCrmSync, startHubSpotImport, enqueueManualSync } from "../src/servic
 import { addLeads, saveEvidence, scoreLead } from "../src/services/leads.ts";
 import { fakeHubSpot, fakeNotion, fakePace } from "./helpers/fake-crm.ts";
 
+/** CRM sync covers the owner workspace only (the instance's own HubSpot and Notion). */
+const OWNER = "ws_owner";
+
 const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
 
@@ -41,7 +44,7 @@ function providers(hs = fakeHubSpot(), nt = fakeNotion()) {
 }
 
 async function optedIn(name: string, d = name) {
-  return createLead(sql, { email: email(name, d), name: `${name} Tester`, company: `Co ${name}`, website: `https://${domain(d)}`, source: "it_crm", consent: { text: "integration test opt-in" } }, "test");
+  return createLead(sql, OWNER, { email: email(name, d), name: `${name} Tester`, company: `Co ${name}`, website: `https://${domain(d)}`, source: "it_crm", consent: { text: "integration test opt-in" } }, "test");
 }
 const queueRows = (leadId: string) => sql`select target, entity, reason, version, attempts, status, last_error, next_attempt_at from crm_sync_queue where lead_id = ${leadId} order by target`;
 const setTargets = (targets: string[]) =>
@@ -79,8 +82,8 @@ suite("CRM sync (database, faked HubSpot and Notion)", () => {
     expect(await queueRows(lead.id)).toHaveLength(0);
 
     await setTargets(["hubspot", "notion"]);
-    await saveEvidence(sql, { lead_id: lead.id, claim: "Hiring SDRs", source_url: "https://example.com/jobs" });
-    await scoreLead(sql, { lead_id: lead.id, score: 77, rationale: "Fits", qualified: true });
+    await saveEvidence(sql, OWNER, { lead_id: lead.id, claim: "Hiring SDRs", source_url: "https://example.com/jobs" });
+    await scoreLead(sql, OWNER, { lead_id: lead.id, score: 77, rationale: "Fits", qualified: true });
     const rows = await queueRows(lead.id);
     expect(rows.map((r) => [r.target, r.entity, r.reason, r.status])).toEqual([
       ["hubspot", "lead", "lead_scored", "pending"],
@@ -90,25 +93,25 @@ suite("CRM sync (database, faked HubSpot and Notion)", () => {
 
     const other = await optedIn("trigger-import");
     await sql`delete from crm_sync_queue where lead_id = ${other.id}`;
-    await sql`insert into events (lead_id, kind, data) values (${other.id}, 'lead_updated', '{"via":"hubspot_import"}'::jsonb)`;
+    await sql`insert into events (workspace_id, lead_id, kind, data) values (${OWNER}, ${other.id}, 'lead_updated', '{"via":"hubspot_import"}'::jsonb)`;
     expect(await queueRows(other.id)).toHaveLength(0);
 
     // Deleting a lead logs lead_deleted for a lead that no longer exists: no error, its rows cascade away.
     const gone = await optedIn("trigger-delete");
     await sql`with d as (delete from leads where id = ${gone.id} returning id)
-              insert into events (lead_id, kind, data) select id, 'lead_deleted', '{}'::jsonb from d`;
+              insert into events (workspace_id, lead_id, kind, data) select ${OWNER}, id, 'lead_deleted', '{}'::jsonb from d`;
     expect(await queueRows(gone.id)).toHaveLength(0);
     await setTargets([]);
   });
 
   test("the cron pushes to HubSpot and Notion, stores the external ids, and a second sync writes nothing", async () => {
     const lead = await optedIn("push");
-    await saveEvidence(sql, { lead_id: lead.id, claim: "Hiring 3 SDRs", source_url: "https://example.com/jobs" });
-    await saveEvidence(sql, { lead_id: lead.id, claim: "Hiring 3 SDRs", source_url: "https://example.com/jobs" });
-    await saveEvidence(sql, { lead_id: lead.id, claim: "Raised a seed round", source_url: "https://example.com/news" });
-    await scoreLead(sql, { lead_id: lead.id, score: 81, rationale: "Hiring SDRs. Fresh funding.", qualified: true });
-    await sql`insert into messages (lead_id, direction, provider_message_id, thread_id, subject, body)
-              values (${lead.id}, 'out', ${`<m-${run}@agentmail.to>`}, ${`thr_${run}`}, 'Hello', 'Hi there')`;
+    await saveEvidence(sql, OWNER, { lead_id: lead.id, claim: "Hiring 3 SDRs", source_url: "https://example.com/jobs" });
+    await saveEvidence(sql, OWNER, { lead_id: lead.id, claim: "Hiring 3 SDRs", source_url: "https://example.com/jobs" });
+    await saveEvidence(sql, OWNER, { lead_id: lead.id, claim: "Raised a seed round", source_url: "https://example.com/news" });
+    await scoreLead(sql, OWNER, { lead_id: lead.id, score: 81, rationale: "Hiring SDRs. Fresh funding.", qualified: true });
+    await sql`insert into messages (workspace_id, lead_id, direction, provider_message_id, thread_id, subject, body)
+              values (${OWNER}, ${lead.id}, 'out', ${`<m-${run}@agentmail.to>`}, ${`thr_${run}`}, 'Hello', 'Hi there')`;
     const env = baseEnv();
     const p = providers();
     const updatedAt = (await sql`select updated_at from leads where id = ${lead.id}`)[0]!.updated_at;
@@ -182,7 +185,7 @@ suite("CRM sync (database, faked HubSpot and Notion)", () => {
   test("queued leads outside the scope are dropped without calling HubSpot", async () => {
     const env = baseEnv({ NOTION_SYNC_ENABLED: "false" });
     await setTargets(["hubspot"]);
-    const { results } = await addLeads(sql, [{ email: email("scraped"), name: "Scraped Person", source: "it_crm", source_url: "https://example.com/team" }]);
+    const { results } = await addLeads(sql, OWNER, [{ email: email("scraped"), name: "Scraped Person", source: "it_crm", source_url: "https://example.com/team" }]);
     const leadId = results[0]!.id!;
     expect(await queueRows(leadId)).toHaveLength(1);
     const p = providers();
@@ -198,8 +201,8 @@ suite("CRM sync (database, faked HubSpot and Notion)", () => {
     const client = { create: (type: "contacts" | "companies", props: Record<string, string>) => hs.fn(`https://api.hubapi.com/crm/v3/objects/${type}`, { method: "POST", body: JSON.stringify({ properties: props }) }) };
     // Existing lead with research and a variant: the import may only fill blanks and link it.
     const existing = await optedIn("known", "known");
-    await saveEvidence(sql, { lead_id: existing.id, claim: "Uses Clay", source_url: "https://example.com/clay" });
-    await scoreLead(sql, { lead_id: existing.id, score: 64, rationale: "Decent fit", qualified: true });
+    await saveEvidence(sql, OWNER, { lead_id: existing.id, claim: "Uses Clay", source_url: "https://example.com/clay" });
+    await scoreLead(sql, OWNER, { lead_id: existing.id, score: 64, rationale: "Decent fit", qualified: true });
     const before = (await sql`select * from leads where id = ${existing.id}`)[0]!;
     await client.create("contacts", { email: email("known", "known"), firstname: "Someone", lastname: "Else", jobtitle: "VP Sales", company: "Renamed Co" });
     await client.create("contacts", { email: email("fresh", "fresh"), firstname: "Fresh", lastname: "Contact", newsletter_opt_in: "yes" });
@@ -258,7 +261,7 @@ suite("CRM sync (database, faked HubSpot and Notion)", () => {
     expect(queued.status).toBe(202);
     expect(await queued.json()).toMatchObject({ target: "hubspot", queued: 1 });
     // No lead_ids: every lead in the scope (this opted-in lead included; an agent-found one is not).
-    const { results } = await addLeads(sql, [{ email: email("api-scraped"), source: "it_crm", source_url: "https://example.com/x" }]);
+    const { results } = await addLeads(sql, OWNER, [{ email: email("api-scraped"), source: "it_crm", source_url: "https://example.com/x" }]);
     const all = await call("/api/integrations/sync", { method: "POST", body: JSON.stringify({ target: "hubspot" }) });
     expect(all.status).toBe(202);
     expect(((await all.json()) as any).scope).toBe("qualified");

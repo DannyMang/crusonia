@@ -4,14 +4,17 @@
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { stripeKeyMode } from "../providers/stripe.ts";
-import { billingEnforced, ensureAccount, getAccount, getBalance, recentLedger } from "./accounts.ts";
+import { billingEnforced, creditsEnforcedFor, ensureAccount, getAccount, getBalance, recentLedger } from "./accounts.ts";
 import { loadLedger, replayLedger } from "./expiry.ts";
 import { creditFacts, packCatalog, planCatalog } from "./catalog.ts";
 import { FREE_PLAN, creditsToUsd, freeSampleCredits, planByKey } from "./plans.ts";
 
 const iso = (v: Date | string | null | undefined) => (v ? new Date(v).toISOString() : null);
 
-/** Configuration flags shared by GET /api/billing and GET /api/status. Never includes key material. */
+/**
+ * Configuration flags shared by GET /api/billing and GET /api/status. Never includes key material. `enforced` here
+ * is the BILLING_ENFORCED switch; GET /api/billing reports whether the caller's workspace is enforced.
+ */
 export function billingConfig(env: Env) {
   return {
     configured: Boolean(env.STRIPE_SECRET_KEY),
@@ -21,20 +24,22 @@ export function billingConfig(env: Env) {
   };
 }
 
-export async function getBillingOverview(sql: Sql, env: Env, ownerId: string) {
-  await ensureAccount(sql, env, ownerId);
+export async function getBillingOverview(sql: Sql, env: Env, ws: string) {
+  await ensureAccount(sql, env, ws);
   const [account, balance, ledger, entries] = await Promise.all([
-    getAccount(sql, ownerId),
-    getBalance(sql, ownerId),
-    recentLedger(sql, ownerId, 20),
-    loadLedger(sql, ownerId),
+    getAccount(sql, ws),
+    getBalance(sql, ws),
+    recentLedger(sql, ws, 20),
+    loadLedger(sql, ws),
   ]);
   const { upcoming } = replayLedger(entries);
   const plan = planByKey(account?.plan);
   const currentKey = plan?.key ?? FREE_PLAN.key;
   return {
-    owner_id: ownerId,
-    billing: billingConfig(env),
+    workspace_id: ws,
+    // Kept for older clients: the billing owner is the workspace now.
+    owner_id: ws,
+    billing: { ...billingConfig(env), enforced: creditsEnforcedFor(env, ws) },
     plan: {
       key: currentKey,
       name: plan?.name ?? FREE_PLAN.name,

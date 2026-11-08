@@ -10,12 +10,14 @@
     "deploy": "bun run build:web && wrangler deploy",
     "deploy:preview": "bun run build:web && wrangler versions upload --preview-alias app",
     "deploy:dry": "bun run build:web && wrangler deploy --dry-run",
+    "deploy:staging": "bun run build:web && wrangler deploy --env staging",
     "cf-typegen": "wrangler types --include-env=false",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p test/tsconfig.json && tsc --noEmit -p web/tsconfig.json",
     "test": "bun test",
     "migrate": "bun scripts/migrate.ts",
     "setup": "bun scripts/setup.ts",
-    "secrets": "wrangler secret bulk .dev.vars"
+    "secrets": "wrangler secret bulk .dev.vars",
+    "secrets:staging": "wrangler secret bulk .dev.vars.staging --env staging"
   },
   "dependencies": {
     "@clerk/backend": "3.26.2",

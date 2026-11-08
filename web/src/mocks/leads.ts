@@ -1,6 +1,7 @@
 // /api/leads mocks. Sample rows follow "Dashboard · Leads" and "Dashboard · Lead detail".
 import { http } from "msw";
 import type { Draft, Evidence, Lead, LeadFull, TimelineEvent } from "../api.ts";
+import { evidenceFor, findSampleLeads, leadOverrides, leadPatches, listExtras, notesFor } from "./core-leads.ts";
 import { ago, body, DAY, fail, HOUR, isEmpty, MIN, noContent, ok, scenario } from "./util.ts";
 
 type Seed = [id: string, company: string, domain: string, name: string | null, title: string | null, stage: string, score: number, source: string, updatedAgo: number, extra?: Partial<Lead>];
@@ -51,7 +52,9 @@ export const sampleLeads: Lead[] = seeds.map(([id, company, domain, name, title,
   ...extra,
 }));
 
-export const leadsData = () => (isEmpty() ? [] : sampleLeads);
+/** The sample plus the agent-loop v2 leads and fields (core-leads.ts), with in-memory stage changes applied. */
+export const leadsData = (): Lead[] =>
+  isEmpty() ? [] : [...sampleLeads, ...findSampleLeads].map((l) => ({ ...l, ...leadPatches[l.id], ...leadOverrides.get(l.id), ...listExtras(l.id) }));
 
 const fieldnoteEvidence: Evidence[] = [
   { id: 1, lead_id: "lead_fieldnote", claim: "Hiring a founding SDR who reports to the Head of Sales", source_url: "https://fieldnote.io/careers/founding-sdr", created_at: ago(2 * HOUR) },
@@ -98,13 +101,17 @@ const fieldnoteTimeline: TimelineEvent[] = [
   { id: 1, kind: "lead_added", data: { via: "mcp", source: "apify" }, created_at: ago(1 * DAY) },
 ];
 
+/** Research runs in workflows.ts, for "What the agent did" on the review queue and lead detail. */
+const RESEARCH_SESSIONS: Record<string, string> = { lead_harbor: "ses_hb2", lead_tess: "ses_tz5", lead_quill: "ses_qs3", lead_juniper: "ses_in3", lead_orbit: "ses_ob4" };
+
 export function leadFull(id: string): LeadFull | null {
   const lead = leadsData().find((l) => l.id === id);
   if (!lead) return null;
   const isFn = id === "lead_fieldnote";
   return {
     lead,
-    evidence: isFn ? fieldnoteEvidence : [],
+    evidence: isFn ? fieldnoteEvidence : (evidenceFor[id] ?? []),
+    notes: notesFor(id),
     drafts: isFn ? fieldnoteDrafts : [],
     approvals: isFn
       ? [
@@ -128,7 +135,11 @@ export function leadFull(id: string): LeadFull | null {
       : [],
     lookalikes: [],
     messages: [],
-    sessions: isFn ? [{ id: "ses_8f3k21", purpose: "research", status: "idle", stop_reason: "requires_action", created_at: ago(2 * HOUR + 20 * MIN), updated_at: ago(2 * HOUR + 10 * MIN) }] : [],
+    sessions: isFn
+      ? [{ id: "ses_8f3k21", purpose: "research", status: "idle", stop_reason: "requires_action", created_at: ago(2 * HOUR + 20 * MIN), updated_at: ago(2 * HOUR + 10 * MIN) }]
+      : RESEARCH_SESSIONS[id]
+        ? [{ id: RESEARCH_SESSIONS[id], purpose: "research", status: "done", stop_reason: "end_turn", created_at: ago(30 * MIN), updated_at: ago(29 * MIN) }]
+        : [],
     timeline: isFn ? fieldnoteTimeline : [],
   };
 }

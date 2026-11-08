@@ -15,6 +15,7 @@ import { createDraft } from "../src/services/drafts.ts";
 import { handleAgentMailEvent } from "../src/services/inbound.ts";
 import { approveAndSend, reconcileSending } from "../src/services/send.ts";
 import { handleSessionIdle, reconcileSessions, startResearch } from "../src/services/workflows.ts";
+import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -44,16 +45,20 @@ const env: Env = {
   AGENTMAIL_INBOX_ID: "it@agentmail.to",
   NAIVE_API_KEY: "nv_test",
   NAIVE_AGENT_ID: "agt_test",
+  // Earlier tests leave sessions 'running' in this workspace; the per-workspace limits have their own tests.
+  MAX_ACTIVE_SESSIONS: "100",
 };
 const run = crypto.randomUUID().slice(0, 8);
 const email = (name: string) => `${name}-${run}@it.example.com`;
 let sql: Sql;
+/** This suite's own workspace (deleted afterwards), so the shared dev database's owner workspace is never touched. */
+let WS: string;
 
 async function newLead(name: string) {
-  return createLead(sql, { email: email(name), name, source: "it_test", consent: { text: "integration test opt-in" } }, "test");
+  return createLead(sql, WS, { email: email(name), name, source: "it_test", consent: { text: "integration test opt-in" } }, "test");
 }
 async function newApproval(leadId: string, subject = "Hello") {
-  const { approval, draft } = await createDraft(sql, { lead_id: leadId, subject, body: "Body" }, { ttlMinutes: sendApprovalTtlMinutes(env), via: "api", actor: "test" });
+  const { approval, draft } = await createDraft(sql, WS, { lead_id: leadId, subject, body: "Body" }, { ttlMinutes: sendApprovalTtlMinutes(env), via: "api", actor: "test" });
   return { code: approval.code, draftId: draft.id };
 }
 async function failure(p: Promise<unknown>) {
@@ -63,30 +68,23 @@ async function failure(p: Promise<unknown>) {
 }
 
 suite("database integration (mocked providers)", () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     sql = getSql(url);
+    WS = await createTestWorkspace(sql, `db_${run}`);
+    env.SEND_WORKSPACE_IDS = WS; // not the owner workspace: sending must be enabled for it
   });
 
   afterAll(async () => {
     if (!sql) return;
-    const ids = (await sql`select id from leads where source = 'it_test' or email like ${`%-${run}@it.example.com`}`).map((r) => r.id as string);
-    await sql.transaction([
-      sql`delete from events where lead_id = any(${ids}::text[])
-            or (lead_id is null and (data::text like ${`%${run}%`} or data->>'session_id' like ${`ses_it_${run}%`}))`,
-      sql`delete from leads where id = any(${ids}::text[])`,
-      sql`delete from naive_sessions where id like ${`ses_it_${run}%`}`,
-      sql`delete from suppressions where email like ${`%-${run}@it.example.com`}`,
-      sql`delete from webhook_events where event_id like ${`%${run}%`}`,
-      sql`delete from messages where thread_id like ${`thr_${run}%`}`,
-      sql`update settings set value = 'false' where key = 'paused'`,
-    ]);
+    await deleteTestWorkspaces(sql, [WS]);
+    await sql`delete from webhook_events where event_id like ${`%${run}%`}`;
   });
 
   test("approve sends once, records ids, message and stage; a second approve is refused", async () => {
     const lead = await newLead("send");
     const { code, draftId } = await newApproval(lead.id);
     const am = provider([(c) => (c.url.endsWith("/messages/send") ? ok({ message_id: `<m1-${run}@agentmail.to>`, thread_id: `thr_${run}_1` }) : undefined)]);
-    const result = await approveAndSend({ sql, env, actor: "test", fetch: am.fn }, code);
+    const result = await approveAndSend({ sql, ws: WS, env, actor: "test", fetch: am.fn }, code);
     expect(result).toMatchObject({ status: "sent", draft_id: draftId, thread_id: `thr_${run}_1` });
     expect(am.calls).toHaveLength(1);
     expect(am.calls[0]!.body).toMatchObject({ to: email("send"), subject: "Hello", text: "Body" });
@@ -97,9 +95,9 @@ suite("database integration (mocked providers)", () => {
     const [m] = await sql`select direction, to_addr from messages where provider_message_id = ${`<m1-${run}@agentmail.to>`}`;
     expect(m).toEqual({ direction: "out", to_addr: email("send") });
     expect((await sql`select stage from leads where id = ${lead.id}`)[0]!.stage).toBe("sent");
-    expect((await getApproval(sql, code)).status).toBe("approved");
+    expect((await getApproval(sql, WS, code)).status).toBe("approved");
 
-    expect(await failure(approveAndSend({ sql, env, actor: "test", fetch: am.fn }, code))).toBe("409 approval_not_pending");
+    expect(await failure(approveAndSend({ sql, ws: WS, env, actor: "test", fetch: am.fn }, code))).toBe("409 approval_not_pending");
     expect(am.calls).toHaveLength(1);
   });
 
@@ -107,7 +105,7 @@ suite("database integration (mocked providers)", () => {
     const lead = await newLead("race");
     const { code } = await newApproval(lead.id);
     const am = provider([(c) => (c.url.endsWith("/messages/send") ? ok({ message_id: `<race-${run}@agentmail.to>`, thread_id: `thr_${run}_r` }) : undefined)]);
-    const results = await Promise.allSettled([1, 2, 3].map(() => approveAndSend({ sql, env, actor: "test", fetch: am.fn }, code)));
+    const results = await Promise.allSettled([1, 2, 3].map(() => approveAndSend({ sql, ws: WS, env, actor: "test", fetch: am.fn }, code)));
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(am.calls).toHaveLength(1);
   });
@@ -116,7 +114,7 @@ suite("database integration (mocked providers)", () => {
     const lead = await newLead("ambiguous");
     const { code, draftId } = await newApproval(lead.id);
     const down = provider([() => new Response("bad gateway", { status: 502 })]);
-    expect(await approveAndSend({ sql, env, actor: "test", fetch: down.fn }, code)).toMatchObject({ status: "sending", draft_id: draftId });
+    expect(await approveAndSend({ sql, ws: WS, env, actor: "test", fetch: down.fn }, code)).toMatchObject({ status: "sending", draft_id: draftId });
     expect((await sql`select status from drafts where id = ${draftId}`)[0]!.status).toBe("sending");
 
     await sql`update drafts set sending_at = now() - interval '3 minutes' where id = ${draftId}`;
@@ -137,10 +135,10 @@ suite("database integration (mocked providers)", () => {
     const lead = await newLead("fail");
     const { code, draftId } = await newApproval(lead.id);
     const bad = provider([() => ok({ message: "Invalid recipient" }, 400)]);
-    expect(await failure(approveAndSend({ sql, env, actor: "test", fetch: bad.fn }, code))).toBe("502 send_failed");
+    expect(await failure(approveAndSend({ sql, ws: WS, env, actor: "test", fetch: bad.fn }, code))).toBe("502 send_failed");
     expect((await sql`select status from drafts where id = ${draftId}`)[0]!.status).toBe("send_failed");
     const { editApproval } = await import("../src/services/approvals.ts");
-    const deps: Deps = { sql, env, actor: "test", sendTtlMinutes: sendApprovalTtlMinutes(env) };
+    const deps: Deps = { sql, ws: WS, env, actor: "test", sendTtlMinutes: sendApprovalTtlMinutes(env) };
     const retry = await editApproval(deps, code, {});
     expect(retry.draft.version).toBe(2);
     expect(retry.approval.status).toBe("pending");
@@ -151,16 +149,16 @@ suite("database integration (mocked providers)", () => {
     const first = await newApproval(lead.id, "v1");
     const second = await newApproval(lead.id, "v2");
     const am = provider([() => ok({ message_id: "<never>", thread_id: "never" })]);
-    const deps = { sql, env, actor: "test", fetch: am.fn };
+    const deps = { sql, ws: WS, env, actor: "test", fetch: am.fn };
     expect(await failure(approveAndSend(deps, first.code))).toBe("409 approval_not_pending"); // closed by v2
 
     await sql`update leads set email = ${email("bound-changed")} where id = ${lead.id}`;
     expect(await failure(approveAndSend(deps, second.code))).toBe("409 recipient_mismatch");
     await sql`update leads set email = ${email("bound")} where id = ${lead.id}`;
 
-    await sql`insert into suppressions (email, reason) values (${email("bound")}, 'test')`;
+    await sql`insert into suppressions (workspace_id, email, reason) values (${WS}, ${email("bound")}, 'test')`;
     expect(await failure(approveAndSend(deps, second.code))).toBe("403 suppressed");
-    await sql`delete from suppressions where email = ${email("bound")}`;
+    await sql`delete from suppressions where workspace_id = ${WS} and email = ${email("bound")}`;
 
     await sql`update leads set consent_at = null where id = ${lead.id}`;
     expect(await failure(approveAndSend(deps, second.code))).toBe("403 no_consent");
@@ -168,7 +166,7 @@ suite("database integration (mocked providers)", () => {
 
     await sql`update approvals set expires_at = now() - interval '1 second' where code = ${second.code}`;
     expect(await failure(approveAndSend(deps, second.code))).toBe("410 approval_expired");
-    expect((await getApproval(sql, second.code)).status).toBe("expired");
+    expect((await getApproval(sql, WS, second.code)).status).toBe("expired");
     expect(am.calls).toHaveLength(0);
   });
 
@@ -176,7 +174,7 @@ suite("database integration (mocked providers)", () => {
     const lead = await newLead("reply");
     const { code } = await newApproval(lead.id, "first touch");
     const am = provider([() => ok({ message_id: `<r1-${run}@agentmail.to>`, thread_id: `thr_${run}_reply` })]);
-    await approveAndSend({ sql, env, actor: "test", fetch: am.fn }, code);
+    await approveAndSend({ sql, ws: WS, env, actor: "test", fetch: am.fn }, code);
     const pending = await newApproval(lead.id, "follow-up");
 
     const result = await handleAgentMailEvent(sql, {
@@ -192,14 +190,14 @@ suite("database integration (mocked providers)", () => {
       },
     });
     expect(result.detail).toMatchObject({ lead_id: lead.id, matched_by: "thread", label: "interested", stage: "interested" });
-    expect((await getApproval(sql, pending.code)).status).toBe("expired");
+    expect((await getApproval(sql, WS, pending.code)).status).toBe("expired");
     expect((await sql`select status from drafts where id = ${pending.draftId}`)[0]!.status).toBe("cancelled");
   });
 
   test("Naive idle: allowlisted tools are auto-allowed once, others and questions become approvals", async () => {
     const lead = await newLead("naive");
     const sessionId = `ses_it_${run}_1`;
-    await sql`insert into naive_sessions (id, lead_id, purpose, status) values (${sessionId}, ${lead.id}, 'research', 'running')`;
+    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
     const nv = provider([(c) => (c.method === "POST" ? ok({}, 202) : undefined)]);
     const pendingActions = [
       { tool_call_id: "c1", name: "crusonia.get_lead", args: { lead_id: lead.id } },
@@ -216,15 +214,15 @@ suite("database integration (mocked providers)", () => {
     expect(again.approvals).toHaveLength(0);
     expect(nv.calls).toHaveLength(1);
 
-    const deps: Deps = { sql, env, actor: "test", sendTtlMinutes: sendApprovalTtlMinutes(env), fetch: nv.fn };
+    const deps: Deps = { sql, ws: WS, env, actor: "test", sendTtlMinutes: sendApprovalTtlMinutes(env), fetch: nv.fn };
     const [toolCode, questionCode] = first.approvals as [string, string];
-    const tool = await getApproval(sql, toolCode);
+    const tool = await getApproval(sql, WS, toolCode);
     expect(tool).toMatchObject({ kind: "tool", tool_call_id: "c2", payload: { name: "gmail.send" } });
     await resolveTool(deps, tool, { decision: "deny", reason: "not allowed" });
     expect(nv.calls.at(-1)).toMatchObject({ body: { tool_call_id: "c2", decision: "deny", reason: "not allowed" } });
-    expect((await getApproval(sql, toolCode)).status).toBe("rejected");
+    expect((await getApproval(sql, WS, toolCode)).status).toBe("rejected");
 
-    const question = await getApproval(sql, questionCode);
+    const question = await getApproval(sql, WS, questionCode);
     expect(await failure(answerQuestion(deps, question, { other: "x" }))).toBe("400 invalid_answers");
     await answerQuestion(deps, question, { mailbox: "hi@example.com" });
     expect(nv.calls.at(-1)).toMatchObject({ url: `https://api.vetta.sh/v1/sessions/${sessionId}/answers`, body: { tool_call_id: "c3", answers: { mailbox: "hi@example.com" } } });
@@ -234,29 +232,29 @@ suite("database integration (mocked providers)", () => {
   test("paused: nothing is auto-allowed", async () => {
     const lead = await newLead("paused");
     const sessionId = `ses_it_${run}_p`;
-    await sql`insert into naive_sessions (id, lead_id, purpose, status) values (${sessionId}, ${lead.id}, 'research', 'running')`;
-    await sql`update settings set value = 'true' where key = 'paused'`;
+    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
+    await sql`update workspaces set paused = true where id = ${WS}`;
     const nv = provider([() => ok({}, 202)]);
     try {
       const res = await handleSessionIdle(sql, env, { sessionId, pendingActions: [{ tool_call_id: "p1", name: "crusonia.get_lead" }] }, nv.fn);
       expect(res).toMatchObject({ auto_allowed: [], approvals: [expect.any(String)] });
       expect(nv.calls).toHaveLength(0);
     } finally {
-      await sql`update settings set value = 'false' where key = 'paused'`;
+      await sql`update workspaces set paused = false where id = ${WS}`;
     }
   });
 
   test("cron: reconciles a session from its events and denies expired tool approvals", async () => {
     const lead = await newLead("cron");
     const sessionId = `ses_it_${run}_c`;
-    await sql`insert into naive_sessions (id, lead_id, purpose, status, updated_at) values (${sessionId}, ${lead.id}, 'research', 'running', now() - interval '5 minutes')`;
+    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, updated_at) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running', now() - interval '5 minutes')`;
     const nv = provider([
       (c) =>
         c.url.startsWith(`https://api.vetta.sh/v1/sessions/${sessionId}/events`)
           ? ok({
               data: [
                 { seq: 1, type: "session.running", data: {} },
-                { seq: 2, type: "session.idle", data: { stop_reason: "awaiting_approval", pending_actions: [{ tool_call_id: "w1", name: "web_fetch" }, { tool_call_id: "x1", name: "shell.exec" }] } },
+                { seq: 2, type: "session.idle", data: { stop_reason: "awaiting_approval", pending_actions: [{ tool_call_id: "w1", name: "web_search" }, { tool_call_id: "x1", name: "shell.exec" }] } },
               ],
               has_more: false,
               next_cursor: null,
@@ -267,25 +265,35 @@ suite("database integration (mocked providers)", () => {
     ]);
     expect(await reconcileSessions(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
     const [s] = await sql`select status, last_seq from naive_sessions where id = ${sessionId}`;
-    expect(s).toEqual({ status: "running", last_seq: 2 }); // web_fetch auto-allowed, so it resumed
+    expect(s).toEqual({ status: "running", last_seq: 2 }); // web_search auto-allowed, so it resumed
     const [approval] = await sql`select code from approvals where naive_session_id = ${sessionId} and tool_call_id = 'x1'`;
     expect(approval).toBeDefined();
 
     await sql`update approvals set expires_at = now() - interval '1 second' where code = ${approval!.code}`;
     expect(await expireStaleApprovals(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
-    expect((await getApproval(sql, approval!.code as string)).status).toBe("expired");
+    expect((await getApproval(sql, WS, approval!.code as string)).status).toBe("expired");
     expect(nv.calls.at(-1)).toMatchObject({ body: { tool_call_id: "x1", decision: "deny" } });
   });
 
   test("research starts one Naive session per lead and skips leads with an open session", async () => {
     const lead = await newLead("research");
+    // A workspace other than the owner's runs on its own copy of the template agent (src/services/naive-agents.ts).
+    await sql`update workspaces set naive_agent_id = 'agt_ws_copy', naive_credential_id = 'vcr_x', naive_synced_at = now(),
+                naive_workflow_version = 'research@3, agent v7' where id = ${WS}`;
     const nv = provider([(c) => (c.url.endsWith("/v1/sessions") ? ok({ id: `ses_it_${run}_r`, status: "queued" }) : undefined)]);
-    const first = await startResearch(sql, env, { lead_ids: [lead.id, "lead_missing"] }, "test", nv.fn);
+    const first = await startResearch(sql, env, WS, { lead_ids: [lead.id, "lead_missing"] }, "test", nv.fn);
+    expect(first.failed).toEqual([]);
     expect(first.started).toEqual([{ lead_id: lead.id, session_id: `ses_it_${run}_r` }]);
     expect(first.skipped).toEqual([{ lead_id: "lead_missing", reason: "not_found" }]);
-    expect(nv.calls[0]!.body).toMatchObject({ agent_id: "agt_test", metadata: { lead_id: lead.id, purpose: "research" } });
+    expect(nv.calls[0]!.body).toMatchObject({ agent_id: "agt_ws_copy", metadata: { lead_id: lead.id, purpose: "research", workspace_id: WS } });
+    expect(nv.calls[0]!.body.message).toContain("There is no Company summary yet");
     expect((await sql`select stage from leads where id = ${lead.id}`)[0]!.stage).toBe("researching");
-    const second = await startResearch(sql, env, { lead_ids: [lead.id] }, "test", nv.fn);
+    expect((await sql`select workspace_id, billing_owner_id, workflow_version from naive_sessions where id = ${`ses_it_${run}_r`}`)[0]).toEqual({
+      workspace_id: WS,
+      billing_owner_id: WS,
+      workflow_version: "research@3, agent v7",
+    });
+    const second = await startResearch(sql, env, WS, { lead_ids: [lead.id] }, "test", nv.fn);
     expect(second.skipped).toEqual([{ lead_id: lead.id, reason: "session_open" }]);
     expect(nv.calls).toHaveLength(1);
   });
@@ -308,17 +316,20 @@ suite("database integration (mocked providers)", () => {
     });
     const lifetime = async (code: string) =>
       Number((await sql`select extract(epoch from expires_at - created_at) as s from approvals where code = ${code}`)[0]!.s);
-    /** The real Worker routes (MCP tools/call, REST), with this database and an owner token. */
-    const callWorker = (path: string, body: unknown, over: Partial<Env> = {}) =>
-      worker.fetch(
+    /** The real Worker routes (MCP tools/call, REST), with this database and a key of this suite's workspace. */
+    let key = "";
+    const callWorker = async (path: string, body: unknown, over: Partial<Env> = {}) => {
+      key ||= await testKey(sql, WS);
+      return worker.fetch(
         new Request(`https://example.test${path}`, {
           method: "POST",
-          headers: { Authorization: "Bearer it-owner", "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
           body: JSON.stringify(body),
         }),
         { ...env, DATABASE_URL: url, MCP_TOKEN: "it-owner", ...over },
         {} as ExecutionContext,
       );
+    };
     const mcpDraft = async (leadId: string, over: Partial<Env> = {}) => {
       const res = await callWorker(
         "/mcp",
@@ -346,7 +357,7 @@ suite("database integration (mocked providers)", () => {
     test("agent tool and question approvals last 1 hour by default", async () => {
       const lead = await newLead("ttl-tool");
       const sessionId = `ses_it_${run}_ttl`;
-      await sql`insert into naive_sessions (id, lead_id, purpose, status) values (${sessionId}, ${lead.id}, 'research', 'running')`;
+      await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
       const nv = provider([() => ok({}, 202)]);
       const res = await handleSessionIdle(
         sql,
@@ -365,7 +376,7 @@ suite("database integration (mocked providers)", () => {
       for (const code of res.approvals) expect(await lifetime(code)).toBe(HOUR);
 
       const sessionId2 = `ses_it_${run}_ttl2`;
-      await sql`insert into naive_sessions (id, lead_id, purpose, status) values (${sessionId2}, ${lead.id}, 'research', 'running')`;
+      await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId2}, ${WS}, ${lead.id}, 'research', 'running')`;
       const custom = await handleSessionIdle(
         sql,
         { ...env, TOOL_APPROVAL_TTL_MINUTES: "5" },
@@ -378,7 +389,7 @@ suite("database integration (mocked providers)", () => {
     test("after an hour the cron denies a tool approval to Naive; a send approval from the same moment stays open", async () => {
       const lead = await newLead("ttl-cron");
       const sessionId = `ses_it_${run}_ttlc`;
-      await sql`insert into naive_sessions (id, lead_id, purpose, status) values (${sessionId}, ${lead.id}, 'research', 'running')`;
+      await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
       const nv = provider([() => ok({}, 202)]);
       const idle = await handleSessionIdle(
         sql,
@@ -393,18 +404,18 @@ suite("database integration (mocked providers)", () => {
       await sql`update approvals set created_at = created_at - interval '61 minutes', expires_at = expires_at - interval '61 minutes'
                 where code = any(${[toolCode, send.code]}::text[])`;
       expect(await expireStaleApprovals(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
-      expect((await getApproval(sql, toolCode)).status).toBe("expired");
+      expect((await getApproval(sql, WS, toolCode)).status).toBe("expired");
       expect(nv.calls.at(-1)).toMatchObject({
         url: `https://api.vetta.sh/v1/sessions/${sessionId}/tool_confirmations`,
         body: { tool_call_id: "tc1", decision: "deny" },
       });
-      expect((await getApproval(sql, send.code)).status).toBe("pending");
+      expect((await getApproval(sql, WS, send.code)).status).toBe("pending");
 
       // Past 7 days the send approval expires too, and its draft goes back to 'draft' (nothing to deny).
       const calls = nv.calls.length;
       await sql`update approvals set created_at = created_at - interval '7 days', expires_at = expires_at - interval '7 days' where code = ${send.code}`;
       expect(await expireStaleApprovals(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
-      expect((await getApproval(sql, send.code)).status).toBe("expired");
+      expect((await getApproval(sql, WS, send.code)).status).toBe("expired");
       expect((await sql`select status from drafts where id = ${send.draftId}`)[0]!.status).toBe("draft");
       expect(nv.calls).toHaveLength(calls);
     });

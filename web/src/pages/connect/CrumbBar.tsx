@@ -1,4 +1,4 @@
-// Pieces shared by the setup screens (Integrations, Connect your agent, Settings): the "<company> › <page>" bar and
+// Pieces shared by the setup screens (Integrations, Settings and its tabs): the "<company> › <page>" bar and
 // the snippet well with a Copy button.
 import { Link } from "react-router";
 import { CopyButton } from "../../components/ui.tsx";
