@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Env } from "../env.ts";
 import { parseQuery, sqlFor, type AppEnv, type Principal } from "../lib/context.ts";
 import { REPLY_LABELS } from "../services/classify.ts";
+import { crmStatusSummary } from "../services/crm-sync.ts";
 import { listReplies } from "../services/replies.ts";
 import { getStatus } from "../services/status.ts";
 import { getSummary } from "../services/summary.ts";
@@ -55,11 +56,14 @@ dashboard.get("/summary", async (c) => c.json(await getSummary(sqlFor(c.env), c.
 dashboard.get("/status", async (c) => {
   const status = await getStatus(c.env);
   const inbox = c.env.AGENTMAIL_INBOX_ID;
+  const sql = status.database.reachable ? sqlFor(c.env) : null;
   return c.json({
     ...status,
     inbox_address: c.env.AGENTMAIL_API_KEY && inbox && inbox.includes("@") ? inbox : null,
     naive_agent_configured: Boolean(c.env.NAIVE_API_KEY && c.env.NAIVE_AGENT_ID),
     mcp_url: `${c.env.PUBLIC_URL.replace(/\/+$/, "")}/mcp`,
+    // Per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error. Details: GET /api/integrations/crm.
+    crm_sync: await crmStatusSummary(sql, c.env),
   });
 });
 

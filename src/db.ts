@@ -38,7 +38,14 @@ export type Lead = {
   rationale: string | null;
   review_question: string | null;
   reply_label: string | null;
+  // HubSpot contact id (a person lead) and company id; set by the HubSpot import and sync.
   hubspot_id: string | null;
+  hubspot_company_id?: string | null;
+  hubspot_state?: Record<string, unknown>;
+  hubspot_synced_at?: Date | null;
+  notion_page_id?: string | null;
+  notion_hash?: string | null;
+  notion_synced_at?: Date | null;
   // Experiment the lead is enrolled in (its arm is `variant`).
   experiment_id?: string | null;
   created_at: Date;

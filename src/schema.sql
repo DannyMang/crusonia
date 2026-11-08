@@ -237,3 +237,87 @@ create table if not exists api_keys (
   last_used_at timestamptz,
   revoked_at   timestamptz
 );
+
+-- ---------------------------------------------------------------------------
+-- CRM sync (HubSpot, Notion). Additive and idempotent. See "CRM sync" in README.md.
+-- ---------------------------------------------------------------------------
+
+-- External ids live on our rows so every push is an upsert. `hubspot_id` (the contact) predates this section.
+-- `hubspot_state` remembers what we last wrote to fields we share with HubSpot users (hs_lead_status) and the
+-- contact/company pair we associated, so a later sync never clobbers a value someone changed in HubSpot.
+-- `notion_hash` is a hash of the last properties written to the lead's Notion page (unchanged = no call).
+-- Sync never touches `updated_at`.
+alter table leads add column if not exists hubspot_company_id text;
+alter table leads add column if not exists hubspot_state jsonb not null default '{}';
+alter table leads add column if not exists hubspot_synced_at timestamptz;
+alter table leads add column if not exists notion_page_id text;
+alter table leads add column if not exists notion_hash text;
+alter table leads add column if not exists notion_synced_at timestamptz;
+create index if not exists leads_hubspot_idx on leads (hubspot_id) where hubspot_id is not null;
+-- The HubSpot note that carries this evidence row or email. Identical evidence (same claim + URL) shares a note.
+alter table evidence add column if not exists hubspot_note_id text;
+alter table messages add column if not exists hubspot_note_id text;
+
+-- Work for the minute cron. One row per (target, entity, lead): a burst of events for a lead collapses into one
+-- sync. entity 'lead' pushes the lead's current state; 'import' is the HubSpot import job (lead_id null, its
+-- cursor and counters in `payload`). `version` goes up on every enqueue, so a change that lands while the row is
+-- being processed is synced again instead of being lost. 'failed' = gave up after MAX_ATTEMPTS (or a permanent
+-- error); the next event or manual sync for that lead re-queues it.
+create table if not exists crm_sync_queue (
+  id              bigserial primary key,
+  target          text not null check (target in ('hubspot', 'notion')),
+  entity          text not null check (entity in ('lead', 'import')),
+  lead_id         text references leads(id) on delete cascade,
+  reason          text,
+  payload         jsonb not null default '{}',
+  status          text not null default 'pending' check (status in ('pending', 'failed')),
+  attempts        int not null default 0,
+  last_error      text,
+  next_attempt_at timestamptz not null default now(),
+  locked_until    timestamptz,
+  version         int not null default 1,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+create unique index if not exists crm_sync_queue_key on crm_sync_queue (target, entity, (coalesce(lead_id, '')));
+create index if not exists crm_sync_queue_due_idx on crm_sync_queue (target, entity, next_attempt_at) where status = 'pending';
+
+-- Enqueue from the audit trail: every state change already writes an `events` row in the same transaction, so a
+-- trigger on it catches every write path (MCP, REST, webhooks, CSV) with no extra code in them and no lost
+-- updates. Only for targets listed in settings 'crm_sync_targets', which the cron mirrors from
+-- HUBSPOT_SYNC_ENABLED / NOTION_SYNC_ENABLED: nothing is queued while sync is off. Events written by the HubSpot
+-- import itself (data.via = 'hubspot_import') are skipped, so imported contacts are not pushed straight back.
+create or replace function crm_sync_enqueue() returns trigger language plpgsql as $$
+declare
+  targets text[];
+begin
+  if new.lead_id is null or not (new.kind = any (array[
+       'lead_added', 'lead_updated', 'lead_email_found', 'lead_scored', 'evidence_saved', 'lead_stage_changed',
+       'lead_consent_granted', 'lead_consent_revoked', 'research_started', 'draft_created', 'email_sent',
+       'email_received', 'reply_classified', 'email_complained'])) then
+    return null;
+  end if;
+  if coalesce(new.data->>'via', '') = 'hubspot_import' then
+    return null;
+  end if;
+  select array(select jsonb_array_elements_text(value)) into targets
+  from settings where key = 'crm_sync_targets' and jsonb_typeof(value) = 'array';
+  if targets is null or cardinality(targets) = 0 then
+    return null;
+  end if;
+  insert into crm_sync_queue as q (target, entity, lead_id, reason)
+  select t, 'lead', new.lead_id, new.kind
+  from unnest(targets) t
+  where t in ('hubspot', 'notion') and exists (select 1 from leads where id = new.lead_id)
+  on conflict (target, entity, (coalesce(lead_id, ''))) do update set
+    reason = excluded.reason,
+    version = q.version + 1,
+    attempts = case when q.status = 'failed' then 0 else q.attempts end,
+    next_attempt_at = case when q.status = 'failed' then now() else q.next_attempt_at end,
+    status = 'pending',
+    updated_at = now();
+  return null;
+end
+$$;
+drop trigger if exists events_crm_sync on events;
+create trigger events_crm_sync after insert on events for each row execute function crm_sync_enqueue();

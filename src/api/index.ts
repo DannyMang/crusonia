@@ -5,6 +5,7 @@ import { approvals } from "./approvals.ts";
 import { requireAuth } from "./auth.ts";
 import { dashboard } from "./dashboard.ts";
 import { experiments } from "./experiments.ts";
+import { integrations } from "./integrations.ts";
 import { keys } from "./keys.ts";
 import { leads } from "./leads.ts";
 import { onboarding, profile } from "./onboarding.ts";
@@ -25,5 +26,5 @@ api.route("/profile", profile);
 api.route("/onboarding", onboarding);
 api.route("/experiments", experiments);
 api.route("/keys", keys);
-
-// TODO(crm-sync): HubSpot and Notion sync endpoints.
+// CRM sync: /integrations/crm (status), /integrations/sync, /integrations/hubspot/import.
+api.route("/integrations", integrations);
