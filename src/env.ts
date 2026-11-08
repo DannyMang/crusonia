@@ -46,6 +46,10 @@ export interface Env {
   // config (optional; defaults in code)
   // Tools the Naive agent may run without asking the owner: comma list, `*` suffix wildcards.
   AUTO_CONFIRM_TOOLS?: string;
+  // Hard cap in USD on every Apify Actor run Crusonia starts (maxTotalChargeUsd), default 0.25 (src/services/apify.ts).
+  APIFY_MAX_CHARGE_USD?: string;
+  // Days to keep each agent session's full event trace (src/services/traces.ts), default 180.
+  TRACE_RETENTION_DAYS?: string;
   // Approval lifetimes (src/services/approval-ttl.ts). Hours before a send approval (email draft) expires,
   // default 168 (7 days); minutes before an agent tool or question approval expires, default 60.
   SEND_APPROVAL_TTL_HOURS?: string;

@@ -1,11 +1,14 @@
 // The Naive research agent's definition: the request body for POST/PATCH /v1/agents (Naive REST API,
 // https://usenaive.ai/docs/api/agents). Pure, so tests can check it; scripts/setup.ts sends it.
 
-// Apify's hosted MCP server, limited to the tools Crusonia uses: Actor search/calls (people and company
-// scrapers), web search + browsing, and the crawler that reads a customer's site during onboarding.
-// The agent's mcp_servers[].url must equal this string exactly for Naive to inject the vault token.
-export const APIFY_MCP_URL =
-  "https://mcp.apify.com?tools=actors,apify/rag-web-browser,apify/website-content-crawler,apify/google-search-scraper";
+// Apify's hosted MCP server, limited to the one tool the playbook uses: the single-page reader (charged per request,
+// starts no Actor run in the account). Apify adds the read-only run/dataset getters (and abort-actor-run) with it.
+// No `actors` toolset (call-actor, search-actors) and no crawler/search Actor tools: those start paid runs, and our
+// own read_website / search_web wrap them with page limits, a maxTotalChargeUsd cap and credit metering. Fewer
+// tool schemas also make the agent's cached prompt smaller.
+// The agent's mcp_servers[].url must equal this string exactly for Naive to inject the vault token: changing it
+// needs a vault credential for the new URL, which `bun run setup --agent` adds (ensureApifyCredential in setup.ts).
+export const APIFY_MCP_URL = "https://mcp.apify.com?tools=apify/rag-web-browser";
 
 export const AGENT_NAME = "Crusonia Research";
 export const PLAYBOOK_PATH = "playbooks/research.md";
@@ -22,14 +25,19 @@ export const CRUSONIA_TOOLS = [
   "get_lead",
   "save_evidence",
   "score_lead",
+  "save_research",
   "create_draft",
   "list_pending_approvals",
+  "list_tasks",
+  "add_note",
+  "get_workflow",
+  "flag_for_review",
 ] as const;
 
 // Apify tools that run without asking: the single-page reader the playbook uses (charged per request, starts
-// no run) and the free readers for run results. The Actor tools that start runs in the account
-// (apify--google-search-scraper, apify--website-content-crawler, call-actor, ...) stay `ask`: the crusonia
-// search_web and read_website tools wrap the same Actors with page and time limits.
+// no run) and the free readers for run results. Anything else (abort-actor-run, or an Actor tool if the URL above
+// ever lists one) stays `ask`: the crusonia search_web and read_website tools wrap the Actors with page and time
+// limits and a cost cap.
 export const APIFY_ALLOWED_TOOLS = [
   "apify--rag-web-browser",
   "get-actor-run",
@@ -76,11 +84,19 @@ export function parsePlaybook(text: string): Playbook {
   return { name: meta.playbook, version: meta.version, body };
 }
 
-const DEFAULTS = { model: "vetta/auto", cap: 5_000_000, maxTask: 1_000_000, period: "day" as BudgetPeriod };
+/**
+ * The pinned default model. `vetta/auto` routed one session across three models (gpt-6.1-sol, gpt-6.1-terra,
+ * gpt-6-luna), and every switch re-wrote the prompt cache for the ~38k-token prompt. gpt-6.1-terra is the model the
+ * router picked for most of the first end-to-end run's tool work: good research quality at about half sol's cost per
+ * cached-prompt write. NAIVE_AGENT_MODEL overrides it (any id from GET /v1/models).
+ */
+export const DEFAULT_AGENT_MODEL = "openai/gpt-6.1-terra";
+
+const DEFAULTS = { model: DEFAULT_AGENT_MODEL, cap: 5_000_000, maxTask: 1_000_000, period: "day" as BudgetPeriod };
 
 /**
  * Model, harness and budget, overridable from the environment (setup only, not Worker vars):
- * NAIVE_AGENT_MODEL (vetta/auto), NAIVE_AGENT_HARNESS (Naive's default; fixed once the agent exists),
+ * NAIVE_AGENT_MODEL (DEFAULT_AGENT_MODEL), NAIVE_AGENT_HARNESS (Naive's default; fixed once the agent exists),
  * NAIVE_AGENT_BUDGET_CAP_MICRO_USD (5000000 = $5 per period), NAIVE_AGENT_MAX_TASK_MICRO_USD (1000000 = $1 per
  * session), NAIVE_AGENT_BUDGET_PERIOD (day | week | month).
  */
@@ -129,7 +145,7 @@ export function naiveAgentConfig(input: {
       "Researches one Crusonia lead per session: sourced evidence, an ICP fit score and, for opted-in leads only, an email draft that a human approves.",
     model: input.model,
     ...(input.harness ? { harness: input.harness } : {}),
-    // vetta/auto serves the immediate window only.
+    // vetta/auto serves the immediate window only, and every catalogue model supports it.
     window: "immediate",
     system: input.playbook.body,
     tools: { default_config: { permission: "ask" }, configs },

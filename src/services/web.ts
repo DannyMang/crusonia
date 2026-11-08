@@ -1,15 +1,22 @@
-// Reading a company's website (onboarding: propose an ICP from what the site says).
-// With APIFY_TOKEN: apify/website-content-crawler. Without it (or if Apify fails): plain fetch of the
-// homepage plus a few same-site pages that usually describe the business (about, product, pricing, ...).
+// Reading a company's website (onboarding: propose an ICP from what the site says; research: read a prospect).
+// With APIFY_TOKEN: apify/website-content-crawler, cheerio first, and a JavaScript-rendering retry
+// (playwright:adaptive) when the plain crawl finds no text (client-rendered SPAs). Without it (or if Apify fails):
+// a plain fetch of the homepage plus a few same-site pages that usually describe the business (about, product,
+// pricing, ...). Sign-in and sign-up pages are never returned. Crusonia's own host is answered from its landing
+// copy (src/services/site-copy.ts): a Worker cannot fetch its own workers.dev hostname.
 import { z } from "zod";
 import type { Env } from "../env.ts";
-import { crawlWebsite, trimText, type PageText } from "./apify.ts";
+import { defaultFetch, type FetchFn } from "../providers/http.ts";
+import { AUTH_PATH, crawlWebsite, maxChargeUsd, trimText, type ApifyMeter, type PageText } from "./apify.ts";
 import { ServiceError, describeError } from "./errors.ts";
+import { siteCopy } from "./site-copy.ts";
 
 const MAX_CHARS_PER_PAGE = 6000;
 const MAX_HTML_BYTES = 2_000_000;
 const FETCH_TIMEOUT_MS = 15_000;
 const USER_AGENT = "Mozilla/5.0 (compatible; CrusoniaBot/0.1; +https://github.com/DannyMang/crusonia)";
+/** Less visible text than this across all pages counts as an empty read (an SPA shell, a blocked page). */
+export const MIN_TEXT_CHARS = 200;
 
 export const readWebsiteInputSchema = z.object({
   url: z.string().trim().min(3).max(2048).describe("Company website, e.g. 'https://acme.com' or 'acme.com'."),
@@ -17,15 +24,22 @@ export const readWebsiteInputSchema = z.object({
   render_js: z
     .boolean()
     .default(false)
-    .describe("Render JavaScript in a browser (slower, needs APIFY_TOKEN). Use it if the default read returns little text."),
+    .describe(
+      "Render JavaScript in a browser from the start (slower, needs APIFY_TOKEN). Not needed in general: a read that finds no text is retried with rendering automatically.",
+    ),
 });
 export type ReadWebsiteInput = z.infer<typeof readWebsiteInputSchema>;
 
 export type ReadWebsiteResult = {
-  mode: "apify" | "direct_fetch";
+  mode: "apify" | "direct_fetch" | "own_site";
   pages: PageText[];
+  /** True when the pages were rendered in a browser (asked for, or the automatic retry). */
+  rendered?: boolean;
   note?: string;
 };
+
+/** Metering (Apify runs) and a fetch double for tests. */
+export type ReadWebsiteDeps = { meter?: ApifyMeter; fetchFn?: FetchFn };
 
 export function normalizeUrl(raw: string): URL {
   const value = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`;
@@ -43,20 +57,54 @@ export function normalizeUrl(raw: string): URL {
   return url;
 }
 
-export async function readWebsite(env: Env, input: ReadWebsiteInput): Promise<ReadWebsiteResult> {
+/** PUBLIC_URL's host, or one of its preview hosts (<alias or version>-<host>, e.g. app-crusonia.x.workers.dev). */
+export function isOwnHost(env: Pick<Env, "PUBLIC_URL">, url: URL): boolean {
+  let own: string;
+  try {
+    own = new URL(env.PUBLIC_URL).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  return host === own || host.endsWith(`-${own}`);
+}
+
+export const isEmptyRead = (pages: PageText[]) => pages.reduce((n, p) => n + p.text.trim().length, 0) < MIN_TEXT_CHARS;
+
+function ownSite(url: URL, maxPages: number): ReadWebsiteResult {
+  const pages = siteCopy();
+  // The page asked for first (e.g. /pricing), then the rest in site order.
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const ordered = [...pages.filter((p) => p.path === path), ...pages.filter((p) => p.path !== path)].slice(0, maxPages);
+  return {
+    mode: "own_site",
+    pages: ordered.map((p) => ({ url: new URL(p.path, url.origin).href, title: p.title, description: p.description, ...trimText(p.text, MAX_CHARS_PER_PAGE) })),
+    note: "This is Crusonia's own site: read from its landing copy (a Worker cannot fetch its own hostname).",
+  };
+}
+
+export async function readWebsite(env: Env, input: ReadWebsiteInput, deps: ReadWebsiteDeps = {}): Promise<ReadWebsiteResult> {
   const url = normalizeUrl(input.url);
+  if (isOwnHost(env, url)) return ownSite(url, input.max_pages);
   let note: string | undefined;
 
   if (env.APIFY_TOKEN) {
+    const ctx = { token: env.APIFY_TOKEN, maxChargeUsd: maxChargeUsd(env), meter: deps.meter, fetchFn: deps.fetchFn };
+    const crawl = (renderJs: boolean) =>
+      crawlWebsite(ctx, { url: url.href, maxPages: input.max_pages, renderJs, maxCharsPerPage: MAX_CHARS_PER_PAGE });
     try {
-      const pages = await crawlWebsite(env.APIFY_TOKEN, {
-        url: url.href,
-        maxPages: input.max_pages,
-        renderJs: input.render_js,
-        maxCharsPerPage: MAX_CHARS_PER_PAGE,
-      });
-      if (pages.length) return { mode: "apify", pages };
-      note = "Apify returned no pages; fell back to a plain fetch.";
+      const pages = await crawl(input.render_js);
+      if (!isEmptyRead(pages)) return { mode: "apify", pages, ...(input.render_js ? { rendered: true } : {}) };
+      if (input.render_js) {
+        note = "Apify found no readable text even with JavaScript rendering; fell back to a plain fetch.";
+      } else {
+        // Client-rendered sites (SPAs) have no text until JavaScript runs: read them again in a browser.
+        const rendered = await crawl(true);
+        if (!isEmptyRead(rendered)) {
+          return { mode: "apify", pages: rendered, rendered: true, note: "The plain crawl found no text, so the site was read again with JavaScript rendering." };
+        }
+        note = "Apify found no readable text, even with JavaScript rendering; fell back to a plain fetch.";
+      }
     } catch (err) {
       note = `Apify crawl failed (${describeError(err)}); fell back to a plain fetch.`;
     }
@@ -65,7 +113,17 @@ export async function readWebsite(env: Env, input: ReadWebsiteInput): Promise<Re
     if (input.render_js) note += " render_js was ignored.";
   }
 
-  const pages = await fetchSite(url, input.max_pages);
+  let pages: PageText[];
+  try {
+    pages = await fetchSite(url, input.max_pages, deps.fetchFn ?? defaultFetch);
+  } catch (err) {
+    // Say what was tried before the fetch failed, so the agent (or owner) knows which provider to blame.
+    throw new ServiceError("upstream", `${describeError(err)}${note ? ` ${note.replace(/; fell back to a plain fetch\.$/, ".")}` : ""}`);
+  }
+  if (isEmptyRead(pages)) {
+    const empty = "The page has almost no text without JavaScript.";
+    note = note ? `${note} ${empty}` : empty;
+  }
   return { mode: "direct_fetch", pages, note };
 }
 
@@ -75,10 +133,10 @@ type Extracted = PageText & { links: string[] };
 
 // Pages that tend to say what a company sells and to whom.
 const PRIORITY = /(about|company|product|platform|solution|feature|pricing|customer|case-stud|use-case|industr|who-we|why|how-it-works|services)/i;
-const SKIP = /(login|log-in|signin|sign-in|signup|sign-up|register|privacy|terms|legal|cookie|careers|jobs|status|cdn-cgi|\/cart|checkout|\.(pdf|png|jpe?g|gif|svg|webp|zip|mp4|xml|json)$)/i;
+const SKIP = /(privacy|terms|legal|cookie|careers|jobs|status|cdn-cgi|\/cart|checkout|\.(pdf|png|jpe?g|gif|svg|webp|zip|mp4|xml|json)$)/i;
 
-async function fetchSite(start: URL, maxPages: number): Promise<PageText[]> {
-  const home = await fetchPage(start);
+async function fetchSite(start: URL, maxPages: number, fetchFn: FetchFn): Promise<PageText[]> {
+  const home = await fetchPage(start, fetchFn);
   if (home instanceof ServiceError) throw home;
   const pages: PageText[] = [strip(home)];
   if (maxPages <= 1) return pages;
@@ -96,14 +154,14 @@ async function fetchSite(start: URL, maxPages: number): Promise<PageText[]> {
     link.hash = "";
     link.search = "";
     const key = canonical(link);
-    if (link.origin !== origin || seen.has(key) || SKIP.test(link.pathname)) continue;
+    if (link.origin !== origin || seen.has(key) || SKIP.test(link.pathname) || AUTH_PATH.test(link.pathname)) continue;
     seen.add(key);
     const depth = link.pathname.split("/").filter(Boolean).length;
     candidates.push({ url: link, rank: (PRIORITY.test(link.pathname) ? 0 : 10) + depth });
   }
   candidates.sort((a, b) => a.rank - b.rank);
 
-  const extra = await Promise.all(candidates.slice(0, maxPages - 1).map((c) => fetchPage(c.url)));
+  const extra = await Promise.all(candidates.slice(0, maxPages - 1).map((c) => fetchPage(c.url, fetchFn)));
   for (const page of extra) if (!(page instanceof ServiceError) && page.text) pages.push(strip(page));
   return pages;
 }
@@ -116,10 +174,10 @@ function strip({ links: _links, ...page }: Extracted): PageText {
   return page;
 }
 
-async function fetchPage(url: URL): Promise<Extracted | ServiceError> {
+async function fetchPage(url: URL, fetchFn: FetchFn): Promise<Extracted | ServiceError> {
   let res: Response;
   try {
-    res = await fetch(url.href, {
+    res = await fetchFn(url.href, {
       headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5" },
       redirect: "follow",
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),

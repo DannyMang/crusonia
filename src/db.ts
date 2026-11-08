@@ -48,6 +48,15 @@ export type Lead = {
   notion_synced_at?: Date | null;
   // Experiment the lead is enrolled in (its arm is `variant`).
   experiment_id?: string | null;
+  // Named people and links found on public pages the agent read (src/services/leads.ts Contact, Link).
+  contacts?: { name: string; title: string | null; linkedin_url: string | null; x_url: string | null; github_url: string | null; source_url: string; found_at: string }[];
+  links?: { kind: string; url: string; source_url: string; found_at: string }[];
+  // The agent's "why we picked this" (2-4 sentences citing evidence by number) and suggested next step.
+  why_summary?: string | null;
+  next_step?: string | null;
+  // The owner excluded the company: future runs skip it until un-excluded.
+  excluded_at?: Date | null;
+  excluded_reason?: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -65,6 +74,14 @@ export type Draft = {
   error: string | null;
   // Set when the lead's experiment was running at draft time; the draft counts toward that experiment.
   experiment_id?: string | null;
+  // email (AgentMail, approval) | email_manual | linkedin | x | intro (manual tasks; see src/services/channels.ts).
+  channel?: string;
+  // Manual tasks: the profile the owner opens to send it.
+  target_url?: string | null;
+  // Factual phrases in the body and the saved evidence behind them: [{ text, source_url }].
+  citations?: { text: string; source_url: string }[];
+  // Manual tasks: when the owner marked it sent or skipped.
+  closed_at?: Date | null;
   created_at: Date;
 };
 

@@ -6,17 +6,25 @@ import { latestIdle, researchMessage, sessionStatus } from "../src/services/work
 describe("tool allowlist", () => {
   const defaults = parseToolAllowlist(undefined);
 
-  test("defaults to crusonia.*, apify.*, web_search, web_fetch", () => {
+  test("defaults to crusonia.*, the Apify page reader and get-* readers, web_search, web_fetch", () => {
     expect(defaults).toEqual(DEFAULT_AUTO_CONFIRM_TOOLS.split(","));
     expect(parseToolAllowlist("  ")).toEqual(defaults);
   });
 
   test("prefix wildcards match only their namespace", () => {
     expect(isToolAllowed("crusonia.get_lead", defaults)).toBe(true);
-    expect(isToolAllowed("apify.call-actor", defaults)).toBe(true);
+    expect(isToolAllowed("apify.apify--rag-web-browser", defaults)).toBe(true);
+    expect(isToolAllowed("apify.get-dataset-items", defaults)).toBe(true);
+    expect(isToolAllowed("apify.get-actor-run", defaults)).toBe(true);
     expect(isToolAllowed("crusonia_evil.get_lead", defaults)).toBe(false);
     expect(isToolAllowed("crusonia", defaults)).toBe(false);
     expect(isToolAllowed("xcrusonia.get_lead", defaults)).toBe(false);
+  });
+
+  test("Apify Actor runs are not auto-allowed: they reach the owner as approvals", () => {
+    for (const tool of ["apify.call-actor", "apify.apify--website-content-crawler", "apify.apify--google-search-scraper", "apify.abort-actor-run", "apify.search-actors"]) {
+      expect(isToolAllowed(tool, defaults)).toBe(false);
+    }
   });
 
   test("exact names match exactly", () => {
@@ -95,6 +103,6 @@ describe("naive workflow helpers", () => {
     const msg = researchMessage("lead_abc");
     expect(msg).toContain("lead_abc");
     expect(msg).toContain("untrusted");
-    expect(msg).toContain("cannot send email");
+    expect(msg).toContain("cannot send");
   });
 });
