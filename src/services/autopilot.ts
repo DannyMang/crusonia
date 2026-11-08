@@ -340,6 +340,7 @@ type ActiveRun = {
   autopilot: boolean;
   paused: boolean;
   session_status: string | null;
+  session_stop: string | null;
 };
 
 async function finishRun(sql: Sql, run: Pick<ActiveRun, "id" | "workspace_id" | "workflow_id">, reason?: string) {
@@ -414,7 +415,7 @@ async function startQueued(sql: Sql, env: Env, run: ActiveRun, fetchFn?: FetchFn
   }
   const [open] = await sql`
     select (exists (select 1 from workflow_run_leads where run_id = ${run.id} and status in ('queued', 'starting'))
-         or exists (select 1 from naive_sessions where workflow_run_id = ${run.id} and status in ('running', 'idle'))) as busy`;
+         or exists (select 1 from naive_sessions where workflow_run_id = ${run.id} and status in ('running', 'idle') and coalesce(stop_reason, '') <> 'budget_paused')) as busy`;
   if (!open?.busy) await finishRun(sql, run);
 }
 
@@ -440,7 +441,7 @@ async function spendStop(sql: Sql, env: Env, run: ActiveRun): Promise<string | n
 async function advanceRuns(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<number> {
   const runs = (await sql`
     select r.id, r.workspace_id, r.workflow_id, r.version, r.phase, r.find_session_id, r.started_at, d.trigger as trigger_cfg,
-           w.autopilot, w.paused, s.status as session_status
+           w.autopilot, w.paused, s.status as session_status, s.stop_reason as session_stop
     from workflow_runs r
     join workflow_defs d on d.id = r.workflow_id
     join workspaces w on w.id = r.workspace_id
@@ -458,7 +459,9 @@ async function advanceRuns(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<numbe
       // Off or paused: the sessions already open finish, nothing new starts.
       if (!run.autopilot || run.paused) continue;
       if (run.phase === "finding") {
-        if (run.session_status === "done" || run.session_status === "error" || (!run.find_session_id && Date.now() - new Date(run.started_at).getTime() > 5 * 60_000)) {
+        // A session out of budget won't go on by itself: what it saved so far is what the run has.
+        const ended = run.session_status === "done" || run.session_status === "error" || run.session_stop === "budget_paused";
+        if (ended || (!run.find_session_id && Date.now() - new Date(run.started_at).getTime() > 5 * 60_000)) {
           if (run.find_session_id) await queueFound(sql, env, run, fetchFn);
           else await finishRun(sql, run, "did_not_start");
           moved++;

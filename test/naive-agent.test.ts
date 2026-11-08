@@ -6,8 +6,6 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMcpServer } from "../src/mcp/server.ts";
 import { RESEARCHER_TOOLS } from "../src/mcp/toolsets.ts";
 import {
-  APIFY_ALLOWED_TOOLS,
-  APIFY_MCP_URL,
   CRUSONIA_TOOLS,
   DENIED_BUILTINS,
   DEFAULT_AGENT_MODEL,
@@ -76,21 +74,16 @@ describe("agent definition", () => {
       const allowed = (RESEARCHER_TOOLS as readonly string[]).includes(tool);
       expect(tools.configs[`crusonia.${tool}`]).toEqual(allowed ? { enabled: true, permission: "allow" } : { enabled: false, permission: "deny" });
     }
-    for (const tool of APIFY_ALLOWED_TOOLS) expect(tools.configs[`apify.${tool}`]).toEqual({ enabled: true, permission: "allow" });
     expect(tools.configs.ask_operator).toEqual({ enabled: true, permission: "ask" });
-    // Actor runs and anything unlisted fall through to the `ask` default, and the Apify URL loads no Actor-run tools.
-    expect(tools.configs["apify.call-actor"]).toBeUndefined();
-    expect(APIFY_MCP_URL).not.toContain("actors");
-    expect(APIFY_MCP_URL).not.toContain("website-content-crawler");
-    expect(tools.configs["apify.apify--website-content-crawler"]).toBeUndefined();
-    expect(Object.keys(tools.configs)).toHaveLength(CRUSONIA_TOOLS.length + APIFY_ALLOWED_TOOLS.length + DENIED_BUILTINS.length + 1);
+    // Anything unlisted falls through to the `ask` default, and no agent has Apify's own server any more.
+    expect(Object.keys(tools.configs).filter((k) => k.startsWith("apify."))).toEqual([]);
+    expect(Object.keys(tools.configs)).toHaveLength(CRUSONIA_TOOLS.length + DENIED_BUILTINS.length + 1);
   });
 
   test("MCP servers match the vault credential URLs, and every namespaced tool has its server", () => {
     const c = config();
     expect(c.mcp_servers).toEqual([
       { type: "url", name: "crusonia", url: "https://crusonia.example.dev/mcp?role=researcher" },
-      { type: "url", name: "apify", url: APIFY_MCP_URL },
     ]);
     const servers = new Set(c.mcp_servers.map((s) => s.name));
     for (const key of Object.keys(c.tools.configs).filter((k) => k.includes("."))) expect(servers.has(key.split(".")[0]!)).toBe(true);

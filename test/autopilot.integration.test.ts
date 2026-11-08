@@ -38,9 +38,9 @@ const baseEnv = (ws: string): Env => ({
 });
 
 /** Mocked Naive: each session gets an id, and the messages sent are recorded. */
+let n = 0; // Session ids are unique across this file's workspaces, like Naive's.
 function naive() {
   const sessions: { id: string; agent_id: string; message: string; metadata: Record<string, string> }[] = [];
-  let n = 0;
   let failCreate = false;
   const events = new Map<string, unknown[]>();
   const fn: FetchFn = async (input, init) => {
@@ -296,6 +296,27 @@ suite("autopilot (database, mocked Naive)", () => {
     const [r] = await sql`select phase from workflow_runs where id = ${`wfr_s_${run}`}`;
     expect(r!.phase).toBe("done");
   }, 30_000);
+
+  test("a find session out of budget ends the find step with what it saved, and doesn't hold the run", async () => {
+    const ws = await workspace("budget");
+    const env = baseEnv(ws);
+    const n = naive();
+    await summary(ws);
+    await runAutopilot(sql, env, n.fn);
+    const find = n.sessions[0]!;
+    await addLeads(sql, ws, [{ company: "Saved", domain: `saved-${run}.dev`, source: "it", source_url: `https://saved-${run}.dev/`, score: 80, qualified: true, rationale: "r" }], { cohort: `run:${find.id}` }).then((out) =>
+      n.events.set(find.id, [{ seq: 1, type: "tool.completed", data: { name: "crusonia.add_leads", output: JSON.stringify(out) }, created_at: new Date().toISOString() }]),
+    );
+    await sql`update naive_sessions set status = 'idle', stop_reason = 'budget_paused' where id = ${find.id}`;
+    await runAutopilot(sql, env, n.fn);
+    await runAutopilot(sql, env, n.fn);
+    const research = n.sessions.filter((s) => s.metadata.purpose === "research");
+    expect(research).toHaveLength(1);
+    await sql`update naive_sessions set status = 'idle', stop_reason = 'budget_paused' where id = ${research[0]!.id}`;
+    await runAutopilot(sql, env, n.fn);
+    const [r] = await sql`select phase from workflow_runs where workspace_id = ${ws}`;
+    expect(r!.phase).toBe("done");
+  }, 60_000);
 
   test("imports nobody ran start by themselves on the default workflow; consented ones first", async () => {
     const ws = await workspace("csv");

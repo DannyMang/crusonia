@@ -301,34 +301,7 @@ async function ensureCrusoniaCredentials(naive: Naive, baseUrl: string) {
   }
 }
 
-async function ensureApifyCredential(naive: Naive) {
-  const vaultId = getVar("NAIVE_VAULT_ID");
-  const apifyToken = getVar("APIFY_TOKEN");
-  if (!vaultId || !apifyToken) {
-    notes.push(`Apify MCP credential not checked: ${!vaultId ? "NAIVE_VAULT_ID" : "APIFY_TOKEN"} is not set. The agent's Apify tools need a vault credential for ${APIFY_MCP_URL}.`);
-    return;
-  }
-  const creds = await vaultCredentials(naive, vaultId);
-  if (!creds.some((c) => c.mcp_server_url === APIFY_MCP_URL)) {
-    try {
-      await naive.post(
-        `/v1/vaults/${encodeURIComponent(vaultId)}/credentials`,
-        { kind: "static_bearer", key: "Apify MCP (rag-web-browser)", mcp_server_url: APIFY_MCP_URL, value: apifyToken },
-        `naive-credential:${vaultId}:${APIFY_MCP_URL}:${await sha256Hex(apifyToken)}`,
-      );
-      console.log(`Naive vault credential: Apify MCP -> ${APIFY_MCP_URL}`);
-    } catch (err) {
-      notes.push(`Apify MCP credential for ${APIFY_MCP_URL} failed (the key needs the admin scope); the agent's Apify tools will fail until it exists. ${(err as Error).message}`);
-    }
-  }
-  const stale = creds.filter((c) => c.mcp_server_url?.startsWith("https://mcp.apify.com") && c.mcp_server_url !== APIFY_MCP_URL);
-  if (stale.length) {
-    notes.push(`Naive vault: ${stale.length} Apify credential(s) for an older Apify MCP URL are no longer used by the agent; delete them in Naive if you like.`);
-  }
-}
-
 async function applyNaiveAgent(baseUrl: string, naive: Naive) {
-  await ensureApifyCredential(naive);
   await ensureCrusoniaCredentials(naive, baseUrl);
   const usd = (micro: number) => `$${(micro / 1_000_000).toFixed(2)}`;
   const report = (agent: Awaited<ReturnType<typeof createNaiveAgent>>) => {

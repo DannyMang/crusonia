@@ -14,6 +14,8 @@ const APIFY_API = "https://api.apify.com/v2";
 
 /** Default cap per Actor run in USD. A 5-page crawl or one search page costs well under a cent. */
 export const DEFAULT_MAX_CHARGE_USD = 0.25;
+/** Apify refuses a Google search run capped below this (max-total-charge-usd-below-minimum), whatever it would cost. */
+export const GOOGLE_SEARCH_MIN_CHARGE_USD = 0.5;
 
 /** APIFY_MAX_CHARGE_USD as a positive number of USD, else the default. */
 export function maxChargeUsd(env: Pick<Env, "APIFY_MAX_CHARGE_USD">): number {
@@ -255,7 +257,7 @@ export async function searchGoogle(ctx: ApifyContext, input: SearchInput): Promi
     },
     {
       timeoutSecs: 60,
-      maxChargeUsd: ctx.maxChargeUsd,
+      maxChargeUsd: Math.max(ctx.maxChargeUsd, GOOGLE_SEARCH_MIN_CHARGE_USD),
       fields: ["organicResults", "relatedQueries"],
       limit: Math.ceil(input.max_results / 10),
       meter: ctx.meter,
