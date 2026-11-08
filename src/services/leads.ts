@@ -7,7 +7,8 @@ import { z } from "zod";
 import type { Approval, Draft, Lead, Sql } from "../db.ts";
 import { newId, variantFor } from "../ids.ts";
 import { normalizeDomain, whyNoDomain } from "./domains.ts";
-import { getQualificationWorkflow, missingEvidenceQuestion, missingRequirements, type RequirementGap } from "./qualification.ts";
+import { missingEvidenceQuestion, missingRequirements, type RequirementGap } from "./qualification.ts";
+import { OWNER_WORKSPACE_ID, workflowForLead } from "./workflow-defs.ts";
 import { ServiceError } from "./errors.ts";
 
 // Stages a lead can be in (see schema.sql). Agent-found leads start in `no_consent` (found, not scored yet). Scoring
@@ -590,9 +591,12 @@ export const scoreInputSchema = z.object({
   qualified: z.boolean().describe("Your verdict: is this lead worth pursuing?"),
 });
 
-/** Required evidence the lead doesn't have yet (the qualification workflow's), counting `adding` (this call's items). */
+/**
+ * Required evidence the lead doesn't have yet, counting `adding` (this call's items). The requirements are those of
+ * the workflow version the lead was run under, else the default workflow's (./workflow-defs.ts).
+ */
 async function evidenceGaps(sql: Sql, leadId: string, adding: { requirement?: string | null }[] = []): Promise<RequirementGap[]> {
-  const workflow = await getQualificationWorkflow(sql);
+  const workflow = await workflowForLead(sql, OWNER_WORKSPACE_ID, leadId);
   if (!workflow?.evidence_requirements.some((r) => r.required !== false)) return [];
   const rows = await sql`select distinct requirement from evidence where lead_id = ${leadId} and requirement is not null`;
   return missingRequirements(workflow, [...rows.map((r) => r.requirement as string), ...adding.map((e) => e.requirement)]);

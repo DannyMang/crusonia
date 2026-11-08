@@ -6,6 +6,7 @@ import { requireAuth } from "./auth.ts";
 import { billing } from "./billing.ts";
 import { dashboard } from "./dashboard.ts";
 import { experiments } from "./experiments.ts";
+import { importRoutes } from "./import.ts";
 import { integrations } from "./integrations.ts";
 import { keys } from "./keys.ts";
 import { leads } from "./leads.ts";
@@ -13,6 +14,7 @@ import { notes } from "./notes.ts";
 import { onboarding, profile } from "./onboarding.ts";
 import { settings, suppressions } from "./settings.ts";
 import { tasks } from "./tasks.ts";
+import { workflowDefs } from "./workflow-defs.ts";
 import { workflows } from "./workflows.ts";
 
 export const api = new Hono<AppEnv>();
@@ -25,6 +27,10 @@ api.route("/approvals", approvals);
 // Manual outreach queue: LinkedIn, X, intro and own-mailbox drafts the owner sends personally.
 api.route("/tasks", tasks);
 api.route("/workflows", workflows);
+// Versioned qualification workflows, their runs and run history (separate from /workflows, which Home reads).
+api.route("/workflow-definitions", workflowDefs);
+// CSV import with a mapping and a duplicate preview.
+api.route("/import", importRoutes);
 api.route("/settings", settings);
 api.route("/suppressions", suppressions);
 // Web app: /me, /summary, /status, /replies.

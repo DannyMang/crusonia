@@ -31,6 +31,7 @@ export const CRUSONIA_TOOLS = [
   "list_tasks",
   "add_note",
   "get_workflow",
+  "create_workflow",
   "flag_for_review",
 ] as const;
 

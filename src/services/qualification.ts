@@ -1,14 +1,30 @@
 // The qualification workflow: what research must establish before a lead is scored. The ICP comes from the Company
 // summary; this adds the research questions, the evidence requirements and the completion criteria. Research sessions
-// get it in their first message (and the get_workflow MCP tool). Saved under settings key `qualification_workflow`,
-// versioned: every save is a new version. Nothing is hardcoded: with no workflow saved, research works as before.
+// get it in their first message (and the get_workflow MCP tool).
+//
+// Workflows are versioned definitions (./workflow-defs.ts). A lead run under a workflow version follows that version;
+// any other lead follows the workspace's default definition. GET/PUT /api/workflows/qualification and the functions
+// below read and write that default definition (every save is a new version). With none saved, research works as
+// before (score against the Company summary).
 //
 // Pause on missing evidence: a lead whose evidence doesn't cover every required requirement is never scored. It moves
 // to `needs_review` with a `review_question` (the agent's, or one naming the missing evidence), and the run goes on.
-// TODO(workspaces): one workflow per workspace.
 import { z } from "zod";
 import type { Sql } from "../db.ts";
+import { ServiceError } from "./errors.ts";
 import { getProfile, type Profile } from "./profile.ts";
+import {
+  OWNER_WORKSPACE_ID,
+  createDefinition,
+  createVersion,
+  defaultDefinition,
+  defaultQualification,
+  getDefinition,
+  listDefinitions,
+  loadVersion,
+  researchBriefs,
+  toQualification,
+} from "./workflow-defs.ts";
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const slug = z
@@ -35,29 +51,29 @@ export const qualificationWorkflowSchema = z
 export type QualificationWorkflowInput = z.input<typeof qualificationWorkflowSchema>;
 export type QualificationWorkflow = z.infer<typeof qualificationWorkflowSchema> & { version: number; updated_at: string };
 
-export async function getQualificationWorkflow(sql: Sql): Promise<QualificationWorkflow | null> {
-  const [row] = await sql`select value from settings where key = 'qualification_workflow'`;
-  return (row?.value as QualificationWorkflow | undefined) ?? null;
+export async function getQualificationWorkflow(sql: Sql, ws: string = OWNER_WORKSPACE_ID): Promise<QualificationWorkflow | null> {
+  return defaultQualification(sql, ws);
 }
 
-/** Saves a new version (the previous one stays in the audit trail). */
-export async function saveQualificationWorkflow(sql: Sql, input: QualificationWorkflowInput, actor: string): Promise<QualificationWorkflow> {
+/** Saves a new version of the default definition (creating it on the first save). Older versions stay. */
+export async function saveQualificationWorkflow(
+  sql: Sql,
+  input: QualificationWorkflowInput,
+  actor: string,
+  ws: string = OWNER_WORKSPACE_ID,
+): Promise<QualificationWorkflow> {
   const def = qualificationWorkflowSchema.parse(input);
-  const rows = await sql`
-    with prev as (select value from settings where key = 'qualification_workflow'),
-    up as (
-      insert into settings (key, value)
-      values ('qualification_workflow', ${JSON.stringify(def)}::jsonb
-              || jsonb_build_object('version', coalesce(((select value from prev)->>'version')::int, 0) + 1, 'updated_at', now()))
-      on conflict (key) do update set value = excluded.value
-      returning value
-    ),
-    ev as (
-      insert into events (lead_id, kind, data)
-      select null, 'qualification_workflow_saved', jsonb_build_object('version', value->'version', 'actor', ${actor}::text, 'workflow', value) from up
-    )
-    select value from up`;
-  return rows[0]!.value as QualificationWorkflow;
+  const content = {
+    research_questions: def.research_questions.map((q) => q.question),
+    evidence_required: def.evidence_requirements.map((r) => r.description),
+    done_when: def.completion_criteria.join("\n") || null,
+  };
+  // Keep the caller's ids and optional flags: the agent tags evidence with them.
+  const storedContent = { research_questions: def.research_questions, evidence_required: def.evidence_requirements };
+  const current = await defaultDefinition(sql, ws);
+  if (current) await createVersion(sql, ws, current.def.id, { ...content, name: def.name, steps: current.version.steps, variants: current.version.variants }, { actor, storedContent });
+  else await createDefinition(sql, ws, { ...content, name: def.name, trigger: { kind: "manual", label: "Run manually" } }, { actor, source: "user", isDefault: true, storedContent });
+  return (await defaultQualification(sql, ws))!;
 }
 
 export type RequirementGap = { id: string; description: string };
@@ -91,11 +107,35 @@ export function workflowBrief(workflow: QualificationWorkflow | null): string | 
   return lines.join("\n");
 }
 
-/** MCP get_workflow: the qualification workflow and the ICP it scores against (from the Company summary). */
-export async function getWorkflowForAgent(sql: Sql): Promise<{ workflow: QualificationWorkflow | null; icp: Pick<Profile, "sells" | "icp_description" | "segments" | "signals"> | null }> {
-  const [workflow, profile] = await Promise.all([getQualificationWorkflow(sql), getProfile(sql)]);
+/**
+ * MCP get_workflow: the qualification workflow a lead's research follows (its workflow run's version, else the default
+ * definition), or a given definition's version, with the ICP it scores against (from the Company summary) and, when
+ * it comes from a definition, the definition itself. Without arguments: the default plus the list of definitions.
+ */
+export async function getWorkflowForAgent(
+  sql: Sql,
+  opts: { lead_id?: string; workflow_id?: string; version?: number } = {},
+  ws: string = OWNER_WORKSPACE_ID,
+) {
+  const profile = await getProfile(sql);
+  const icp: Pick<Profile, "sells" | "icp_description" | "segments" | "signals"> | null = profile
+    ? { sells: profile.sells, icp_description: profile.icp_description, segments: profile.segments, signals: profile.signals }
+    : null;
+  if (opts.workflow_id) {
+    const { workflow, versions } = await getDefinition(sql, ws, opts.workflow_id);
+    const version = opts.version ?? workflow.latest_version;
+    const row = await loadVersion(sql, workflow.id, version);
+    return { workflow: toQualification(workflow, row), icp, definition: workflow, version: versions.find((v) => v.version === version) ?? null };
+  }
+  if (opts.lead_id) {
+    const brief = (await researchBriefs(sql, ws, [opts.lead_id])).get(opts.lead_id);
+    if (!brief) throw new ServiceError("not_found", `No lead with id ${opts.lead_id}.`);
+    return { workflow: brief.workflow, icp, workflow_id: brief.workflow_id, variant: brief.variant, angle: brief.angle };
+  }
+  const [workflow, definitions] = await Promise.all([defaultQualification(sql, ws), listDefinitions(sql, ws)]);
   return {
     workflow,
-    icp: profile ? { sells: profile.sells, icp_description: profile.icp_description, segments: profile.segments, signals: profile.signals } : null,
+    icp,
+    definitions: definitions.map((d) => ({ id: d.id, name: d.name, latest_version: d.latest_version, is_default: d.is_default, source: d.source })),
   };
 }

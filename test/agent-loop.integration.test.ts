@@ -15,6 +15,7 @@ import { createDraft } from "../src/services/drafts.ts";
 import { addLeads, getLeadDetail, saveResearch, scoreLead } from "../src/services/leads.ts";
 import { addNote, deleteNote, editNote, excludeLead, recentOwnerNotes, unexcludeLead } from "../src/services/notes.ts";
 import { getQualificationWorkflow, saveQualificationWorkflow } from "../src/services/qualification.ts";
+import { OWNER_WORKSPACE_ID, defaultDefinition } from "../src/services/workflow-defs.ts";
 import { getFindRun, getRunDetail, startFindLeads } from "../src/services/runs.ts";
 import { searchLeads } from "../src/services/crm.ts";
 import { listTasks, markTaskSent, skipTask } from "../src/services/tasks.ts";
@@ -338,7 +339,8 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
   });
 
   test("qualification workflow: research gets it, missing required evidence pauses the lead in needs_review instead of a score", async () => {
-    const before = (await sql`select value from settings where key = 'qualification_workflow'`)[0]?.value ?? null;
+    // The qualification workflow is the default workflow definition (src/services/workflow-defs.ts): put it back after.
+    const before = await defaultDefinition(sql, OWNER_WORKSPACE_ID);
     try {
       const v1 = await saveQualificationWorkflow(sql, { name: `IT ${run}`, evidence_requirements: [{ id: "hiring", description: "A sales hire in the last 90 days" }] }, "test");
       const v2 = await saveQualificationWorkflow(
@@ -355,7 +357,7 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
       const nv = provider((c) => (c.url.endsWith("/v1/sessions") ? Response.json({ id: sid("review"), status: "running" }) : undefined));
       await startResearch(sql, env, { lead_ids: [id] }, "test", nv.fn);
       expect(nv.calls[0]!.body.message).toContain("[hiring] (required) A sales hire in the last 90 days");
-      expect((await sql`select input from naive_sessions where id = ${sid("review")}`)[0]!.input).toEqual({ workflow_version: v2.version });
+      expect((await sql`select input from naive_sessions where id = ${sid("review")}`)[0]!.input).toMatchObject({ workflow_version: v2.version });
       await sql`update naive_sessions set status = 'done' where id = ${sid("review")}`;
 
       // A score without the required evidence is not stored: the lead pauses with a question.
@@ -396,9 +398,16 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
       const asked = await saveResearch(sql, { lead_id: id, review_question: "Is acme.io the same company?", contacts: [], links: [], evidence: [] });
       expect(asked).toMatchObject({ needs_review: true, lead: { stage: "needs_review", review_question: "Is acme.io the same company?" } });
     } finally {
-      if (before) await sql`update settings set value = ${JSON.stringify(before)}::jsonb where key = 'qualification_workflow'`;
-      else await sql`delete from settings where key = 'qualification_workflow'`;
-      await sql`delete from events where kind = 'qualification_workflow_saved' and data->>'actor' = 'test' and data->'workflow'->>'name' = ${`IT ${run}`}`;
+      const now = await defaultDefinition(sql, OWNER_WORKSPACE_ID);
+      if (now && !before) await sql`delete from workflow_defs where id = ${now.def.id}`;
+      if (now && before) {
+        await sql.transaction([
+          sql`update leads set workflow_id = null, workflow_version = null where workflow_id = ${before.def.id} and workflow_version > ${before.def.latest_version}`,
+          sql`delete from workflow_def_versions where workflow_id = ${before.def.id} and version > ${before.def.latest_version}`,
+          sql`update workflow_defs set latest_version = ${before.def.latest_version}, name = ${before.def.name} where id = ${before.def.id}`,
+        ]);
+      }
+      await sql`delete from events where kind in ('workflow_created', 'workflow_version_created') and data->>'actor' = 'test'`;
     }
   });
 
