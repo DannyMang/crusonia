@@ -9,7 +9,7 @@ import { Button, ButtonLink, QueryError, Skeleton } from "../ui.tsx";
 
 function Calm({ title, body, action }: { title: ReactNode; body: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex grow flex-col items-center justify-center gap-2 px-10 text-center">
+    <div className="flex grow flex-col items-center justify-center gap-2 px-6 py-10 text-center sm:px-10 sm:py-0">
       <div className="mb-1 flex size-9 items-center justify-center rounded-full bg-panel text-green">
         <ApprovalsIcon />
       </div>

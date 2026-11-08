@@ -135,17 +135,19 @@ export default function Approvals() {
   const empty = !loading && !pending.isError && all.length === 0 && !kind;
 
   return (
-    <Page className="h-screen min-h-160 gap-5 px-8 pb-6 pt-8">
-      <div className="flex h-9 shrink-0 items-center justify-between gap-6">
-        <div className="flex min-w-0 items-baseline gap-3">
+    // Phones: the page grows with its content (queue above the selected approval) instead of filling the window.
+    // (Plain `h-screen` stays: index.css compensates it for the page zoom.)
+    <Page className="h-screen min-h-160 gap-5 px-4 pb-6 pt-6 max-sm:h-auto max-sm:min-h-0 sm:px-8 sm:pt-8">
+      <div className="flex shrink-0 flex-col gap-3 sm:h-9 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 sm:flex-nowrap">
           <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Approvals</h1>
-          <p className="truncate text-[13px]/4 font-medium text-muted">Nothing is sent until someone approves the exact draft.</p>
+          <p className="text-[13px]/4 font-medium text-muted sm:truncate">Nothing is sent until someone approves the exact draft.</p>
         </div>
-        <SearchField inputRef={searchRef} value={search} onChange={setSearch} placeholder="Search recipient, company, code" className="h-8 w-65" />
+        <SearchField inputRef={searchRef} value={search} onChange={setSearch} placeholder="Search recipient, company, code" className="h-8 w-full sm:w-65" />
       </div>
 
-      <div className="flex h-7.5 shrink-0 items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 sm:h-7.5 sm:flex-nowrap">
+        <div className="flex flex-wrap items-center gap-2">
           {empty ? null : <FilterChip label="Kind" value={kind} options={KINDS} onChange={(v) => setKind(v as "" | ApprovalKind)} />}
           {workflows.length ? (
             <FilterChip label="Workflow" value={workflow} options={[{ value: "", label: "Any" }, ...workflows.map((w) => ({ value: w, label: w }))]} onChange={setWorkflow} />
@@ -159,7 +161,7 @@ export default function Approvals() {
             </button>
           ) : null}
         </div>
-        <div className="shrink-0 text-[13px]/4 tabular-nums text-faint" aria-live="polite">
+        <div className="min-w-0 text-[13px]/4 tabular-nums text-faint sm:shrink-0" aria-live="polite">
           {counts.join(" · ")}
         </div>
       </div>
@@ -167,7 +169,7 @@ export default function Approvals() {
       {pending.isError ? (
         <QueryError error={pending.error} what="approvals" onRetry={() => void pending.refetch()} />
       ) : empty ? (
-        <div className="flex min-h-0 grow flex-col items-center justify-center rounded-xl border border-[#200D0D1A]">
+        <div className="flex min-h-0 grow flex-col items-center justify-center rounded-xl border border-[#200D0D1A] max-sm:py-6">
           <EmptyState
             icon={<ApprovalsIcon />}
             title="Nothing waiting for you"
@@ -190,7 +192,7 @@ export default function Approvals() {
           />
         </div>
       ) : (
-        <div className="flex min-h-0 grow overflow-clip rounded-xl border border-[#200D0D1A]">
+        <div className="flex min-h-0 grow flex-col overflow-clip rounded-xl border border-[#200D0D1A] sm:flex-row">
           <Queue
             items={ordered}
             selectedCode={selected?.code}
@@ -221,7 +223,11 @@ export default function Approvals() {
       )}
 
       {toast ? (
-        <div role="status" className="fixed bottom-6 left-[calc(50%+120px)] z-20 flex h-10 -translate-x-1/2 items-center rounded-full bg-ink px-4.5 text-[13px]/4 font-medium text-white shadow-lg">
+        // Centred on the page: beside the 240px sidebar from `lg`, on the whole window below that.
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-20 flex min-h-10 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center rounded-[20px] bg-ink px-4.5 py-3 text-[13px]/4 font-medium text-white shadow-lg sm:py-0 lg:left-[calc(50%+120px)]"
+        >
           {toast}
         </div>
       ) : null}

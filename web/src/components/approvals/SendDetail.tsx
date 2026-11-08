@@ -149,7 +149,7 @@ export function SendDetail({ a, now, onDecided, leaveGuard }: { a: ApprovalListI
         {a.lead ? <Consent has={a.lead.has_consent} full={full} /> : null}
       </BindingStrip>
 
-      <div className="flex min-h-0 grow flex-col gap-3 overflow-y-auto px-5 py-3.5">
+      <div className="flex min-h-0 grow flex-col gap-3 overflow-y-auto px-4 py-3.5 sm:px-5">
         {draft ? (
           <div className="flex shrink-0 flex-col rounded-[10px] border border-[#200D0D1A]">
             <div className="flex items-baseline gap-2.5 border-b border-b-[#200D0D14] px-3.5 py-2.5">
@@ -175,7 +175,7 @@ export function SendDetail({ a, now, onDecided, leaveGuard }: { a: ApprovalListI
                 </div>
               )}
             </div>
-            <div className="pb-3 pl-19 pr-3.5 pt-2.5">
+            <div className="pb-3 pl-3.5 pr-3.5 pt-2.5 sm:pl-19">
               {mode === "edit" ? (
                 <textarea
                   value={body}
@@ -315,7 +315,7 @@ function WhyThisLead({ full, loading, failed, sessionId }: { full: LeadFull | un
   const meta = l ? [hostOf(l.website ?? l.domain), SOURCE[l.source] ?? (l.source ? `source: ${l.source}` : null)].filter(Boolean).join(" · ") : "";
   return (
     <section className="flex shrink-0 flex-col gap-2 rounded-[10px] border border-panel-line bg-panel px-3.5 py-3">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:flex-nowrap">
         <h3 className="shrink-0 whitespace-nowrap text-[13px]/4 font-semibold text-ink">Why this lead</h3>
         {l?.score !== null && l?.score !== undefined ? (
           <span className="flex h-5 shrink-0 items-center rounded-full bg-lime px-1.75 text-[11px]/3.5 font-semibold tabular-nums text-ink">score {l.score}</span>

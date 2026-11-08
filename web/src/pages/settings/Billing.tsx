@@ -102,11 +102,11 @@ export default function Billing() {
     <>
       <CrumbBar parent={{ label: "Settings", to: "/app/settings" }} here="Billing" />
       <Page>
-        <div className="flex w-240 max-w-full flex-col gap-4 px-12 pb-14 pt-8">
+        <div className="flex w-240 max-w-full flex-col gap-4 px-4 pb-14 pt-6 sm:px-12 sm:pt-8">
           <SettingsTabs />
 
-          <div className="flex items-end justify-between gap-6 pb-2 pt-3">
-            <div className="flex flex-col gap-2">
+          <div className="flex flex-col items-start gap-4 pb-2 pt-3 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
+            <div className="flex min-w-0 max-w-full flex-col gap-2">
               <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Billing</h1>
               <p className="w-140 max-w-full text-[13px]/4.5 font-medium text-muted">
                 Credits pay for hosted agent work, at 1 credit = $0.01. Payments, invoices and cards are handled by Stripe.
@@ -142,7 +142,7 @@ export default function Billing() {
             <>
               <BalanceCard b={b} />
 
-              <Card className="flex flex-col gap-4 p-6">
+              <Card className="flex flex-col gap-4 p-4 sm:p-6">
                 <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                   <h2 className={sectionTitle}>Buy credits</h2>
                   <p className={sectionNote}>One-time top-ups at the same rate. Pack credits never expire.</p>
@@ -170,7 +170,7 @@ export default function Billing() {
                 </div>
               </Card>
 
-              <Card className="flex flex-col gap-4 p-6">
+              <Card className="flex flex-col gap-4 p-4 sm:p-6">
                 <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                   <h2 className={sectionTitle}>Monthly plans</h2>
                   <p className={sectionNote}>Each plan adds its price back as credit every month. Change or cancel in Manage billing.</p>
@@ -301,7 +301,7 @@ function BalanceCard({ b }: { b: BillingData }) {
   const next = b.expiring[0];
   return (
     <Card className="flex flex-col overflow-clip md:flex-row">
-      <div className="flex shrink-0 flex-col gap-1.5 pb-6.5 pl-6 pr-7 pt-6 md:w-105">
+      <div className="flex shrink-0 flex-col gap-1.5 px-4 pb-6.5 pt-6 sm:pl-6 sm:pr-7 md:w-105">
         <div className={label}>Credit balance</div>
         <div className="flex items-baseline gap-2.5 pt-1">
           <span className={cx("tabular-nums text-[56px]/15 font-semibold tracking-[-0.035em]", b.balance < 0 ? "text-[#B42318]" : "text-ink")}>{num(b.balance)}</span>
@@ -311,9 +311,9 @@ function BalanceCard({ b }: { b: BillingData }) {
           {usd(b.balance_usd)} of usage at 1 credit = {usd(b.credit.usd)}
         </div>
       </div>
-      <dl className="flex grow flex-col border-t border-t-[#200D0D1A] px-6 py-2.5 md:border-l md:border-t-0 md:border-l-[#200D0D1A]">
+      <dl className="flex grow flex-col border-t border-t-[#200D0D1A] px-4 py-2.5 sm:px-6 md:border-l md:border-t-0 md:border-l-[#200D0D1A]">
         <FactRow label="Plan">
-          <dd className="flex min-w-0 grow items-center gap-2.5">
+          <dd className="flex min-w-0 grow flex-wrap items-center gap-x-2.5 gap-y-1 sm:flex-nowrap">
             <span className="shrink-0 text-[15px]/4.5 font-semibold text-ink">{planLabel(b.plan.name)}</span>
             {status ? <span className={cx("flex h-5.5 shrink-0 items-center rounded-full px-2.5 text-xs/4 font-medium", chipTone[status.tone])}>{status.label}</span> : null}
             <span className="grow" />
@@ -329,7 +329,7 @@ function BalanceCard({ b }: { b: BillingData }) {
         ) : null}
         <FactRow label="Expiring soon" last>
           {next ? (
-            <dd className="flex items-center gap-2.5">
+            <dd className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 sm:flex-nowrap">
               <span className="tabular-nums text-[15px]/4.5 font-semibold text-ink">{num(next.credits)} credits</span>
               <span className="tabular-nums text-[13px]/4 font-medium text-muted">
                 on {shortDate(next.expires_at)}
@@ -348,7 +348,7 @@ function BalanceCard({ b }: { b: BillingData }) {
 function FactRow({ label: text, last, children }: { label: string; last?: boolean; children: ReactNode }) {
   return (
     <div className={cx("flex min-h-12 shrink-0 items-center gap-2.5 py-2", !last && "border-b border-b-[#200D0D14]")}>
-      <dt className={cx(label, "w-30 shrink-0")}>{text}</dt>
+      <dt className={cx(label, "w-24 shrink-0 sm:w-30")}>{text}</dt>
       {children}
     </div>
   );
@@ -356,22 +356,23 @@ function FactRow({ label: text, last, children }: { label: string; last?: boolea
 
 function Activity({ b }: { b: BillingData }) {
   return (
-    <Card className="flex flex-col px-6 pb-2 pt-6">
+    <Card className="flex flex-col px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 pb-3.5">
         <h2 className={sectionTitle}>Recent activity</h2>
         <p className={sectionNote}>The last 20 changes to your balance</p>
       </div>
       {b.ledger.length ? (
+        // Phones drop the Date column and show the date under each entry instead.
         <table className="w-full border-collapse text-left">
           <thead>
             <tr className="h-8 border-b border-b-[#200D0D1A] text-xs/4 font-medium text-faint">
-              <th scope="col" className="w-35 pr-4 font-medium">
+              <th scope="col" className="hidden w-35 pr-4 font-medium sm:table-cell">
                 Date
               </th>
               <th scope="col" className="pr-4 font-medium">
                 What
               </th>
-              <th scope="col" className="w-30 text-right font-medium">
+              <th scope="col" className="w-20 text-right font-medium sm:w-30">
                 Credits
               </th>
             </tr>
@@ -381,12 +382,15 @@ function Activity({ b }: { b: BillingData }) {
               const line = ledgerLine(e, b);
               return (
                 <tr key={e.id} className={cx("h-13", i < b.ledger.length - 1 && "border-b border-b-[#200D0D0F]")}>
-                  <td className="whitespace-nowrap pr-4 tabular-nums text-[13px]/4 font-medium text-muted">
+                  <td className="hidden whitespace-nowrap pr-4 tabular-nums text-[13px]/4 font-medium text-muted sm:table-cell">
                     {shortDate(e.created_at)}, {clock(e.created_at)}
                   </td>
                   <td className="py-2 pr-4">
                     <div className="text-sm/4.5 font-medium text-ink">{line.title}</div>
                     {line.detail ? <div className="text-xs/4 font-medium text-faint">{line.detail}</div> : null}
+                    <div className="tabular-nums text-xs/4 font-medium text-muted sm:hidden">
+                      {shortDate(e.created_at)}, {clock(e.created_at)}
+                    </div>
                   </td>
                   <td className={cx("text-right tabular-nums text-sm/4.5 font-semibold", e.amount > 0 ? "text-[#15803D]" : "text-ink")}>{signedCredits(e.amount)}</td>
                 </tr>
@@ -404,8 +408,8 @@ function Activity({ b }: { b: BillingData }) {
 function LoadingState() {
   return (
     <div aria-busy="true" aria-label="Loading billing" className="flex flex-col gap-4">
-      <Card className="flex items-center gap-6 p-6">
-        <div className="flex w-90 flex-col gap-3">
+      <Card className="flex flex-col gap-6 p-4 sm:flex-row sm:items-center sm:p-6">
+        <div className="flex w-full flex-col gap-3 sm:w-90">
           <Skeleton className="h-4 w-28" />
           <Skeleton className="h-14 w-56" />
           <Skeleton className="h-4 w-60" />
@@ -416,12 +420,12 @@ function LoadingState() {
           <Skeleton className="h-5 w-2/3" />
         </div>
       </Card>
-      <Card className="flex gap-3 p-6">
+      <Card className="flex gap-3 p-4 sm:p-6">
         {[0, 1, 2].map((i) => (
           <Skeleton key={i} className="h-19 grow" />
         ))}
       </Card>
-      <Card className="flex gap-3 p-6">
+      <Card className="flex gap-3 p-4 sm:p-6">
         {[0, 1].map((i) => (
           <Skeleton key={i} className="h-48 grow" />
         ))}

@@ -26,7 +26,7 @@ export default function Home() {
     summary.data ?? (missing && fallbackApprovals.data && fallbackLeads.data ? fallbackSummary(fallbackLeads.data.data, fallbackApprovals.data.data, pause.data?.paused ?? false) : undefined);
 
   return (
-    <Page className="gap-7 px-12 pb-14 pt-10">
+    <Page className="gap-7 px-4 pb-14 pt-6 sm:px-12 sm:pt-10">
       <Header data={data} />
       {summary.isError && !missing ? <QueryError error={summary.error} what="your overview" onRetry={() => void summary.refetch()} /> : null}
       {data?.paused ? (
@@ -108,7 +108,7 @@ function Header({ data }: { data: Summary | undefined }) {
   // Only send approvals are drafts; tool calls and agent questions are counted separately.
   const drafts = Math.min(waiting, data?.pending_sends_total ?? data?.pending_approvals.filter((a) => a.kind === "send").length ?? 0);
   return (
-    <div className="flex items-start justify-between gap-6">
+    <div className="flex flex-col items-start gap-4 sm:flex-row sm:justify-between sm:gap-6">
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl/7.5 font-semibold tracking-[-0.02em] text-ink">
           {greeting()}
@@ -176,7 +176,7 @@ function AgentPill() {
 
 function Arrow() {
   return (
-    <div className="flex w-4 shrink-0 items-center justify-center">
+    <div className="hidden w-4 shrink-0 items-center justify-center sm:flex">
       <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden>
         <path d="M9 6l6 6-6 6" fill="none" stroke="rgb(32 13 13 / 30%)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -217,8 +217,8 @@ function PipelineStrip({ data, partial }: { data: Summary | undefined; partial: 
   ].filter(Boolean);
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-baseline justify-between">
-        <div className="flex items-baseline gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 className={sectionTitle}>Pipeline</h2>
           <div className={label}>{context.join(" · ")}</div>
         </div>
@@ -226,14 +226,15 @@ function PipelineStrip({ data, partial }: { data: Summary | undefined; partial: 
           Open leads
         </Link>
       </div>
-      <div className="flex border-y border-y-[#200D0D1A] py-3.5">
+      {/* Phones: three stats a row, "Awaiting approval" on a row of its own, no arrows. */}
+      <div className="grid grid-cols-3 gap-y-3 border-y border-y-[#200D0D1A] py-3.5 sm:flex">
         <Stat title="Found" value={v(p?.found)} note="new or in research" />
         <Arrow />
         <Stat title="Researched" value={v(p?.researched)} note="scored, sourced" />
         <Arrow />
         <Stat title="Drafted" value={v(p?.drafted)} note="draft needs a redo" />
         <Arrow />
-        <div className="flex grow-[1.25] basis-0 flex-col gap-1 rounded-[10px] border border-panel-line bg-panel px-3 py-1.5">
+        <div className="col-span-3 flex grow-[1.25] basis-0 flex-col gap-1 rounded-[10px] border border-panel-line bg-panel px-3 py-1.5">
           <div className="text-[13px]/4 font-semibold text-ink">Awaiting approval</div>
           <div className="flex items-center gap-2">
             {p ? (
@@ -297,12 +298,13 @@ function WaitingRow({ a }: { a: SummaryApproval }) {
   const domain = email?.split("@")[1] ?? "";
   const workflow = typeof a.payload?.workflow === "string" ? a.payload.workflow : null;
   return (
-    <div className="flex items-center gap-3.5 border-t border-t-[#200D0D14] px-4.5 py-3.5">
-      <div className="flex w-34 shrink-0 flex-col gap-0.5">
+    // Phones: company and code on top, the subject under them, then the buttons.
+    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5 border-t border-t-[#200D0D14] px-4 py-3.5 sm:flex-nowrap sm:px-4.5">
+      <div className="flex min-w-0 grow basis-0 flex-col gap-0.5 sm:w-34 sm:shrink-0 sm:grow-0 sm:basis-auto">
         <div className="truncate text-sm/4.5 font-medium text-ink">{company}</div>
         <div className="truncate text-[11px]/3.5 text-muted">{hostOf(domain)}</div>
       </div>
-      <div className="flex min-w-0 grow basis-0 flex-col gap-0.75">
+      <div className="order-1 flex min-w-0 grow basis-full flex-col gap-0.75 sm:order-none sm:basis-0">
         <div className="truncate text-[13px]/4 font-medium text-ink">{a.subject ? `“${a.subject}”` : a.summary}</div>
         <div className="truncate text-xs/4 font-medium text-muted">
           {[a.company ? a.lead_name : null, workflow ?? (a.draft ? `draft v${a.draft.version}` : a.kind)].filter(Boolean).join(" · ")}
@@ -312,7 +314,7 @@ function WaitingRow({ a }: { a: SummaryApproval }) {
         <div className="whitespace-pre text-[13px]/4 font-semibold text-ink tabular-nums">{a.code}</div>
         <div className="whitespace-pre text-[11px]/3.5 font-medium text-muted">waiting {duration(Date.now() - new Date(a.created_at).getTime())}</div>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="order-2 flex shrink-0 items-center gap-1.5 sm:order-none">
         <ButtonLink to={`/app/approvals/${a.code}`} variant="outline" size="sm">
           Review
         </ButtonLink>
@@ -327,8 +329,8 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
   const rest = Math.max(0, total - shown.length);
   return (
     <Card className="flex w-full flex-col overflow-clip">
-      <div className="flex items-center justify-between gap-4 px-4.5 pb-3.5 pt-4">
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex items-start justify-between gap-4 px-4 pb-3.5 pt-4 sm:items-center sm:px-4.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
           <h2 className={cx(sectionTitle, "shrink-0 whitespace-nowrap")}>Waiting for you</h2>
           {total ? <Pill tone="lime" mono>{total}</Pill> : null}
           <div className={cx(label, "min-w-0")}>drafts held until you approve · nothing sends on its own</div>
@@ -357,7 +359,7 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
         </div>
       )}
       {shown.length ? (
-        <div className="flex items-center justify-between border-t border-t-[#200D0D14] bg-[#200D0D06] px-4.5 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-t-[#200D0D14] bg-[#200D0D06] px-4 py-3 sm:px-4.5">
           <div className="text-xs/4 font-medium text-muted">
             {rest ? (
               <Link to="/app/approvals" className="hover:text-ink hover:underline">
@@ -384,8 +386,8 @@ function WorkflowCard({ w }: { w: Workflow }) {
   const latest = w.runs[0];
   const to = latest ? `/app/workflows/runs/${encodeURIComponent(latest.id)}` : "/app/workflows";
   return (
-    <Card className="flex flex-col gap-3 px-4.75 pb-4 pt-4.25">
-      <div className="flex items-center justify-between gap-3">
+    <Card className="flex flex-col gap-3 px-4 pb-4 pt-4.25 sm:px-4.75">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <Link to={to} className="flex min-w-0 items-baseline gap-2.5 hover:underline">
           <span className="truncate text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink">{w.name}</span>
           <span className="shrink-0 text-xs/4 text-faint">{w.purpose}</span>
@@ -431,7 +433,7 @@ function WorkflowCard({ w }: { w: Workflow }) {
 
 function WfStat({ title, value, first }: { title: string; value: string; first?: boolean }) {
   return (
-    <div className={cx("flex w-37.5 min-w-0 flex-col gap-1", !first && "border-l border-l-[#200D0D1A] pl-4.75")}>
+    <div className={cx("flex min-w-0 grow basis-0 flex-col gap-1 sm:w-37.5 sm:grow-0 sm:basis-auto", !first && "border-l border-l-[#200D0D1A] pl-3 sm:pl-4.75")}>
       <div className="text-[13px]/4 font-medium text-faint">{title}</div>
       <div className="tabular-nums text-sm/4.5 font-semibold text-ink">{value}</div>
     </div>
@@ -446,7 +448,7 @@ function ActiveWorkflows({ workflows, loading, partial }: { workflows: Workflow[
   const navigate = useNavigate();
   return (
     <section className="flex flex-col gap-3.5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className={sectionTitle}>Active workflows</h2>
         <div
           className="flex items-center gap-1 rounded-full border border-[#200D0D1A] bg-[#200D0D0A] p-1"

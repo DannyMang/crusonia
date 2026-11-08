@@ -58,12 +58,13 @@ export function Queue({
   const rest = items.filter((a) => msLeft(a, now) >= SOON_MS);
   const ttl = ttlMinutes(items);
   return (
-    <div className="flex w-72 shrink-0 flex-col border-r border-r-[#200D0D1A] xl:w-100">
+    // Phones: the queue sits above the selected approval, full width, and scrolls inside a few rows' height.
+    <div className="flex w-full shrink-0 flex-col border-b border-b-[#200D0D1A] sm:w-72 sm:border-b-0 sm:border-r sm:border-r-[#200D0D1A] xl:w-100">
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-b-[#200D0D1A] bg-[#200D0D06] px-4">
         <span className="text-xs/4 font-medium text-faint">Waiting for you</span>
         <span className="text-xs/4 font-medium text-faint">Expires</span>
       </div>
-      <nav aria-label="Approvals waiting" className="flex min-h-0 grow flex-col overflow-y-auto">
+      <nav aria-label="Approvals waiting" className="flex max-h-76 min-h-0 grow flex-col overflow-y-auto sm:max-h-none">
         {loading ? (
           [0, 1, 2, 3].map((i) => (
             <div key={i} className="flex h-15.5 shrink-0 flex-col justify-center gap-2 border-b border-b-[#200D0D1A] px-4">

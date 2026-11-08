@@ -1,6 +1,6 @@
 // Modal dialog (native <dialog>, so focus trapping, Escape and the top layer come from the browser) and a
 // small anchored dropdown with outside-click / Escape dismissal. Used by the Leads and Lead detail screens.
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from "react";
 import { cx } from "../../lib/format.ts";
 import { CheckIcon, XIcon } from "../icons.tsx";
 
@@ -63,7 +63,7 @@ export function Dialog({
           </div>
           {children ? <div className="flex flex-col gap-3.5 px-5 pb-4">{children}</div> : null}
           {footer ? (
-            <div className="flex items-center justify-end gap-2 border-t border-t-[#200D0D14] bg-[#200D0D06] px-5 py-3">{footer}</div>
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-t-[#200D0D14] bg-[#200D0D06] px-5 py-3">{footer}</div>
           ) : null}
         </div>
       ) : null}
@@ -88,6 +88,20 @@ export function Dropdown({
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  // Keep the panel inside the window: on a phone, a menu anchored to a button near either edge would hang off it
+  // and scroll the page sideways. Rects are in window pixels; `translate` is in the zoomed page's CSS pixels.
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!open || !el) return;
+    el.style.translate = "";
+    const r = el.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    const shift = r.right > vw - 8 ? vw - 8 - r.right : r.left < 8 ? 8 - r.left : 0;
+    if (!shift) return;
+    const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+    el.style.translate = `${shift / zoom}px 0`;
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -108,6 +122,7 @@ export function Dropdown({
       {trigger}
       {open ? (
         <div
+          ref={panel}
           className={cx(
             "absolute top-full z-30 mt-1.5 flex min-w-48 flex-col rounded-[10px] border border-[#200D0D1A] bg-white p-1 shadow-[0_12px_32px_-8px_rgb(32_13_13/22%)]",
             align === "right" ? "right-0" : "left-0",

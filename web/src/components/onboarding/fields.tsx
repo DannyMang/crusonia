@@ -7,13 +7,14 @@ import { WhiteCheck } from "./ui.tsx";
 /** Focus treatment shared by every editable field: ink outline plus a soft lime ring, like step 1's input. */
 export const focusRing = "focus-visible:outline-none focus:outline-none focus:[box-shadow:0_0_0_1px_#200D0D,0_0_0_4px_#BDE68966]";
 
-/** Text that edits in place: no border until hovered, sized to its content where the browser allows. */
+/** Text that edits in place: no border until hovered, sized to its content where the browser allows. When a narrow
+ *  window cuts a long value short (a segment name on a phone), it ends in an ellipsis instead of mid-letter. */
 export const InlineInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function InlineInput({ className, ...rest }, ref) {
   return (
     <input
       ref={ref}
       spellCheck={false}
-      className={cx("-mx-1 min-w-0 rounded-md bg-transparent px-1 text-ink placeholder:font-medium placeholder:text-[#200D0D4D] hover:bg-[#200D0D08] [field-sizing:content]", focusRing, className)}
+      className={cx("-mx-1 min-w-0 text-ellipsis rounded-md bg-transparent px-1 text-ink placeholder:font-medium placeholder:text-[#200D0D4D] hover:bg-[#200D0D08] [field-sizing:content]", focusRing, className)}
       {...rest}
     />
   );

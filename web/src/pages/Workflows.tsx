@@ -12,6 +12,7 @@ import { NewWorkflowButton } from "../components/workflows/NewWorkflow.tsx";
 import { isActive, runPill, StatusPill, stopLabel, workflowPill } from "../components/workflows/status.tsx";
 import { ButtonLink, EmptyState, QueryError, Skeleton } from "../components/ui.tsx";
 import { cx, duration, hostOf, leadTitle, num, shortDate, timeAgo, usd } from "../lib/format.ts";
+import { usePhone } from "../lib/media.ts";
 import { useApprovals, useLeads, useWorkflows } from "../queries.ts";
 
 type GroupKey = "running" | "paused" | "finished";
@@ -52,6 +53,7 @@ export default function Workflows() {
   const [closedGroups, setClosedGroups] = useState<Set<GroupKey>>(() => new Set());
   const searchRef = useRef<HTMLInputElement>(null);
   useSlashToFocus(searchRef);
+  const colSpan = usePhone() ? PHONE_COLS : COLS;
 
   const ctx: Ctx = useMemo(() => {
     const names = new Map((leads.data?.data ?? []).map((l) => [l.id, leadTitle(l)]));
@@ -101,17 +103,17 @@ export default function Workflows() {
   const isOpen = (w: Workflow, matchedRuns: boolean) => matchedRuns || (open[w.id] ?? w.active_runs > 0);
 
   return (
-    <Page className="min-h-screen gap-5 px-8 pb-6 pt-10">
-      <div className="flex h-10 shrink-0 items-center justify-between">
+    <Page className="min-h-screen gap-5 px-4 pb-6 pt-6 sm:px-8 sm:pt-10">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-3 sm:h-10">
         <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Workflows</h1>
-        <div className="flex items-center gap-2.5">
+        <div className="flex w-full items-center gap-2.5 sm:w-auto">
           {workflows.length ? (
             <SearchField
               inputRef={searchRef}
               value={search}
               onChange={setSearch}
               placeholder="Search workflows"
-              className="h-9 w-55"
+              className="h-9 w-0 grow sm:w-55 sm:grow-0"
               hint={<kbd className="flex rounded-[5px] border border-[#200D0D1F] px-1.25 py-px text-[11px]/3.5 text-faint">/</kbd>}
             />
           ) : null}
@@ -120,7 +122,7 @@ export default function Workflows() {
       </div>
 
       {workflows.length ? (
-        <div className="flex h-8 shrink-0 items-center justify-between gap-4">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 sm:h-8">
           <div className="flex items-center gap-2">
             <FilterChip label="Status" value={status} options={STATUS_OPTIONS} onChange={setStatus} />
           </div>
@@ -135,7 +137,7 @@ export default function Workflows() {
           <div className="h-9 bg-[#200D0D06]" />
           {[0, 1, 2].map((i) => (
             <div key={i} className="flex h-15 items-center gap-6 border-t border-t-[#200D0D14] px-4">
-              <Skeleton className="h-8 w-56" />
+              <Skeleton className="h-8 w-40 sm:w-56" />
               <Skeleton className="h-5.5 w-20" />
               <Skeleton className="h-8 grow" />
             </div>
@@ -148,7 +150,7 @@ export default function Workflows() {
             title="No workflows yet"
             body="Workflows appear when an agent starts working for you: finding leads, researching them and drafting emails for your approval. Every run lists each step it took, with its input, output and cost."
             action={
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-center gap-2">
                 <ButtonLink to="/onboarding/1" variant="outline">
                   Set up your company
                 </ButtonLink>
@@ -164,12 +166,13 @@ export default function Workflows() {
         <div className="overflow-clip rounded-xl border border-[#200D0D1A]">
           <table className="w-full table-fixed border-collapse text-left text-xs/4">
             <colgroup>
-              {/* Narrower Workflow and Leads columns below 1280px so Activity stays readable. */}
-              <col className="w-52 xl:w-72" />
-              <col className="w-32" />
-              <col />
-              <col className="w-16 xl:w-24" />
-              <col className="w-22" />
+              {/* Narrower Workflow and Leads columns below 1280px so Activity stays readable. Phones keep Workflow, Status
+                  and the chevron, with the activity line under the name. */}
+              <col className="sm:w-52 xl:w-72" />
+              <col className="w-30 sm:w-32" />
+              <col className={PHONE_HIDDEN_COL} />
+              <col className={cx(PHONE_HIDDEN_COL, "w-16 xl:w-24")} />
+              <col className={cx(PHONE_HIDDEN_COL, "w-22")} />
               <col className="w-8" />
             </colgroup>
             <thead>
@@ -180,13 +183,13 @@ export default function Workflows() {
                 <th scope="col" className="pr-3 font-medium">
                   Status
                 </th>
-                <th scope="col" className="pr-7 font-medium">
+                <th scope="col" className={cx(PHONE_HIDDEN, "pr-7 font-medium")}>
                   Activity
                 </th>
-                <th scope="col" className="pr-3 text-right font-medium">
+                <th scope="col" className={cx(PHONE_HIDDEN, "pr-3 text-right font-medium")}>
                   Leads
                 </th>
-                <th scope="col" className="pr-3 text-right font-medium">
+                <th scope="col" className={cx(PHONE_HIDDEN, "pr-3 text-right font-medium")}>
                   Cost
                 </th>
                 <th scope="col" className="pr-4">
@@ -200,8 +203,8 @@ export default function Workflows() {
               return (
                 <tbody key={g.key}>
                   <tr>
-                    <th colSpan={6} scope="colgroup" className="h-8.5 border-t border-t-[#200D0D14] bg-[#200D0D08] px-4 font-normal">
-                      <div className="flex items-center justify-between">
+                    <th colSpan={colSpan} scope="colgroup" className="h-8.5 border-t border-t-[#200D0D14] bg-[#200D0D08] px-4 font-normal">
+                      <div className="flex items-center justify-between gap-3">
                         <button
                           type="button"
                           aria-expanded={!closed}
@@ -213,15 +216,15 @@ export default function Workflows() {
                               return next;
                             })
                           }
-                          className="flex items-center gap-2"
+                          className="flex min-w-0 items-center gap-2"
                         >
-                          <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden className={cx("transition-transform", closed && "-rotate-90")}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden className={cx("shrink-0 transition-transform", closed && "-rotate-90")}>
                             <path d="M6 9l6 6 6-6" fill="none" stroke="#200D0D" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
                           <span className="text-[13px]/4 font-semibold text-ink">{g.key === "running" ? "Running" : g.key === "paused" ? "Paused" : "Finished"}</span>
-                          <span className="text-[13px]/4 text-muted">{groupNote(g.key, g.items.map((i) => i.w))}</span>
+                          <span className="min-w-0 truncate text-[13px]/4 text-muted">{groupNote(g.key, g.items.map((i) => i.w))}</span>
                         </button>
-                        {cost !== null ? <span className="text-xs/4 tabular-nums text-muted">{usd(cost)} spent</span> : null}
+                        {cost !== null ? <span className="shrink-0 text-xs/4 tabular-nums text-muted">{usd(cost)} spent</span> : null}
                       </div>
                     </th>
                   </tr>
@@ -238,6 +241,7 @@ export default function Workflows() {
                             onToggle={() => setOpen((o) => ({ ...o, [w.id]: !expanded }))}
                             onOpenRun={(id) => navigate(`/app/workflows/runs/${encodeURIComponent(id)}`)}
                             ctx={ctx}
+                            colSpan={colSpan}
                           />
                         );
                       })}
@@ -247,7 +251,7 @@ export default function Workflows() {
             {!groups.length ? (
               <tbody>
                 <tr>
-                  <td colSpan={6} className="border-t border-t-[#200D0D14] px-4 py-10 text-center">
+                  <td colSpan={colSpan} className="border-t border-t-[#200D0D14] px-4 py-10 text-center">
                     <div className="text-[13px]/4 font-semibold text-ink">No workflows match</div>
                     <button
                       type="button"
@@ -295,6 +299,12 @@ function groupNote(key: GroupKey, items: Workflow[]): string {
   return `${label} · done`;
 }
 
+// Activity, Leads and Cost are hidden on phones; full-width rows then span the 3 visible columns.
+const PHONE_HIDDEN_COL = "hidden sm:table-column";
+const PHONE_HIDDEN = "hidden sm:table-cell";
+const COLS = 6;
+const PHONE_COLS = 3;
+
 const CHEVRON = (
   <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden className="inline-block">
     <path d="M9 6l6 6-6 6" fill="none" stroke="rgb(32 13 13 / 35%)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -308,6 +318,7 @@ function WorkflowRows({
   onToggle,
   onOpenRun,
   ctx,
+  colSpan,
 }: {
   w: Workflow;
   runs: Run[];
@@ -315,6 +326,7 @@ function WorkflowRows({
   onToggle: () => void;
   onOpenRun: (id: string) => void;
   ctx: Ctx;
+  colSpan: number;
 }) {
   const waiting = w.runs.flatMap((r) => ctx.approvalsFor(r));
   const codes = [...new Set(waiting.map((a) => a.code))];
@@ -349,17 +361,18 @@ function WorkflowRows({
             <span className="max-w-full truncate text-[11px]/3.5 text-faint">
               {w.id} · {w.runs.length < w.run_count ? `${w.runs.length} most recent runs` : `${w.runs.length} ${w.runs.length === 1 ? "run" : "runs"}`}
             </span>
+            <span className={cx("line-clamp-2 max-w-full text-xs/4 sm:hidden", red ? "text-[#B42318]" : "text-muted")}>{line1}</span>
           </button>
         </td>
         <td className="pr-3">
           <StatusPill spec={workflowPill(w.status)} />
         </td>
-        <td className="pr-7">
+        <td className={cx(PHONE_HIDDEN, "pr-7")}>
           <div className={cx("truncate text-xs/4", red ? "text-[#B42318]" : "text-muted")}>{line1}</div>
           <div className="truncate text-[11px]/3.5 text-faint">{line2}</div>
         </td>
-        <td className={cx("pr-3 text-right text-[13px]/4 tabular-nums", w.leads_processed ? "text-ink" : "text-faint")}>{num(w.leads_processed)}</td>
-        <td className={cx("pr-3 text-right text-[13px]/4 font-medium tabular-nums", w.cost_usd ? "text-ink" : "text-faint")}>{usd(w.cost_usd)}</td>
+        <td className={cx(PHONE_HIDDEN, "pr-3 text-right text-[13px]/4 tabular-nums", w.leads_processed ? "text-ink" : "text-faint")}>{num(w.leads_processed)}</td>
+        <td className={cx(PHONE_HIDDEN, "pr-3 text-right text-[13px]/4 font-medium tabular-nums", w.cost_usd ? "text-ink" : "text-faint")}>{usd(w.cost_usd)}</td>
         <td className="pr-4 text-center">
           <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden className={cx("inline-block transition-transform", expanded && "rotate-90")}>
             <path d="M9 6l6 6-6 6" fill="none" stroke={expanded ? "#200D0D" : "rgb(32 13 13 / 35%)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -371,7 +384,7 @@ function WorkflowRows({
         : null}
       {expanded && !runs.length ? (
         <tr className="border-t border-t-[#200D0D0F] bg-[#200D0D03]">
-          <td colSpan={6} className="py-3 pl-8 text-xs/4 font-medium text-muted">
+          <td colSpan={colSpan} className="py-3 pl-8 text-xs/4 font-medium text-muted">
             No runs listed yet.
           </td>
         </tr>
@@ -400,17 +413,18 @@ function RunRow({ run, ctx, onOpen }: { run: Run; ctx: Ctx; onOpen: () => void }
         <Link to={href} onClick={(e) => e.stopPropagation()} className="flex max-w-full flex-col gap-0.5">
           <span className="truncate text-[13px]/4 font-medium text-ink">{runLabel(run, ctx)}</span>
           <span className="truncate text-[11px]/3.5 text-faint">{run.id}</span>
+          <span className={cx("line-clamp-2 text-xs/4 sm:hidden", run.status === "error" ? "text-[#B42318]" : "text-muted")}>{line1}</span>
         </Link>
       </td>
       <td className="pr-3">
         <StatusPill spec={runPill(run)} small />
       </td>
-      <td className="pr-7">
+      <td className={cx(PHONE_HIDDEN, "pr-7")}>
         <div className={cx("truncate text-xs/4", run.status === "error" ? "text-[#B42318]" : "text-muted")}>{line1}</div>
         <div className="truncate text-[11px]/3.5 text-faint">{line2}</div>
       </td>
-      <td className={cx("pr-3 text-right text-xs/4 tabular-nums", run.leads_processed ? "text-ink" : "text-faint")}>{num(run.leads_processed)}</td>
-      <td className={cx("pr-3 text-right text-xs/4 font-medium tabular-nums", run.cost_usd ? "text-ink" : "text-faint")}>{usd(run.cost_usd)}</td>
+      <td className={cx(PHONE_HIDDEN, "pr-3 text-right text-xs/4 tabular-nums", run.leads_processed ? "text-ink" : "text-faint")}>{num(run.leads_processed)}</td>
+      <td className={cx(PHONE_HIDDEN, "pr-3 text-right text-xs/4 font-medium tabular-nums", run.cost_usd ? "text-ink" : "text-faint")}>{usd(run.cost_usd)}</td>
       <td className="pr-4 text-center">{CHEVRON}</td>
     </tr>
   );

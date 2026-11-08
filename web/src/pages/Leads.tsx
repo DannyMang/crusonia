@@ -2,7 +2,7 @@
 // GET /api/leads, the table grouped into Needs you / Agent working / In conversation / Closed, cursor
 // pagination, CSV import and "Add leads". Production starts empty, so the empty state explains where leads come from.
 import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { LEAD_STAGES, type Lead, type LeadFilters, type LeadStage } from "../api.ts";
 import { useApi } from "../auth.tsx";
@@ -10,6 +10,7 @@ import { Page } from "../components/AppShell.tsx";
 import { Dropdown, MenuItem } from "../components/leads/Overlay.tsx";
 import { Button, ButtonLink, Card, QueryError, Skeleton, StageBadge, stageLabel } from "../components/ui.tsx";
 import { cx, duration, num, timeAgo } from "../lib/format.ts";
+import { useMedia, usePhone } from "../lib/media.ts";
 import { keys, useApprovals } from "../queries.ts";
 import { AddContactDialog, AddLeadsButton } from "./leads/AddLeads.tsx";
 import { ImportCsvDialog } from "./leads/ImportCsvDialog.tsx";
@@ -23,11 +24,12 @@ const FIT_STEPS = [90, 80, 70, 60, 50] as const;
 // Column widths include the 12px gap (as right padding) so header and rows line up like the design.
 // Column widths match the 1200px artboard from 1440px up. Narrower windows tighten the fixed columns so
 // "Signal · why now" keeps room, and below 1280px (a ~784px main column) Last activity and Source are hidden.
+// Phones (below 640px) keep Company, Stage and the chevron; the signal headline moves under the company.
 const col = {
-  company: "w-[176px] pl-4 pr-3 min-[1440px]:w-[228px]",
-  contact: "w-[148px] pr-3 min-[1440px]:w-[172px]",
-  signal: "pr-4 min-[1440px]:pr-6",
-  fit: "w-[52px] pr-3 text-right min-[1440px]:w-[60px]",
+  company: "w-[176px] pl-4 pr-3 max-sm:w-auto min-[1440px]:w-[228px]",
+  contact: "hidden w-[148px] pr-3 sm:table-cell min-[1440px]:w-[172px]",
+  signal: "hidden pr-4 sm:table-cell min-[1440px]:pr-6",
+  fit: "hidden w-[52px] pr-3 text-right sm:table-cell min-[1440px]:w-[60px]",
   stage: "w-[140px] pr-3 min-[1440px]:w-[148px]",
   activity: "hidden w-[96px] pr-3 xl:table-cell min-[1440px]:w-[100px]",
   source: "hidden w-[84px] pr-3 xl:table-cell",
@@ -35,14 +37,10 @@ const col = {
 };
 const COLS = 8;
 /** Full-width rows span only the visible columns: a colSpan wider than that adds phantom columns that take Signal's width. */
-const WIDE_COLUMNS = "(min-width: 1280px)";
-function subscribeWide(onChange: () => void) {
-  const mq = window.matchMedia(WIDE_COLUMNS);
-  mq.addEventListener("change", onChange);
-  return () => mq.removeEventListener("change", onChange);
-}
 function useColSpan() {
-  return useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE_COLUMNS).matches) ? COLS : COLS - 2;
+  const wide = useMedia("(min-width: 1280px)");
+  const phone = usePhone();
+  return wide ? COLS : phone ? COLS - 5 : COLS - 2;
 }
 
 function useFilters() {
@@ -107,10 +105,10 @@ export default function Leads() {
   const totallyEmpty = !loading && !leads.isError && rows.length === 0 && !filtered;
 
   return (
-    <Page className="gap-5 px-8 pb-12 pt-10">
-      <div className="flex h-10 shrink-0 items-center justify-between">
+    <Page className="gap-5 px-4 pb-12 pt-6 sm:px-8 sm:pt-10">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-3 sm:h-10">
         <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Leads</h1>
-        <div className="flex items-center gap-2.5">
+        <div className="flex w-full flex-wrap items-center gap-2.5 sm:w-auto">
           <SearchBox value={filters.q ?? ""} onChange={onSearch} params={params} />
           <Button variant="outline" size="md" className="gap-1.5" onClick={() => setImporting(true)}>
             <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden className="shrink-0">
@@ -209,7 +207,7 @@ function SearchBox({ value, onChange, params }: { value: string; onChange: (q: s
   }, [wantsFocus, location.key, location.pathname, location.search, navigate]);
 
   return (
-    <label className="flex h-9 w-60 shrink-0 items-center gap-2 rounded-[10px] border border-[#200D0D1A] px-3 focus-within:border-ink">
+    <label className="flex h-9 w-full shrink-0 items-center gap-2 sm:w-60 rounded-[10px] border border-[#200D0D1A] px-3 focus-within:border-ink">
       <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden className="shrink-0">
         <circle cx="11" cy="11" r="7" fill="none" stroke="rgb(32 13 13 / 45%)" strokeWidth="2" />
         <path d="M20 20l-3.5-3.5" fill="none" stroke="rgb(32 13 13 / 45%)" strokeWidth="2" />
@@ -281,8 +279,8 @@ function FilterBar({
   const any = Boolean(filters.stage || filters.min_score || filters.source);
 
   return (
-    <div className="flex h-8 shrink-0 items-center justify-between gap-4">
-      <div className="flex items-center gap-2">
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 sm:h-8">
+      <div className="flex flex-wrap items-center gap-2">
         <Dropdown
           open={open === "add"}
           onClose={close}
@@ -629,6 +627,7 @@ function LeadRow({ lead: l }: { lead: Lead }) {
             {company}
           </Link>
           {l.domain && l.domain !== company ? <div className="truncate whitespace-pre text-xs/3.5 text-faint">{l.domain}</div> : null}
+          {l.rationale ? <div className="truncate text-xs/4 text-muted sm:hidden">{headline}</div> : null}
         </div>
       </td>
       <td className={col.contact}>
@@ -702,16 +701,16 @@ function NoLeadsYet({ onImport, onAdd }: { onImport: () => void; onAdd: () => vo
   return (
     <Card className="overflow-clip">
       <div className="flex h-9 items-center gap-3 bg-[#200D0D06] px-4 text-xs/4 font-medium text-faint">
-        <span className="w-37 min-[1440px]:w-50">Company</span>
-        <span className="w-34 min-[1440px]:w-40">Contact</span>
-        <span className="min-w-0 grow truncate">Signal · why now</span>
-        <span className="w-10 text-right min-[1440px]:w-12">Fit</span>
+        <span className="w-37 max-sm:w-auto max-sm:grow min-[1440px]:w-50">Company</span>
+        <span className="hidden w-34 sm:block min-[1440px]:w-40">Contact</span>
+        <span className="hidden min-w-0 grow truncate sm:block">Signal · why now</span>
+        <span className="hidden w-10 text-right sm:block min-[1440px]:w-12">Fit</span>
         <span className="w-32 min-[1440px]:w-34">Stage</span>
         <span className="hidden w-21 xl:block min-[1440px]:w-22">Last activity</span>
         <span className="hidden w-18 xl:block">Source</span>
         <span className="w-4" />
       </div>
-      <div className="flex flex-col items-center gap-2 border-t border-t-[#200D0D14] px-6 pb-8 pt-10 text-center">
+      <div className="flex flex-col items-center gap-2 border-t border-t-[#200D0D14] px-4 pb-8 pt-10 text-center sm:px-6">
         <div className="mb-1 flex size-9 items-center justify-center rounded-full bg-panel text-green">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden>
             <circle cx="7" cy="6" r="2.75" />
@@ -725,7 +724,7 @@ function NoLeadsYet({ onImport, onAdd }: { onImport: () => void; onAdd: () => vo
           conversations and closed leads. Each one carries its signal, fit score and sources.
         </p>
       </div>
-      <div className="grid grid-cols-3 gap-3 px-6 pb-8">
+      <div className="grid grid-cols-1 gap-3 px-4 pb-8 sm:grid-cols-3 sm:px-6">
         {ways.map((w, i) => (
           <div key={w.title} className="flex flex-col gap-2 rounded-[10px] border border-[#200D0D14] px-4 pb-4 pt-3.5">
             <div className="flex items-center gap-2">
