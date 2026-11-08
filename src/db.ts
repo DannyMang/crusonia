@@ -1,23 +1,34 @@
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import { ServiceError } from "./services/errors.ts";
 
 // HTTP driver: one statement per call, no connection to manage, safe to use per request on Workers.
 // For interactive transactions use `Pool`/`Client` inside a single request and close them before returning.
 export type Sql = NeonQueryFunction<false, false>;
 
 export function getSql(databaseUrl: string | undefined): Sql {
-  if (!databaseUrl) throw new Error("DATABASE_URL is not set");
+  if (!databaseUrl) {
+    throw new ServiceError(
+      "config_missing",
+      "DATABASE_URL is not set. Add the Neon connection string to .dev.vars (local) or upload it with `bun run secrets` (Worker), then run `bun run migrate`.",
+    );
+  }
   return neon(databaseUrl);
 }
 
 export type Lead = {
   id: string;
-  email: string;
+  // Lowercased. Null for agent-found leads without a known email (deduped by domain + name instead).
+  email: string | null;
   name: string | null;
+  title: string | null;
   company: string | null;
+  domain: string | null;
   website: string | null;
+  linkedin_url: string | null;
   sells: string | null;
   best_customers: string | null;
   source: string;
+  source_url: string | null;
   consent_text: string | null;
   consent_at: Date | null;
   variant: "A" | "B";
