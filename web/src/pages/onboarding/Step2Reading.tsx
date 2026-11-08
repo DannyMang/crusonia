@@ -365,7 +365,7 @@ function WaitingOnYou({ kind, approvals }: { kind: "approval" | "answer"; approv
         <ul className="flex flex-col gap-1.5">
           {approvals.map((a) => (
             <li key={a.code}>
-              <Link to={`/app/approvals/${encodeURIComponent(a.code)}`} className="flex items-center gap-2 text-[13px]/4.5 font-medium text-ink hover:underline">
+              <Link to={`/app/outreach/${encodeURIComponent(a.code)}`} className="flex items-center gap-2 text-[13px]/4.5 font-medium text-ink hover:underline">
                 <span className="shrink-0 font-semibold">{a.code}</span>
                 <span className="min-w-0 truncate text-muted">{a.summary}</span>
                 <ChevronRight className="ml-auto text-green" />
@@ -374,7 +374,7 @@ function WaitingOnYou({ kind, approvals }: { kind: "approval" | "answer"; approv
           ))}
         </ul>
       ) : (
-        <Link to="/app/approvals" className="flex items-center gap-1 self-start text-[13px]/4.5 font-medium text-ink hover:underline">
+        <Link to="/app/outreach" className="flex items-center gap-1 self-start text-[13px]/4.5 font-medium text-ink hover:underline">
           Open approvals
           <ChevronRight className="text-green" />
         </Link>
@@ -420,7 +420,7 @@ function ComingOnline({ onFill }: { onFill: () => void }) {
           Continue and fill it in yourself
           <ArrowIcon />
         </button>
-        <Link to="/app?connect=1" className="inline-flex h-10 items-center rounded-[10px] border border-ink bg-white px-4 text-sm/4.5 font-semibold text-ink hover:bg-[#200D0D08]">
+        <Link to="/app/settings/agent" className="inline-flex h-10 items-center rounded-[10px] border border-ink bg-white px-4 text-sm/4.5 font-semibold text-ink hover:bg-[#200D0D08]">
           Connect your agent
         </Link>
       </div>

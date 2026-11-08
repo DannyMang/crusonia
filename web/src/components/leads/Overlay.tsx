@@ -108,7 +108,11 @@ export function Dropdown({
       if (!ref.current?.contains(e.target as Node)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      const inside = panel.current?.contains(document.activeElement);
+      onClose();
+      // Focus was inside the menu that is going away: put it back on the button that opened it.
+      if (inside) ref.current?.querySelector<HTMLElement>("button, a")?.focus();
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);

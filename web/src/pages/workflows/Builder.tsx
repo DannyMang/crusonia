@@ -26,14 +26,14 @@ export default function WorkflowBuilder() {
 
   if (!isNew && q.isError)
     return (
-      <Page className="min-h-screen gap-5 px-4 pb-9 pt-8 sm:px-8">
+      <Page className="grow gap-5 px-4 pb-9 pt-8 sm:px-8">
         <FlowHeader title="Workflow" />
         <QueryError error={q.error} what="this workflow" onRetry={() => void q.refetch()} />
       </Page>
     );
   if (!isNew && q.isPending)
     return (
-      <Page className="min-h-screen gap-5 px-4 pb-9 pt-8 sm:px-8">
+      <Page className="grow gap-5 px-4 pb-9 pt-8 sm:px-8">
         <FlowHeader title={<Skeleton className="h-6 w-48" />} />
         <div className="flex gap-4">
           <Skeleton className="h-155 grow rounded-xl" />
@@ -96,7 +96,7 @@ function Editor({ id, data, latest }: { id: string | null; data: ReturnType<type
   ) : null;
 
   return (
-    <Page className="min-h-screen gap-5 px-4 pb-9 pt-8 sm:px-8">
+    <Page className="grow gap-5 px-4 pb-9 pt-8 sm:px-8">
       <FlowHeader
         title={
           id ? (
@@ -108,7 +108,7 @@ function Editor({ id, data, latest }: { id: string | null; data: ReturnType<type
               onChange={(e) => setName(e.target.value)}
               placeholder="Name"
               aria-label="Workflow name"
-              className="w-72 max-w-full rounded-md bg-transparent text-xl/7 font-semibold tracking-[-0.01em] text-ink outline-none placeholder:text-faint"
+              className="-mx-1.5 w-72 max-w-full rounded-md bg-transparent px-1.5 text-xl/7 font-semibold tracking-[-0.01em] text-ink outline-none placeholder:text-faint hover:bg-[#200D0D08] focus:bg-[#200D0D0A]"
             />
           )
         }

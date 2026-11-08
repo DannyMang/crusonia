@@ -24,8 +24,8 @@ export function AgentSteps({ sessionId, className }: { sessionId: string; classN
 
   return (
     <section aria-label="What the agent did" className={cx("flex flex-col bg-[#200D0D06] px-5.5 pb-2.5 pt-3.5", className)}>
-      <div className="flex items-center justify-between gap-3 pb-1.5">
-        <h3 className="text-[13px]/4.5 font-semibold text-ink">What the agent did</h3>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 pb-1.5">
+        <h3 className="whitespace-nowrap text-[13px]/4.5 font-semibold text-ink">What the agent did</h3>
         <div className="flex shrink-0 items-center gap-2.5">
           {run ? (
             active ? (
@@ -56,7 +56,7 @@ export function AgentSteps({ sessionId, className }: { sessionId: string; classN
         <ol className="flex flex-col">
           {steps.slice(-8).map((s) => (
             <li key={s.seq} className="flex gap-3 py-1.5">
-              <span className="w-14 shrink-0 text-xs/4.25 tabular-nums text-[#200D0D8C]">{s.started_at ? clock(s.started_at) : ""}</span>
+              <span className="w-16 shrink-0 whitespace-nowrap text-xs/4.25 tabular-nums text-muted">{s.started_at ? clock(s.started_at) : ""}</span>
               <span className={cx("min-w-0 grow basis-0 text-[13px]/4.25 [overflow-wrap:anywhere]", s.is_error ? "text-[#B42318]" : "text-ink")}>{s.summary}</span>
             </li>
           ))}
@@ -81,6 +81,7 @@ function eventLine(e: TraceEvent): { title: string; body: string | null } {
 
 export function TraceDialog({ sessionId, open, onClose }: { sessionId: string; open: boolean; onClose: () => void }) {
   const api = useApi();
+  const [exportError, setExportError] = useState<unknown>(null);
   const trace = useInfiniteQuery({
     queryKey: keys.trace(sessionId),
     queryFn: ({ pageParam }) => api.trace(sessionId, { after_seq: pageParam, limit: 200 }),
@@ -104,14 +105,15 @@ export function TraceDialog({ sessionId, open, onClose }: { sessionId: string; o
             onClick={(e) => {
               // The export needs the auth header: fetch it and save it as a file instead of navigating.
               e.preventDefault();
-              void api.request<unknown>("GET", `/api/workflows/runs/${encodeURIComponent(sessionId)}/trace/export`).then((json) => {
+              setExportError(null);
+              api.request<unknown>("GET", `/api/workflows/runs/${encodeURIComponent(sessionId)}/trace/export`).then((json) => {
                 const url = URL.createObjectURL(new Blob([JSON.stringify(json, null, 2)], { type: "application/json" }));
                 const a = document.createElement("a");
                 a.href = url;
                 a.download = `crusonia-trace-${sessionId.replace(/[^a-zA-Z0-9_-]/g, "")}.json`;
                 a.click();
                 URL.revokeObjectURL(url);
-              });
+              }, setExportError);
             }}
             className="mr-auto text-[13px]/4 font-medium text-ink underline decoration-[#200D0D4D] underline-offset-[3px] hover:decoration-ink"
           >
@@ -133,6 +135,7 @@ export function TraceDialog({ sessionId, open, onClose }: { sessionId: string; o
         </div>
       ) : (
         <div className="flex flex-col gap-3">
+          {exportError ? <QueryError error={exportError} what="the download" /> : null}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs/4 tabular-nums text-muted">
             <span>{events.length} events</span>
             {spend?.naive_usd !== null && spend?.naive_usd !== undefined ? <span>Agent {usd(spend.naive_usd)}</span> : null}

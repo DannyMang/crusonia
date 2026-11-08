@@ -318,7 +318,14 @@ const MENU_ICONS: Record<string, ReactNode> = {
 
 function StepMenu({ x, y, onChoose }: { x: number; y: number; onChoose: (kind: StepKind) => void }) {
   const first = useRef<HTMLButtonElement>(null);
-  useEffect(() => first.current?.focus(), []);
+  // Focus starts on the first item; when the menu closes (Esc, a choice) it goes back to the "+" that opened it.
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    first.current?.focus();
+    return () => {
+      if (opener?.isConnected && (!document.activeElement || document.activeElement === document.body)) opener.focus();
+    };
+  }, []);
   return (
     <div
       data-no-pan

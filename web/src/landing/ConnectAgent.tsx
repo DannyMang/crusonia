@@ -1,5 +1,5 @@
 // S3 "Set-up fast." (Paper: Landing v2 > S3 · Connect agent): one click per agent. The buttons and the install
-// commands are shared with the app's Connect your agent popover (components/AgentButtons.tsx, lib/agent-install.ts).
+// commands are shared with Settings · Connect your agent (components/AgentButtons.tsx, lib/agent-install.ts).
 import { AgentButtons } from "../components/AgentButtons.tsx";
 import { SECTIONS } from "./sections.ts";
 

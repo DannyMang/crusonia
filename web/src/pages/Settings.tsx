@@ -26,7 +26,6 @@ export default function Settings() {
           <SettingsTabs />
           <div className="flex flex-col gap-2 pb-2 pt-3">
             <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">General</h1>
-            <p className="text-[13px]/4.5 font-medium text-muted">Workspace controls. Changes apply right away.</p>
           </div>
           <div className="flex flex-col gap-6">
             <PauseCard />

@@ -513,12 +513,23 @@ function CompanyPopover({ lead, focusNote, onClose, onFindMore }: { lead: FindRu
     },
   });
 
+  // The button that opened the popover gets focus back when Esc or Close dismisses it.
+  const opener = useRef<HTMLElement | null>(null);
+  if (opener.current === null && document.activeElement instanceof HTMLElement && document.activeElement !== document.body) opener.current = document.activeElement;
+  const dismiss = () => {
+    onClose();
+    if (opener.current?.isConnected) opener.current.focus();
+  };
   useEffect(() => {
     if (focusNote) noteRef.current?.focus();
     else ref.current?.focus();
   }, [focusNote]);
   useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      onClose();
+      if (opener.current?.isConnected) opener.current.focus();
+    };
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (!ref.current?.contains(t) && !(t as HTMLElement).closest?.("[aria-expanded]")) onClose();
@@ -548,7 +559,7 @@ function CompanyPopover({ lead, focusNote, onClose, onFindMore }: { lead: FindRu
           </div>
           <span className="truncate text-xs/4 text-muted">{[lead.domain, lead.name ? [lead.name, lead.title].filter(Boolean).join(", ") : null].filter(Boolean).join(" · ")}</span>
         </div>
-        <button type="button" onClick={onClose} aria-label="Close" className="flex size-7 shrink-0 items-center justify-center rounded-full border border-[#200D0D1A] text-ink hover:bg-[#200D0D08]">
+        <button type="button" onClick={dismiss} aria-label="Close" className="flex size-7 shrink-0 items-center justify-center rounded-full border border-[#200D0D1A] text-ink hover:bg-[#200D0D08]">
           <CloseIcon />
         </button>
       </div>
@@ -589,7 +600,7 @@ function CompanyPopover({ lead, focusNote, onClose, onFindMore }: { lead: FindRu
           >
             Open
           </button>
-          <button type="button" onClick={onClose} className="flex h-7.5 items-center rounded-full border border-ink px-3.5 text-[13px]/4 font-medium text-ink hover:bg-[#200D0D08]">
+          <button type="button" onClick={dismiss} className="flex h-7.5 items-center rounded-full border border-ink px-3.5 text-[13px]/4 font-medium text-ink hover:bg-[#200D0D08]">
             Close
           </button>
         </div>

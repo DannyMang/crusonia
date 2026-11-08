@@ -35,6 +35,9 @@ const SECRETS: Record<string, string[]> = {
   naive: ["NAIVE_API_KEY"],
 };
 
+/** iMessage approvals run only for the owner workspace with the bridge on; everyone else sees "Coming soon". */
+const imessageOn = (s: Status | undefined) => Boolean(s?.imessage?.active);
+
 const providerState = (p: ProviderStatus | undefined, known: boolean): State => (!known || !p ? "unknown" : p.configured ? "connected" : "needs_key");
 
 /** Naive also needs the agent id that runs research sessions (NAIVE_AGENT_ID), reported separately. */
@@ -63,7 +66,7 @@ export default function Integrations() {
         clerkEnabled ? "connected" : "local",
       ]
     : [];
-  const connected = states.filter((x) => x === "connected").length;
+  const connected = states.filter((x) => x === "connected").length + (imessageOn(s) ? 1 : 0);
   const needs = states.filter((x) => x === "needs_key").length;
 
   return (
@@ -72,15 +75,10 @@ export default function Integrations() {
       <Page>
         <div className="flex w-240 max-w-full flex-col gap-4 px-4 pb-14 pt-6 sm:px-12 sm:pt-8">
           <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-2">
-            <div className="flex min-w-0 max-w-full flex-col gap-2">
-              <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Integrations</h1>
-              <p className="w-140 max-w-full text-[13px]/4.5 font-medium text-muted">
-                The tools your Crusonia agent works through. Keys are stored encrypted and only used for the job listed on each card.
-              </p>
-            </div>
+            <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Integrations</h1>
             {s ? (
               <div className="shrink-0 text-[13px]/4 font-medium text-muted">
-                {connected} connected · {needs} {needs === 1 ? "needs" : "need"} a key · 1 coming soon
+                {connected} connected · {needs} {needs === 1 ? "needs" : "need"} a key{imessageOn(s) ? "" : " · 1 coming soon"}
               </div>
             ) : loading ? (
               <Skeleton className="h-4 w-60" />
@@ -114,7 +112,7 @@ export default function Integrations() {
 
           <p className="pt-1 text-xs/4 font-medium text-faint">
             Missing a tool? Your own coding agent can call Crusonia alongside any other MCP server.{" "}
-            <Link to="?connect=1" className="text-ink underline decoration-[#200D0D4D] decoration-1 underline-offset-[3px] hover:decoration-ink">
+            <Link to="/app/settings/agent" className="text-ink underline decoration-[#200D0D4D] decoration-1 underline-offset-[3px] hover:decoration-ink">
               Connect your agent
             </Link>
           </p>
@@ -444,7 +442,7 @@ function PlatformCard({ status, known }: CardProps) {
     <Card className="flex flex-col px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 pb-2">
         <h2 className="text-[15px]/4.5 font-medium text-ink">Platform</h2>
-        <div className="text-[13px]/4 font-medium text-faint">Runs the agent, signs you in, and (soon) asks for approvals by text</div>
+        <div className="text-[13px]/4 font-medium text-faint">Runs the agent, signs you in, and {imessageOn(status) ? "" : "(soon) "}asks for approvals by text</div>
       </div>
       <PlatformRow
         tile="naive"
@@ -474,7 +472,17 @@ function PlatformCard({ status, known }: CardProps) {
         description={clerkEnabled ? "Sign-in for your team and the dashboard." : "Sign-in for your team. This local build skips sign-in."}
         action={clerkEnabled ? <Manage href="https://dashboard.clerk.com" what="the Clerk dashboard" /> : undefined}
       />
-      <PlatformRow last tile="photon" name="Photon iMessage" state="soon" description="Approve or edit drafts by replying to a text." />
+      <PlatformRow
+        last
+        tile="photon"
+        name="Photon iMessage"
+        state={imessageOn(status) ? "connected" : "soon"}
+        description={
+          imessageOn(status) && status?.imessage?.owner_phone_hint
+            ? `Approve or edit drafts by replying to a text. Linked to ${status.imessage.owner_phone_hint}.`
+            : "Approve or edit drafts by replying to a text."
+        }
+      />
     </Card>
   );
 }

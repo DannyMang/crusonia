@@ -75,7 +75,7 @@ export default function CompanySummary() {
     <>
       <CrumbBar here="Company summary" parent={{ label: "Settings", to: "/app/settings" }} />
       <Page>
-        <div className="flex w-240 max-w-full flex-col gap-4 px-12 pb-14 pt-8">
+        <div className="flex w-240 max-w-full flex-col gap-4 px-4 pb-14 pt-6 sm:px-12 sm:pt-8">
           <SettingsTabs />
           <div className="flex items-end justify-between gap-4 pb-2">
             <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Company summary</h1>
@@ -107,7 +107,7 @@ export default function CompanySummary() {
               {summary.isPending || !s ? (
                 <SummarySkeleton />
               ) : editing ? (
-                <form id="summary-form" onSubmit={submit} className="flex w-full min-w-0 grow flex-col gap-3.5 rounded-xl border border-[#200D0D1A] bg-white px-7 py-6">
+                <form id="summary-form" onSubmit={submit} className="flex w-full min-w-0 grow flex-col gap-3.5 rounded-xl border border-[#200D0D1A] bg-white px-4 py-5 sm:px-7 sm:py-6">
                   <div className="flex items-center justify-between">
                     <div className="text-[15px]/4.5 font-medium text-ink">GTM.md</div>
                     <div className="text-[13px]/4 font-medium text-muted">{s.version ? `Editing v${s.version}` : "New"}</div>
@@ -155,7 +155,7 @@ export default function CompanySummary() {
 
 function SummaryCard({ s }: { s: Summary }) {
   return (
-    <section aria-label="GTM.md" className="flex w-full min-w-0 grow flex-col rounded-xl border border-[#200D0D1A] bg-white px-7 pb-7 pt-6">
+    <section aria-label="GTM.md" className="flex w-full min-w-0 grow flex-col rounded-xl border border-[#200D0D1A] bg-white px-4 pb-6 pt-5 sm:px-7 sm:pb-7 sm:pt-6">
       <div className="flex items-center justify-between border-b border-b-[#200D0D1A] pb-4">
         <div className="text-[15px]/4.5 font-medium text-ink">GTM.md</div>
         <div className="text-[13px]/4 font-medium text-muted">
@@ -265,7 +265,7 @@ function History({
 
 function SummarySkeleton() {
   return (
-    <div className="flex w-full min-w-0 grow flex-col gap-3 rounded-xl border border-[#200D0D1A] px-7 py-6">
+    <div className="flex w-full min-w-0 grow flex-col gap-3 rounded-xl border border-[#200D0D1A] px-4 py-5 sm:px-7 sm:py-6">
       <Skeleton className="h-4.5 w-20" />
       <Skeleton className="mt-4 h-7 w-40" />
       <Skeleton className="h-4 w-full" />

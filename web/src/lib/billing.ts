@@ -9,8 +9,11 @@ export { creditFacts, leadsFor, packCatalog, planCatalog, TYPICAL_LEAD_CREDITS }
 /** "Crusonia Pro" -> "Pro" (Stripe product names carry the brand; the app does not need it twice). */
 export const planLabel = (name: string) => name.replace(/^Crusonia\s+/i, "");
 
-/** Small marketing tags from the pricing design, by plan key. Labels only: prices and credits come from the catalog. */
-export const PLAN_TAGS: Record<string, string> = { free: "pay as you go", pro: "recommended", scale: "for teams" };
+/**
+ * Small marketing tags from the pricing design, by plan key. Labels only: prices and credits come from the catalog.
+ * Pro's "recommended" tag is gone (owner rule: no recommendations); its card is still set apart by the dark border.
+ */
+export const PLAN_TAGS: Record<string, string | undefined> = { free: "pay as you go", scale: "for teams" };
 
 /** "$20/mo" -> "$20"; "$10" stays. */
 export const priceAmount = (price: string) => price.replace(/\/mo$/, "");

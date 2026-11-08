@@ -90,11 +90,22 @@ function UserMenu() {
   const { user, signOut } = useSession();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    // Esc closes the menu and puts focus back on the button that opened it.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      button.current?.focus();
+    };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open]);
   return (
     <div ref={ref} className="relative">
@@ -108,7 +119,7 @@ function UserMenu() {
           </button>
         </div>
       ) : null}
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex h-10 w-full shrink-0 items-center gap-2.5 rounded-lg pl-2.5 pr-2 text-left hover:bg-[#200D0D08]">
+      <button ref={button} type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex h-10 w-full shrink-0 items-center gap-2.5 rounded-lg pl-2.5 pr-2 text-left hover:bg-[#200D0D08]">
         {user?.imageUrl ? (
           <img src={user.imageUrl} alt="" className="size-7 shrink-0 rounded-full object-cover" />
         ) : (

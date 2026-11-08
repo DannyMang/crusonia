@@ -89,32 +89,19 @@ const dataArt = (
   </div>
 );
 
-function Bar({ label, value, width, winner }: { label: string; value: string; width: string; winner?: boolean }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex justify-between text-[11px]/3.5">
-        <span>{label}</span>
-        <span className={winner ? "text-green-dark" : undefined}>{value}</span>
-      </div>
-      <div className="h-2 shrink-0 rounded-full bg-[#200D0D0F]">
-        <div className={`h-2 rounded-full ${winner ? "bg-green" : "bg-[#200D0D33]"}`} style={{ width }} />
-      </div>
+// The fourth column was "Runs experiments" in Paper; Experiments were removed from the product (owner, Nov 8), so it
+// shows the approval step instead: a draft waiting for a yes, with no statistics.
+const approvalArt = (
+  <div className={`flex flex-col gap-3 p-4 ${card}`}>
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-[13px]/4 font-semibold">Maya Chen</span>
+      <span className="text-[11px]/3.5 text-muted">Code A7F2</span>
     </div>
-  );
-}
-
-const experimentsArt = (
-  <div className="flex flex-col gap-3">
-    <div className={`flex flex-col gap-3.5 p-4 ${card}`}>
-      <div className="flex justify-between">
-        <span className="text-[13px]/4 font-semibold">Reply rate</span>
-        <span className="text-[11px]/3.5 text-muted">40 sent each</span>
-      </div>
-      <Bar label="A · funding angle" value="5%" width="25%" />
-      <Bar label="B · hiring angle" value="15%" width="75%" winner />
-    </div>
-    <div className="flex justify-center">
-      <span className={`h-7 px-3 text-xs/4 font-medium ${chip}`}>scale B</span>
+    <span className="text-xs/4 font-medium">“Your first SDR at Fieldnote”</span>
+    <div className="h-px shrink-0 bg-[#200D0D0F]" />
+    <div className="flex gap-2">
+      <span className={`h-7 px-3 text-xs/4 font-medium ${chip}`}>Approve &amp; send</span>
+      <span className="flex h-7 items-center rounded-full border border-[#200D0D26] px-3 text-xs/4 font-medium">Edit</span>
     </div>
   </div>
 );
@@ -136,8 +123,8 @@ export function Infrastructure() {
         <Column art={dataArt} title="Keeps the data clean">
           Every company and contact has a source, gets deduplicated, and is refreshed when it goes stale.
         </Column>
-        <Column art={experimentsArt} title="Runs experiments">
-          Tries a new signal or message on a small group, shows reply rate and cost, then scales what works.
+        <Column art={approvalArt} title="Asks before it sends">
+          Every draft waits for your approval, with its sources. Nothing goes out on its own.
         </Column>
       </div>
     </section>

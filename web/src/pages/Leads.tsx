@@ -672,7 +672,7 @@ function NoLeadsYet({ onImport, onAdd }: { onImport: () => void; onAdd: () => vo
       title: "Your agent, over MCP",
       body: "Connect Claude, Cursor or any MCP client. It finds companies that fit, researches them and adds them here with sources.",
       action: (
-        <ButtonLink to="/app/connect" variant="soft">
+        <ButtonLink to="/app/settings/agent" variant="soft">
           Connect your agent
         </ButtonLink>
       ),

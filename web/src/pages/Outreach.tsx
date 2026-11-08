@@ -66,7 +66,7 @@ export default function Outreach() {
       </div>
       {tab === "approvals" ? <ApprovalsTab onToast={setToast} /> : <TasksTab onToast={setToast} />}
       {toast ? (
-        <div role="status" className="fixed bottom-6 left-[calc(50%+120px)] z-20 flex h-10 -translate-x-1/2 items-center rounded-full bg-ink px-4.5 text-[13px]/4 font-medium text-white shadow-lg">
+        <div role="status" className="fixed bottom-6 left-1/2 z-50 flex min-h-10 w-max max-w-[calc(100vw-32px)] -translate-x-1/2 items-center rounded-full bg-ink px-4.5 py-2 text-[13px]/4 font-medium text-white shadow-lg lg:left-[calc(50%+120px)]">
           {toast}
         </div>
       ) : null}

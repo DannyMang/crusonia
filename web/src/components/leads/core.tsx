@@ -282,7 +282,7 @@ export function NoteComposer({
   return (
     <form onSubmit={submit} className={cx("flex flex-col gap-1.5", className)}>
       <div className="flex items-center gap-2">
-        <label className={cx("flex min-w-0 grow items-center gap-2 rounded-lg border bg-white", button ? "h-8.5 border-[#200D0D1A] px-3" : "h-9.5 border-[#200D0D33] pl-3 pr-2")}>
+        <label className={cx("flex min-w-0 grow items-center gap-2 rounded-lg border bg-white focus-within:border-ink", button ? "h-8.5 border-[#200D0D1A] px-3" : "h-9.5 border-[#200D0D33] pl-3 pr-2")}>
           <input
             ref={inputRef}
             value={text}

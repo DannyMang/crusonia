@@ -504,11 +504,10 @@ Clerk). Designs are in Paper (approved before code). The Worker serves `web/dist
 | `/onboarding/1`..`4` | Your company, reading your site, your ideal customer, first leads |
 | `/app` | Home: pipeline, drafts waiting for you, active workflows, spend, replies |
 | `/app/leads`, `/app/leads/:id` | Leads (filters, CSV import, add) and lead detail (evidence, timeline, draft) |
-| `/app/approvals[/:code]` | Approve, edit or reject the exact draft |
+| `/app/outreach[/:code]`, `/app/outreach/tasks` (`/app/approvals[/:code]` redirects) | Approve, edit or reject the exact draft; manual tasks |
 | `/app/workflows`, `/app/workflows/runs/:id` | Agent runs and their step-by-step timeline |
 | `/app/integrations` | Provider status |
-| Connect your agent (popover on every `/app` page; `/app/connect` and `?connect=1` open it) | Add to Cursor, Claude Code or Codex in one click, create an API key |
-| `/app/settings/keys` | API keys: create, copy once, revoke, last used |
+| `/app/settings/agent` (`/app/settings/keys`, `/app/connect` and `?connect=1` redirect here) | Connect your agent: add to Cursor, Claude Code or Codex in one click; API keys: create, copy once, revoke, last used |
 | `/app/replies`, `/app/settings` | Inbound replies; pause switch, do-not-contact list, account |
 
 ```sh
