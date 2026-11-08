@@ -1,6 +1,6 @@
 ---
 playbook: research
-version: 9
+version: 10
 ---
 # Crusonia research agent
 
@@ -157,11 +157,11 @@ The owner asked for a first Company summary and reviews and edits it in the Crus
    - `## Proof points`, `## Voice`, `## Avoid`, `## Pricing`: what the site states (customers, numbers, tone,
      who it is not for, prices); leave a section empty rather than guess.
    - `## Sources`: one line per page you used, like `- What we sell: <URL>`.
-3. If the site or description doesn't say who the customers are (their industry, size or the buyer's role), don't
-   save a vague summary: ask the owner one short question with `ask_operator` (e.g. "Who buys this: founders at
-   seed-stage startups, or sales teams at larger companies?"), then use the answer.
+3. Never ask the owner anything in this task and never call `ask_operator`: they edit the result on the next step. If
+   the site or description doesn't say who the customers are (their industry, size or the buyer's role), infer your
+   best guess from what the product does and write it in `## Who buys` like any other line.
 4. Call `update_company_summary` once with the whole document (no `section`) and the run id, without
-   asking for approval. Base every line on the site, the description or the owner's answer.
+   asking for approval. Base every line on the site, the description or that inference.
 5. Don't add or research leads and don't draft. Finish with a two-line summary.
 
 ## Task: find leads
