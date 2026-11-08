@@ -24,10 +24,18 @@ export type DraftInput = z.infer<typeof draftInputSchema>;
 export type CreatedDraft = { draft: Draft; approval: Approval; superseded_approval_codes: string[] };
 
 /**
- * Stores a new immutable draft version for the lead and opens a pending `send` approval for it.
- * Older open drafts become `superseded` and their pending approvals `expired`.
+ * Stores a new immutable draft version for the lead and opens a pending `send` approval for it, bound to
+ * the lead's current email (`recipient`) and this exact version. Older open drafts become `superseded`
+ * and their pending approvals `expired`. `opts.ttlMinutes` overrides the default lifetime (the REST API
+ * passes APPROVAL_TTL_MINUTES); `opts.via` labels the event ('mcp' by default, 'api' for REST).
  */
-export async function createDraft(sql: Sql, input: DraftInput): Promise<CreatedDraft> {
+export async function createDraft(
+  sql: Sql,
+  input: DraftInput,
+  opts: { ttlMinutes?: number; via?: string; actor?: string } = {},
+): Promise<CreatedDraft> {
+  const ttlMinutes = opts.ttlMinutes ?? APPROVAL_TTL_HOURS * 60;
+  const via = opts.via ?? "mcp";
   const leads = await sql`
     select l.id, l.email, l.name, l.stage, l.consent_at,
            exists (select 1 from suppressions s where s.email = l.email) as suppressed
@@ -71,8 +79,8 @@ export async function createDraft(sql: Sql, input: DraftInput): Promise<CreatedD
           returning *
         ),
         approval as (
-          insert into approvals (code, kind, lead_id, draft_id, summary, expires_at)
-          select ${shortCode()}, 'send', lead_id, id, ${summary}, now() + make_interval(hours => ${APPROVAL_TTL_HOURS}::int)
+          insert into approvals (code, kind, lead_id, draft_id, recipient, summary, expires_at)
+          select ${shortCode()}, 'send', lead_id, id, ${lead.email}, ${summary}, now() + make_interval(mins => ${ttlMinutes}::int)
           from draft
           returning *
         ),
@@ -84,8 +92,9 @@ export async function createDraft(sql: Sql, input: DraftInput): Promise<CreatedD
         ev as (
           insert into events (lead_id, kind, data)
           select d.lead_id, 'draft_created',
-                 jsonb_build_object('via', 'mcp', 'draft_id', d.id, 'version', d.version, 'approval_code', a.code,
-                                    'superseded_drafts', (select coalesce(jsonb_agg(id), '[]'::jsonb) from superseded))
+                 jsonb_build_object('via', ${via}::text, 'draft_id', d.id, 'version', d.version, 'approval_code', a.code,
+                                    'superseded_drafts', (select coalesce(jsonb_agg(id), '[]'::jsonb) from superseded),
+                                    'actor', ${opts.actor ?? null}::text)
           from draft d, approval a
         )
         select to_jsonb(d) as draft, to_jsonb(a) as approval,

@@ -145,3 +145,31 @@ create table if not exists settings (
   value jsonb not null
 );
 insert into settings (key, value) values ('paused', 'false') on conflict do nothing;
+
+-- ---------------------------------------------------------------------------
+-- Core loop (REST API). Additive and idempotent: safe to re-run on an existing database.
+-- ---------------------------------------------------------------------------
+
+-- Keyset pagination for GET /api/leads (newest first; created_at never changes, unlike updated_at).
+create index if not exists leads_created_idx on leads (created_at desc, id desc);
+
+-- Approval binding and context. A send approval is bound to `recipient` (the exact address) and
+-- `draft_id` (the exact immutable version). `payload` holds the tool call or question for kinds
+-- 'tool' and 'question'; it came from the agent and is untrusted.
+-- A closed approval that nobody decided is 'expired'; `decided_via` says why: 'timeout', 'superseded'
+-- (a newer draft), 'reply_received', 'consent_revoked', 'complaint'.
+alter table approvals add column if not exists recipient text;
+alter table approvals add column if not exists payload jsonb not null default '{}';
+create index if not exists approvals_pending_idx on approvals (expires_at) where status = 'pending';
+
+-- Send bookkeeping: `sending_at` is when the draft was claimed for sending (the cron reconciles drafts
+-- stuck in 'sending' against AgentMail); `delivered_at` comes from message.delivered.
+alter table drafts add column if not exists sending_at timestamptz;
+alter table drafts add column if not exists delivered_at timestamptz;
+create index if not exists drafts_thread_idx on drafts (provider_thread_id) where provider_thread_id is not null;
+
+-- Inbound reply classification: interested | not_interested | unsubscribe | out_of_office | other.
+alter table messages add column if not exists label text;
+create index if not exists messages_thread_idx on messages (thread_id) where thread_id is not null;
+
+create index if not exists naive_sessions_status_idx on naive_sessions (status, updated_at);

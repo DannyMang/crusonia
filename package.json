@@ -7,12 +7,14 @@
     "deploy": "wrangler deploy",
     "deploy:dry": "wrangler deploy --dry-run",
     "cf-typegen": "wrangler types --include-env=false",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p scripts/tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p test/tsconfig.json",
+    "test": "bun test",
     "migrate": "bun scripts/migrate.ts",
     "setup": "bun scripts/setup.ts",
     "secrets": "wrangler secret bulk .dev.vars"
   },
   "dependencies": {
+    "@clerk/backend": "3.26.2",
     "@hono/mcp": "^0.3.5",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@neon/config": "^1.13.0",
