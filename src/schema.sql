@@ -474,6 +474,10 @@ create table if not exists imessage_outbox (
   last_error    text
 );
 create index if not exists imessage_outbox_due_idx on imessage_outbox (created_at) where delivered_at is null;
+-- Send cap (src/services/imessage.ts): notices beyond the cap are not texted one by one; they are marked skipped
+-- ('rate_limited') and collapse into one "+N more approvals waiting" text.
+alter table imessage_outbox add column if not exists skipped_at timestamptz;
+alter table imessage_outbox add column if not exists skip_reason text;
 create unique index if not exists imessage_outbox_message_uq on imessage_outbox (message_id) where message_id is not null;
 
 -- ---------------------------------------------------------------------------

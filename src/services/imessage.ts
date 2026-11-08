@@ -36,6 +36,12 @@ export const PHOTON_POLL_PATH = "/webhooks/photon/poll";
 const MAX_LEASE = 5;
 const MAX_NOTIFY_ATTEMPTS = 5;
 const LEASE_SECONDS = 120;
+/**
+ * Send cap: at most NOTICE_CAP notices (new approvals and reminders) per NOTICE_WINDOW_MINUTES. Due notices beyond it
+ * are skipped and summed up in one "+N more approvals waiting" text, sent at most once per window.
+ */
+export const NOTICE_CAP = 6;
+export const NOTICE_WINDOW_MINUTES = 10;
 /** Poll intervals the Worker asks for: normal, and while iMessage is switched off. */
 const POLL_MS = 5_000;
 const DISABLED_POLL_MS = 60_000;
@@ -227,7 +233,13 @@ export const BridgePollSchema = z.object({
 });
 export type BridgePoll = z.infer<typeof BridgePollSchema>;
 
-export type BridgeNotice = { id: string; type: "approval" | "expiry_warning"; text: string };
+export type BridgeNotice = { id: string; type: "approval" | "expiry_warning" | "summary"; text: string };
+
+/** The text that stands in for notices beyond the send cap. */
+export function formatSummary(count: number, publicUrl: string): string {
+  const url = `${publicUrl.replace(/\/+$/, "")}/app/approvals`;
+  return `+${count} more approval${count === 1 ? "" : "s"} waiting: open Crusonia (${url}) or text status.`;
+}
 export type PollResponse = { ok: true; enabled: boolean; notices: BridgeNotice[]; poll_after_ms: number };
 
 const noticeRows = async (sql: Sql, codes: string[]): Promise<NoticeRow[]> =>
@@ -257,6 +269,14 @@ export async function handleBridgePoll(getSql: () => Sql, env: Env, poll: Bridge
   const delivered = poll.acks.filter((a) => a.ok);
   const failed = poll.acks.filter((a) => !a.ok);
   const status = JSON.stringify({ ...poll.bridge, seen_at: new Date().toISOString() });
+  // Integration-test fixtures on a shared database are never texted (unless IMESSAGE_INCLUDE_TEST_DATA=true): leads
+  // with an it_* source, recipients on reserved example domains (RFC 2606/6761), and ses_it_* agent sessions.
+  const includeTest = env.IMESSAGE_INCLUDE_TEST_DATA?.trim().toLowerCase() === "true";
+  const testDomain = "@([a-z0-9-]+\\.)*(example\\.(com|org|net)|[a-z0-9-]+\\.(test|example|invalid|localhost))$";
+  // Notices counted against the cap: delivered in the window, plus leases still outstanding.
+  const window = `${NOTICE_WINDOW_MINUTES} minutes`;
+  const capSetting = Number(env.IMESSAGE_NOTICE_CAP);
+  const cap = Number.isInteger(capSetting) && capSetting > 0 ? capSetting : NOTICE_CAP;
   const results = await sql.transaction([
     // Delivered either way; the bubble id is recorded once and never reassigned to another notice.
     sql`update imessage_outbox o set delivered_at = coalesce(o.delivered_at, now()), last_error = null,
@@ -274,8 +294,13 @@ export async function handleBridgePoll(getSql: () => Sql, env: Env, poll: Bridge
            or settings.value->>'connected' is distinct from excluded.value->>'connected'
            or coalesce((settings.value->>'seen_at')::timestamptz, 'epoch') < now() - interval '30 seconds'`,
     sql`insert into imessage_outbox (id, workspace_id, approval_code, kind, draft_id)
-        select 'approval:' || code, workspace_id, code, 'approval', draft_id from approvals
-        where workspace_id = ${WS} and status = 'pending' and expires_at > now() and created_at > now() - interval '24 hours'
+        select 'approval:' || a.code, a.workspace_id, a.code, 'approval', a.draft_id
+        from approvals a left join leads l on l.id = a.lead_id
+        where a.workspace_id = ${WS} and a.status = 'pending' and a.expires_at > now() and a.created_at > now() - interval '24 hours'
+          and (${includeTest}::boolean or not (
+                left(coalesce(l.source, ''), 3) = 'it_'
+             or left(coalesce(a.naive_session_id, ''), 7) = 'ses_it_'
+             or lower(coalesce(a.recipient, l.email, '')) ~ ${testDomain}))
         on conflict (id) do nothing`,
     sql`insert into imessage_outbox (id, workspace_id, approval_code, kind, draft_id)
         select 'warn:' || a.code, a.workspace_id, a.code, 'expiry_warning', a.draft_id
@@ -284,28 +309,72 @@ export async function handleBridgePoll(getSql: () => Sql, env: Env, poll: Bridge
           and o.delivered_at <= now() - interval '10 minutes'
           and a.expires_at - now() <= least((a.expires_at - a.created_at) / 4, interval '12 hours')
         on conflict (id) do nothing`,
-    sql`with picked as (
+    // Lease within what is left of the cap.
+    sql`with used as (
+          select count(*) as n from imessage_outbox
+          where workspace_id = ${WS} and (delivered_at > now() - ${window}::interval
+             or (delivered_at is null and skipped_at is null and leased_at > now() - make_interval(secs => ${LEASE_SECONDS})))
+        ), picked as (
           select o.id from imessage_outbox o join approvals a on a.code = o.approval_code
-          where o.workspace_id = ${WS} and a.workspace_id = ${WS} and o.delivered_at is null and o.attempts < ${MAX_NOTIFY_ATTEMPTS}
+          where o.workspace_id = ${WS} and a.workspace_id = ${WS} and o.delivered_at is null and o.skipped_at is null
+            and o.attempts < ${MAX_NOTIFY_ATTEMPTS}
             and (o.leased_at is null or o.leased_at < now() - make_interval(secs => ${LEASE_SECONDS}))
             and a.status = 'pending' and a.expires_at > now()
           order by o.created_at
-          limit ${poll.max}
+          limit (select greatest(0, least(${poll.max}::int, ${cap}::int - n::int)) from used)
           for update of o skip locked
         )
         update imessage_outbox o set leased_at = now(), attempts = o.attempts + 1
         from picked where o.id = picked.id
         returning o.id, o.approval_code, o.kind`,
+    // Cap reached (and the bridge can deliver): every other due notice collapses into the summary instead.
+    sql`with used as (
+          select count(*) as n from imessage_outbox
+          where workspace_id = ${WS} and (delivered_at > now() - ${window}::interval
+             or (delivered_at is null and skipped_at is null and leased_at > now() - make_interval(secs => ${LEASE_SECONDS})))
+        ), due as (
+          select o.id from imessage_outbox o join approvals a on a.code = o.approval_code
+          where ${poll.max}::int > 0 and (select n from used) >= ${cap}
+            and o.workspace_id = ${WS} and a.workspace_id = ${WS} and o.delivered_at is null and o.skipped_at is null and o.attempts < ${MAX_NOTIFY_ATTEMPTS}
+            and (o.leased_at is null or o.leased_at < now() - make_interval(secs => ${LEASE_SECONDS}))
+            and a.status = 'pending' and a.expires_at > now()
+          for update of o skip locked
+        )
+        update imessage_outbox o set skipped_at = now(), skip_reason = 'rate_limited'
+        from due where o.id = due.id
+        returning o.id`,
+    // One summary per window for approvals collapsed since the last one (claimed here, so overlapping polls send one).
+    sql`with last as (
+          select coalesce((select (value->>'at')::timestamptz from settings where key = 'imessage_summary'), 'epoch'::timestamptz) as at
+        ), pending as (
+          select count(distinct o.approval_code)::int as n
+          from imessage_outbox o join approvals a on a.code = o.approval_code, last
+          where o.workspace_id = ${WS} and o.skip_reason = 'rate_limited' and o.skipped_at > last.at
+            and a.status = 'pending' and a.expires_at > now()
+        ), claim as (
+          insert into settings (key, value)
+          select 'imessage_summary', jsonb_build_object('at', now(), 'count', pending.n)
+          from pending, last
+          where ${poll.max}::int > 0 and pending.n > 0 and last.at < now() - ${window}::interval
+          on conflict (key) do update set value = excluded.value
+            where coalesce((settings.value->>'at')::timestamptz, 'epoch') < now() - ${window}::interval
+          returning (value->>'count')::int as n
+        )
+        select n from claim`,
   ]);
-  const leased = (results.at(-1) ?? []) as { id: string; approval_code: string; kind: "approval" | "expiry_warning" }[];
-  if (!leased.length) return { ok: true, enabled: true, notices: [], poll_after_ms: POLL_MS };
-  const rows = new Map((await noticeRows(sql, leased.map((l) => l.approval_code))).map((r) => [r.code, r]));
+  const summarized = ((results.at(-1) ?? []) as { n: number }[])[0]?.n ?? 0;
+  const leased = (results.at(-3) ?? []) as { id: string; approval_code: string; kind: "approval" | "expiry_warning" }[];
   const notices: BridgeNotice[] = [];
+  if (summarized > 0) notices.push({ id: `summary:${Date.now()}`, type: "summary", text: formatSummary(summarized, env.PUBLIC_URL) });
+  if (!leased.length) return { ok: true, enabled: true, notices, poll_after_ms: POLL_MS };
+  const rows = new Map((await noticeRows(sql, leased.map((l) => l.approval_code))).map((r) => [r.code, r]));
   for (const l of leased) {
     const row = rows.get(l.approval_code);
     if (!row) continue;
     notices.push({ id: l.id, type: l.kind, text: l.kind === "approval" ? formatApprovalNotice(row) : formatExpiryWarning(row) });
   }
+  // Individual notices first, the summary of what did not fit last.
+  notices.sort((a, b) => Number(a.type === "summary") - Number(b.type === "summary"));
   return { ok: true, enabled: true, notices, poll_after_ms: POLL_MS };
 }
 
