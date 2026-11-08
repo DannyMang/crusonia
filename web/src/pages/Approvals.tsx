@@ -12,7 +12,7 @@ import { FilterChip, isTypingTarget, SearchField, updatedAgo, useNow, useSlashTo
 import { matchesSearch, workflowOf } from "../components/approvals/model.ts";
 import type { OnDecided } from "../components/approvals/parts.tsx";
 import { Queue } from "../components/approvals/Queue.tsx";
-import { SendDetail } from "../components/approvals/SendDetail.tsx";
+import { SendDetail, type LeaveGuard } from "../components/approvals/SendDetail.tsx";
 import { CodeState, DetailSkeleton, NothingSelected } from "../components/approvals/States.tsx";
 import { ApprovalsIcon } from "../components/icons.tsx";
 import { Button, ButtonLink, EmptyState, QueryError } from "../components/ui.tsx";
@@ -86,9 +86,11 @@ export default function Approvals() {
     if (!code && first) navigate(`/app/approvals/${encodeURIComponent(first)}`, { replace: true });
   }, [code, first, navigate]);
 
-  // J / K move through the visible queue (and open the first item when nothing is selected).
+  // J / K move through the visible queue (and open the first item when nothing is selected). With unsaved
+  // draft edits open, the detail asks first (leaveGuard).
   const orderedRef = useRef(ordered);
   orderedRef.current = ordered;
+  const leaveGuard: LeaveGuard = useRef(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
@@ -98,7 +100,9 @@ export default function Approvals() {
       e.preventDefault();
       const i = list.findIndex((a) => a.code === code);
       const next = i === -1 ? list[0] : list[Math.min(list.length - 1, Math.max(0, i + (k === "j" ? 1 : -1)))];
-      if (next && next.code !== code) navigate(`/app/approvals/${encodeURIComponent(next.code)}`, { replace: true });
+      if (!next || next.code === code) return;
+      const go = () => navigate(`/app/approvals/${encodeURIComponent(next.code)}`, { replace: true });
+      if (!leaveGuard.current?.(go)) go();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -206,7 +210,7 @@ export default function Approvals() {
             {loading ? (
               <DetailSkeleton />
             ) : selected ? (
-              <Detail key={selected.code} a={selected} now={now} onDecided={onDecided} />
+              <Detail key={selected.code} a={selected} now={now} onDecided={onDecided} leaveGuard={leaveGuard} />
             ) : code ? (
               <CodeState key={code} code={code} filtered={filtering} onClearFilters={clearFilters} />
             ) : (
@@ -225,8 +229,8 @@ export default function Approvals() {
   );
 }
 
-function Detail({ a, now, onDecided }: { a: ApprovalListItem; now: number; onDecided: OnDecided }) {
+function Detail({ a, now, onDecided, leaveGuard }: { a: ApprovalListItem; now: number; onDecided: OnDecided; leaveGuard: LeaveGuard }) {
   if (a.kind === "tool") return <ToolDetail a={a} now={now} onDecided={onDecided} />;
   if (a.kind === "question") return <QuestionDetail a={a} now={now} onDecided={onDecided} />;
-  return <SendDetail a={a} now={now} onDecided={onDecided} />;
+  return <SendDetail a={a} now={now} onDecided={onDecided} leaveGuard={leaveGuard} />;
 }
