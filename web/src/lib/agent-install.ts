@@ -1,6 +1,7 @@
 // One-click agent setup, shared by the landing ("Set-up fast.") and Settings · Connect your agent.
-// - Cursor: Cursor's MCP install deeplink (cursor.com/docs: cursor://anysphere.cursor-deeplink/mcp/install
-//   ?name=<name>&config=<base64 of the server's JSON config>). Cursor opens and asks to install crusonia.
+// - Cursor: Cursor's MCP install page (cursor.com/install-mcp?name=<name>&config=<base64 of the server's JSON config>). It opens
+//   Cursor and asks to install crusonia. A bare cursor:// link does nothing, with no message, where Cursor isn't installed.
+//   The config holds the URL and the name of the env var, never a key.
 // - Claude Code and Codex have no install links, so their buttons copy the exact `mcp add` command.
 // All three read the API key from CRUSONIA_MCP_TOKEN when they connect (keys: Settings › API keys).
 
@@ -17,7 +18,7 @@ export const exportLine = (key: string) => `export ${TOKEN_ENV}=${key}`;
 
 export function cursorInstallUrl(url: string = MCP_URL) {
   const config = { url, headers: { Authorization: `Bearer \${env:${TOKEN_ENV}}` } };
-  return "cursor://anysphere.cursor-deeplink/mcp/install?name=crusonia&config=" + encodeURIComponent(btoa(JSON.stringify(config)));
+  return "https://cursor.com/install-mcp?name=crusonia&config=" + encodeURIComponent(btoa(JSON.stringify(config)));
 }
 
 export const claudeCodeCommand = (url: string = MCP_URL) =>
