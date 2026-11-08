@@ -463,6 +463,16 @@ suite("autopilot (database, mocked Naive)", () => {
     await sql`update workspaces set daily_cap_micro_usd = 0 where id = ${ws}`;
     expect((await call("find_more_leads", { count: 5 })).error).toContain("daily spend cap");
     await sql`update workspaces set daily_cap_micro_usd = null where id = ${ws}`;
+    // A lead whose email waits for the owner is left alone: a new draft would close the request.
+    const [owed] = await sql`insert into drafts (id, workspace_id, lead_id, version, variant, subject, body, status, channel)
+      values (${`draft_w_${run}`}, ${ws}, ${lead}, 1, 'A', 's', 'b', 'pending_approval', 'email') returning id`;
+    await sql`insert into approvals (code, workspace_id, kind, lead_id, draft_id, recipient, summary, expires_at)
+      values (${`W${run.slice(0, 5)}`}, ${ws}, 'send', ${lead}, ${owed!.id}, 'x@ex.test', 's', now() + interval '1 day')`;
+    expect((await call("start_research", { lead_ids: [lead] })).error).toContain("waits for the owner");
+    expect((await call("run_workflow", { workflow_id: wf, lead_ids: [lead] })).error).toContain("waits for the owner");
+    expect((await call("create_draft", { lead_id: lead, channel: "intro", body: "hello" })).error).toContain("waits for the owner");
+    await sql`delete from approvals where workspace_id = ${ws}`;
+    await sql`delete from drafts where workspace_id = ${ws}`;
     // At most so many starts an hour.
     await sql`insert into events (workspace_id, kind, data) select ${ws}, 'research_started', '{"actor":"agent:x"}'::jsonb from generate_series(1, 10)`;
     expect((await call("start_research", { lead_ids: [lead] })).error).toContain("this hour");

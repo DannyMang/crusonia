@@ -107,6 +107,20 @@ function OpenRun({ run, onTrace }: { run: FlowRun; onTrace: () => void }) {
   );
 }
 
+const BY_ITSELF = new Set(["schedule", "csv_import", "reply", "operator"]);
+
+/** Started by itself or by a person; what the agents did and the times a person stepped in. */
+function RunTally({ run }: { run: FlowRun }) {
+  if (run.agent_actions === undefined) return null;
+  const did = run.agent_actions === 1 ? "1 agent action" : `${num(run.agent_actions)} agent actions`;
+  const owner = run.owner_actions ?? 0;
+  return (
+    <span className="truncate text-xs/4 tabular-nums text-muted">
+      {run.trigger && BY_ITSELF.has(run.trigger) ? "Started by itself" : "You started it"} · {did} · you stepped in {owner === 1 ? "once" : `${num(owner)} times`}
+    </span>
+  );
+}
+
 function RunRow({ run, onOpen, onTrace }: { run: FlowRun; onOpen: () => void; onTrace: () => void }) {
   const c = run.counts;
   return (
@@ -117,6 +131,7 @@ function RunRow({ run, onOpen, onTrace }: { run: FlowRun; onOpen: () => void; on
         <span className="truncate text-xs/4 tabular-nums text-muted">
           {num(c.found)} found · {num(c.researched)} researched · {num(c.qualified)} qualified · {num(c.sent)} sent
         </span>
+        <RunTally run={run} />
       </button>
       <FlowStatusPill status={run.status} />
       <div className="w-14 shrink-0 text-right text-[13px]/4 font-medium tabular-nums text-ink">{usd(run.cost_usd)}</div>

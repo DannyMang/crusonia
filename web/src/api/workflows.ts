@@ -71,6 +71,11 @@ export type FlowRun = {
   status: FlowStatus;
   cost_usd: number | null;
   counts: FlowRunCounts;
+  /** What started it: schedule, csv_import, reply, operator, or a person (manual). */
+  trigger?: string;
+  /** What its agents did, and the times a person stepped in. */
+  agent_actions?: number;
+  owner_actions?: number;
   /** The clean timeline: a few plain lines. */
   timeline: { at: string; text: string }[];
   trace_steps: number | null;

@@ -17,6 +17,7 @@ export const queryClient = new QueryClient({
 export const keys = {
   me: ["me"] as const,
   summary: ["summary"] as const,
+  autopilot: ["autopilot"] as const,
   status: ["status"] as const,
   pause: ["pause"] as const,
   profile: ["profile"] as const,
@@ -44,6 +45,21 @@ export function useMe() {
 export function useSummary() {
   const api = useApi();
   return useQuery({ queryKey: keys.summary, queryFn: () => api.summary(), refetchInterval: 30_000 });
+}
+
+/** Home's live feed: polls while the page is open. */
+export function useAutopilot() {
+  const api = useApi();
+  return useQuery({ queryKey: keys.autopilot, queryFn: () => api.autopilot(), refetchInterval: 5_000 });
+}
+
+export function useSetAutopilot() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => api.setAutopilot(enabled),
+    onSuccess: (data) => qc.setQueryData(keys.autopilot, data),
+  });
 }
 
 export function useStatus() {

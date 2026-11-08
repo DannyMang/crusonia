@@ -114,6 +114,17 @@ export type LeadNote = { id: string; lead_id?: string; author: string; kind: Not
 
 export type LeadFilters = { stage?: LeadStage; min_score?: number; source?: string; q?: string; limit?: number; cursor?: string };
 
+/** GET /api/autopilot: the switch, what is running, the feed, and the tally (src/services/autopilot.ts). */
+export type AutopilotFeedItem = { id: string; at: string; text: string; detail?: string; by: "agent" | "you" | "system"; lead_id: string | null; waiting?: boolean };
+export type Autopilot = {
+  available: boolean;
+  enabled: boolean;
+  paused: boolean;
+  running: { session_id: string; lead_id: string | null; waiting_on_you: boolean; text: string }[];
+  feed: AutopilotFeedItem[];
+  counts: { agent_actions: number; owner_actions: number; days: number };
+};
+
 /** `n`: 1..n, oldest first (the number why_summary and citations refer to). Older deployments omit it. */
 export type Evidence = { id: number; lead_id: string; claim: string; source_url: string; created_at: string; n?: number };
 
@@ -671,6 +682,8 @@ export function createApi(getToken: TokenGetter, base = "") {
     summary: () => get<Summary>("/api/summary"),
     status: () => get<Status>("/api/status"),
 
+    autopilot: () => get<Autopilot>("/api/autopilot"),
+    setAutopilot: (enabled: boolean) => put<Autopilot>("/api/autopilot", { enabled }),
     // settings
     getPause: () => get<{ paused: boolean }>("/api/settings/pause"),
     setPause: (paused: boolean) => put<{ paused: boolean }>("/api/settings/pause", { paused }),
