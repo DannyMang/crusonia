@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+/* veri style. Paper exports use raw hex values (text-[#200D0D] ...), which work as-is; prefer these tokens
+   in new code: text-ink, bg-lime, bg-highlight, bg-panel, border-panel-line, bg-pill, text-green.
+   Owner rule: Inter for ALL text (IDs, emails, numbers, commands included). No monospace font anywhere, so the
+   mono token is Inter too (it also covers <code>, <kbd>, <pre>); use `tabular-nums` where digits must align. */
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "Inter", system-ui, sans-serif;
+
+  --color-ink: #200d0d;
+  --color-lime: #bde689;
+  --color-highlight: #d6efb5;
+  --color-panel: #f5f9f0;
+  --color-panel-line: #dce9cf;
+  --color-pill: #f0eeea;
+  --color-green: #16a34a;
+  --color-red: #dc2626;
+  --color-muted: #200d0d99;
+  --color-faint: #200d0d73;
+  --color-hairline: #200d0d14;
+  --color-hairline-soft: #200d0d0f;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+  body {
+    background: #ffffff;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: default;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-green);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes crusonia-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes crusonia-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

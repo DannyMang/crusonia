@@ -1,6 +1,7 @@
 # Crusonia
 
-GTM engine (a Clay/Apollo alternative run by AI agents). API-only Cloudflare Worker (Hono) + Neon Postgres.
+GTM engine (a Clay/Apollo alternative run by AI agents). Cloudflare Worker (Hono) + Neon Postgres, with the dashboard
+(React SPA in `web/`) served from the same Worker as static assets.
 Agents (Naive, or your own Claude Code / Cursor / Codex) work through our MCP server at `/mcp`; AgentMail handles
 email (opted-in leads only); Apify supplies web and lead data (our MCP tools call its REST API, and Naive agents can
 also use Apify's hosted MCP server); HubSpot and Notion are synced; Clerk handles users; Stripe bills hosted usage
@@ -29,7 +30,8 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 | `scripts/setup.ts` | Creates the AgentMail inbox/webhook and the Naive webhook, vault and research agent; `--stripe`: billing products, prices, portal and webhook (`scripts/lib/stripe-setup.ts`); `--crm`: HubSpot properties and the Notion leads database (`scripts/lib/crm-setup.ts`) (Bun) |
 | `scripts/lib/naive-agent.ts` | The Naive agent definition: tools and permissions, MCP servers, model, budget |
 | `playbooks/research.md` | The research agent's system prompt (versioned in its front matter) |
-| `wrangler.jsonc` | Worker config (cron every minute, `PUBLIC_URL`) |
+| `web/` | Dashboard SPA (React + Vite + Tailwind, Clerk sign-in), built to `web/dist` and served as static assets. See [Web app](#web-app) |
+| `wrangler.jsonc` | Worker config (cron every minute, `PUBLIC_URL`, static assets with `/api`, `/mcp`, `/webhooks`, `/health` routed to the Worker first) |
 | `worker-configuration.d.ts` | Generated runtime types (`bun run cf-typegen`) |
 
 ## Setup, in order
@@ -157,7 +159,7 @@ human approves it.
 
 ## REST API
 
-Every `/api/*` call needs `Authorization: Bearer <token>`: a Clerk session token for a user in
+The dashboard (`web/`) is built on this API. Every `/api/*` call needs `Authorization: Bearer <token>`: a Clerk session token for a user in
 `CLERK_ALLOWED_USER_IDS`, an API key (`crs_live_...`), or `MCP_TOKEN` as the owner/dev bypass. Single workspace for now.
 Errors are always `{"error": {"code", "message", "details?"}}`; a missing key answers 503 `not_configured` naming it.
 Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
@@ -369,12 +371,52 @@ upsert; a Notion page is also found by its Lead ID column if its id was lost.
 Watch it in `GET /api/integrations/crm`. Deleting a lead in Crusonia does not delete anything in HubSpot or Notion.
 On the Workers Free plan (50 subrequests per invocation) keep `CRM_SYNC_BATCH_SIZE` small.
 
+## Web app
+
+The dashboard, onboarding and sign-in screens live in `web/` (React 19, React Router, Tailwind v4, React Query,
+Clerk). Designs are in Paper (approved before code). The Worker serves `web/dist` as static assets: `/api/*`, `/mcp`,
+`/webhooks/*` and `/health` run the Worker first, every other path without a file falls back to `index.html`.
+
+| Route | Screen |
+| --- | --- |
+| `/sign-in`, `/sign-up` | Clerk custom flows (GitHub, Google, email code) |
+| `/onboarding/1`..`4` | Your company, reading your site, your ideal customer, first leads |
+| `/app` | Home: pipeline, drafts waiting for you, active workflows, spend, replies |
+| `/app/leads`, `/app/leads/:id` | Leads (filters, CSV import, add) and lead detail (evidence, timeline, draft) |
+| `/app/approvals[/:code]` | Approve, edit or reject the exact draft |
+| `/app/workflows`, `/app/workflows/runs/:id` | Agent runs and their step-by-step timeline |
+| `/app/experiments[/:id]` | A/B experiments with per-variant stats |
+| `/app/integrations`, `/app/connect` | Provider status; MCP setup for Claude Code, Cursor and Codex, API keys |
+| `/app/replies`, `/app/settings` | Inbound replies; pause switch, do-not-contact list, account |
+
+```sh
+cd web && bun install           # once (build:web also installs)
+bun run dev:web:mock            # :5173 with MSW sample data, no sign-in (`?mock=empty` for the empty state)
+bun run dev                     # Worker on :8787, then in another shell:
+bun run dev:web                 # :5173, proxies /api to the Worker (VITE_CLERK_PUBLISHABLE_KEY in web/.env.local)
+```
+
+Locally without Clerk, set `sessionStorage['crusonia.devToken']` to your `MCP_TOKEN` in the browser console to call
+the real API from `vite dev` (development builds only; it is compiled out of production builds).
+
+Build and ship: `VITE_CLERK_PUBLISHABLE_KEY` (publishable, safe in the bundle) must be set when building, e.g. in
+`web/.env.local` (gitignored). `bun run deploy:preview` uploads a version without deploying it and serves it at
+`app-crusonia.<subdomain>.workers.dev` (it uses production's secrets and database). Signing in requires the Clerk
+user id in `CLERK_ALLOWED_USER_IDS`. Note: while an uploaded version is newer than the deployed one,
+`wrangler secret put` refuses to run; use `wrangler versions secret put` or deploy first.
+
 ## Day to day
 
 - `bun run dev`: local Worker on :8787 (reads `.dev.vars`). `bunx wrangler dev --test-scheduled` to trigger the cron at `/__scheduled`.
-- `bun run typecheck`: Worker (`tsconfig.json`), Bun scripts (`scripts/tsconfig.json`) and tests (`test/tsconfig.json`).
+- `bun run typecheck`: Worker (`tsconfig.json`), Bun scripts (`scripts/tsconfig.json`), tests (`test/tsconfig.json`) and the web app (`web/tsconfig.json`).
 - `bun test`: unit tests (signatures, approval rules and lifetimes, CSV, allowlist, classifier, providers with mocked
   fetch, auth, API keys, routes, the Naive agent definition and playbook, summary/experiment/run-step logic; CRM sync
+  field mapping, queue retry/backoff and 429s, and HubSpot/Notion pushes and setup against in-memory fakes). With
+  `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts` (send/reply/Naive flows),
+  `test/web-api.integration.test.ts` (keys, summary, experiments, replies, workflows, onboarding) and
+  `test/crm-sync.integration.test.ts` (trigger, queue, pushes, import) also run against a real database with mocked
+  providers (never point it at production; they clean up their rows).
+- `bun run deploy:dry`: build the web app and the Worker without deploying. `bun run deploy` builds the web app first too.
   field mapping, queue retry/backoff and 429s, and HubSpot/Notion pushes and setup against in-memory fakes; billing with
   an in-memory Stripe). With `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts` (send/reply/Naive flows),
   `test/web-api.integration.test.ts` (keys, summary, experiments, replies, workflows, onboarding),
@@ -390,5 +432,5 @@ The web app is served from this Worker's origin through a static-assets binding 
 keep `/api/*`, `/mcp`, `/webhooks/*` and `/health` on the Worker (`run_worker_first`); see the comment in
 `src/index.ts`.
 
-`main` is protected: changes land through pull requests. Front-facing code (`src/web/**`, `public/**`, `*.tsx`,
+`main` is protected: changes land through pull requests. Front-facing code (`web/**`, `src/web/**`, `public/**`, `*.tsx`,
 `design/**`) is owned by @DannyMang in CODEOWNERS and ships only after the design is approved in Paper.
