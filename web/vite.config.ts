@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig, type Plugin } from "vite";
+import { fileURLToPath } from "node:url";
+import { defineConfig, searchForWorkspaceRoot, type Plugin } from "vite";
 
 const require = createRequire(import.meta.url);
 
@@ -30,6 +31,8 @@ export default defineConfig({
     port: Number(process.env.PORT ?? 5173),
     strictPort: true,
     proxy: Object.fromEntries(["/api", "/mcp", "/webhooks", "/health"].map((p) => [p, { target: worker, changeOrigin: true }])),
+    // /pricing imports the Worker's price list (src/billing/catalog.ts and plans.ts) so the two never drift.
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), fileURLToPath(new URL("../src/billing", import.meta.url))] },
   },
   // No source maps in dist: everything in it is uploaded as a public static asset.
   build: { outDir: "dist", sourcemap: false },
