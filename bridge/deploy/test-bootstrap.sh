@@ -51,9 +51,10 @@ platform=()
 [[ -n "${PLATFORM:-}" ]] && platform=(--platform "$PLATFORM")
 docker run --rm --privileged --cgroupns=private --name crusonia-bootstrap-test ${platform[@]+"${platform[@]}"} -v "$work:/test:ro" -v /var/lib/docker ubuntu:24.04 bash -c '
   install -m 755 /test/systemctl /usr/local/bin/systemctl
-  bash /test/bootstrap.sh; status=$?
+  # Like a real first boot: no HOME (cloud-init) and umask 077 from the launch script.
+  (umask 077; env -u HOME -u USER bash /test/bootstrap.sh); status=$?
   echo "--- bootstrap exit: $status"
-  echo "--- env file: $(stat -c "%a %U:%G" /opt/crusonia-bridge/bridge.env 2>/dev/null)"
+  echo "--- env file: $(stat -c "%a %U:%G" /opt/crusonia-bridge/bridge.env 2>/dev/null); dir: $(stat -c "%a %U:%G" /opt/crusonia-bridge); code: $(stat -c "%a" /opt/crusonia-bridge/repo/bridge/src/index.ts)"
   echo "--- container: $(docker inspect -f "{{.State.Status}} restarts={{.RestartCount}} readonly={{.HostConfig.ReadonlyRootfs}}" crusonia-bridge 2>/dev/null)"
   echo "--- health: $(docker exec crusonia-bridge bun src/cli.ts health 2>&1 | sed "s/^200 //" | head -c 600)"
   echo "--- last log lines:"; docker logs --tail 5 crusonia-bridge 2>&1 | sed -E "s/\+[0-9]{8,}/+***/g"
