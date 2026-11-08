@@ -9,7 +9,7 @@ import { Page } from "../components/AppShell.tsx";
 import { BrandTile, type BrandName } from "../components/BrandLogo.tsx";
 import { Card, CopyButton, QueryError, Skeleton } from "../components/ui.tsx";
 import { cx, num, timeAgo } from "../lib/format.ts";
-import { useStatus } from "../queries.ts";
+import { useOwnerWorkspace, useStatus } from "../queries.ts";
 import { CodeWell, CrumbBar } from "./connect/CrumbBar.tsx";
 
 type State = "connected" | "needs_key" | "soon" | "unknown" | "local";
@@ -40,6 +40,10 @@ const imessageOn = (s: Status | undefined) => Boolean(s?.imessage?.active);
 
 const providerState = (p: ProviderStatus | undefined, known: boolean): State => (!known || !p ? "unknown" : p.configured ? "connected" : "needs_key");
 
+/** The instance's own accounts: HubSpot and Notion sync only the owner workspace, and only the owner can add a key or open the consoles. */
+const crmState = (p: ProviderStatus | undefined, known: boolean, owner: boolean): State => (owner ? providerState(p, known) : "soon");
+const seenState = (state: State, owner: boolean): State => (!owner && state === "needs_key" ? "soon" : state);
+
 /** Naive also needs the agent id that runs research sessions (NAIVE_AGENT_ID), reported separately. */
 function naiveInfo(s: Status | undefined, known: boolean): { state: State; missing: string[] } {
   const p = s?.providers.naive;
@@ -51,23 +55,26 @@ function naiveInfo(s: Status | undefined, known: boolean): { state: State; missi
 
 export default function Integrations() {
   const status = useStatus();
+  const ownerKnown = useOwnerWorkspace();
+  const owner = ownerKnown !== false;
   const s = status.data;
   const known = Boolean(s);
-  const loading = status.isPending;
+  const loading = status.isPending || ownerKnown === null;
   const missing = isApiError(status.error) && status.error.missingRoute;
 
   const states: State[] = s
     ? [
-        providerState(s.providers.agentmail, true),
-        providerState(s.providers.hubspot, true),
-        providerState(s.providers.notion, true),
-        providerState(s.providers.apify, true),
-        naiveInfo(s, true).state,
+        seenState(providerState(s.providers.agentmail, true), owner),
+        crmState(s.providers.hubspot, true, owner),
+        crmState(s.providers.notion, true, owner),
+        seenState(providerState(s.providers.apify, true), owner),
+        seenState(naiveInfo(s, true).state, owner),
         clerkEnabled ? "connected" : "local",
       ]
     : [];
   const connected = states.filter((x) => x === "connected").length + (imessageOn(s) ? 1 : 0);
   const needs = states.filter((x) => x === "needs_key").length;
+  const soon = states.filter((x) => x === "soon").length + (imessageOn(s) ? 0 : 1);
 
   return (
     <>
@@ -78,7 +85,7 @@ export default function Integrations() {
             <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Integrations</h1>
             {s ? (
               <div className="shrink-0 text-[13px]/4 font-medium text-muted">
-                {connected} connected · {needs} {needs === 1 ? "needs" : "need"} a key{imessageOn(s) ? "" : " · 1 coming soon"}
+                {[`${connected} connected`, needs ? `${needs} ${needs === 1 ? "needs" : "need"} a key` : null, soon ? `${soon} coming soon` : null].filter(Boolean).join(" · ")}
               </div>
             ) : loading ? (
               <Skeleton className="h-4 w-60" />
@@ -102,11 +109,11 @@ export default function Integrations() {
             [0, 1, 2, 3].map((i) => <CardSkeleton key={i} />)
           ) : (
             <>
-              <AgentMailCard status={s} known={known} />
-              <HubSpotCard status={s} known={known} />
-              <NotionCard status={s} known={known} />
-              <ApifyCard status={s} known={known} />
-              <PlatformCard status={s} known={known} />
+              <AgentMailCard status={s} known={known} owner={owner} />
+              <HubSpotCard status={s} known={known} owner={owner} />
+              <NotionCard status={s} known={known} owner={owner} />
+              <ApifyCard status={s} known={known} owner={owner} />
+              <PlatformCard status={s} known={known} owner={owner} />
             </>
           )}
 
@@ -276,22 +283,22 @@ function SyncFacts({ sync, switchName }: { sync: CrmSyncTarget | undefined; swit
 
 // ---------- cards ----------
 
-type CardProps = { status: Status | undefined; known: boolean };
+type CardProps = { status: Status | undefined; known: boolean; owner: boolean };
 
 function secretsFor(key: string, p: ProviderStatus | undefined) {
   return p?.missing?.length ? p.missing : (SECRETS[key] ?? []);
 }
 
-function AgentMailCard({ status, known }: CardProps) {
+function AgentMailCard({ status, known, owner }: CardProps) {
   const p = status?.providers.agentmail;
-  const state = providerState(p, known);
+  const state = seenState(providerState(p, known), owner);
   const inbox = status?.inbox_address;
   return (
     <ProviderCard
       tile="agentmail"
       name="AgentMail"
       state={state}
-      manage={{ href: "https://console.agentmail.to", what: "the AgentMail console" }}
+      manage={owner ? { href: "https://console.agentmail.to", what: "the AgentMail console" } : undefined}
       description="Email inbox for outreach and replies. Crusonia only sends to contacts who opted in or that you approved."
     >
       {state === "connected" ? (
@@ -323,9 +330,9 @@ function AgentMailCard({ status, known }: CardProps) {
   );
 }
 
-function HubSpotCard({ status, known }: CardProps) {
+function HubSpotCard({ status, known, owner }: CardProps) {
   const p = status?.providers.hubspot;
-  const state = providerState(p, known);
+  const state = crmState(p, known, owner);
   return (
     <ProviderCard
       tile="hubspot"
@@ -349,9 +356,9 @@ function HubSpotCard({ status, known }: CardProps) {
   );
 }
 
-function NotionCard({ status, known }: CardProps) {
+function NotionCard({ status, known, owner }: CardProps) {
   const p = status?.providers.notion;
-  const state = providerState(p, known);
+  const state = crmState(p, known, owner);
   return (
     <ProviderCard
       tile="notion"
@@ -371,15 +378,15 @@ function NotionCard({ status, known }: CardProps) {
 
 const ACTORS = ["website-content-crawler", "google-search-scraper"];
 
-function ApifyCard({ status, known }: CardProps) {
+function ApifyCard({ status, known, owner }: CardProps) {
   const p = status?.providers.apify;
-  const state = providerState(p, known);
+  const state = seenState(providerState(p, known), owner);
   return (
     <ProviderCard
       tile="apify"
       name="Apify"
       state={state}
-      manage={{ href: "https://console.apify.com", what: "the Apify console" }}
+      manage={owner ? { href: "https://console.apify.com", what: "the Apify console" } : undefined}
       description="Web and lead data. The agent reads your site and prospects' sites, searches Google for signals and pulls contacts."
     >
       {state === "needs_key" ? (
@@ -436,8 +443,10 @@ function PlatformRow({
   );
 }
 
-function PlatformCard({ status, known }: CardProps) {
-  const { state: naiveState, missing: naiveMissing } = naiveInfo(status, known);
+function PlatformCard({ status, known, owner }: CardProps) {
+  const info = naiveInfo(status, known);
+  const naiveState = seenState(info.state, owner);
+  const naiveMissing = info.missing;
   return (
     <Card className="flex flex-col px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 pb-2">
@@ -470,7 +479,7 @@ function PlatformCard({ status, known }: CardProps) {
         name="Clerk"
         state={clerkEnabled ? "connected" : "local"}
         description={clerkEnabled ? "Sign-in for your team and the dashboard." : "Sign-in for your team. This local build skips sign-in."}
-        action={clerkEnabled ? <Manage href="https://dashboard.clerk.com" what="the Clerk dashboard" /> : undefined}
+        action={clerkEnabled && owner ? <Manage href="https://dashboard.clerk.com" what="the Clerk dashboard" /> : undefined}
       />
       <PlatformRow
         last

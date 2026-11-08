@@ -75,7 +75,20 @@ export function layout(steps: FlowStep[]): Layout {
       const pcx = parent.x + NODE_W / 2;
       const ccx = child.x + NODE_W / 2;
       const branchy = kids.length > 1 || child.step.branch;
-      if (child.row === parent.row) {
+      // A branch that joins a step placed further down the main path (Qualified? -> End): down its own column, then
+      // across, so it doesn't run hidden behind the main path with a stray "+".
+      const joins = pos.get(child.step.id)?.parent !== parent.step.id && child.col < parent.col && child.row > parent.row;
+      if (joins && !nodes.some((n) => n.col === parent.col && n.row > parent.row && n.row <= child.row)) {
+        const y1 = parent.y + NODE_H;
+        const text = child.step.branch ?? (parent.step.kind === "condition" ? "no" : null);
+        edges.push({
+          from: parent.step.id,
+          to: child.step.id,
+          path: `M${pcx} ${y1}V${child.y + NODE_H / 2}H${child.x + NODE_W}`,
+          plus: null,
+          label: text ? { text, x: pcx + 8, y: y1 + 20 } : null,
+        });
+      } else if (child.row === parent.row) {
         const x1 = parent.x + NODE_W;
         const y = parent.y + NODE_H / 2;
         edges.push({ from: parent.step.id, to: child.step.id, path: `M${x1} ${y}H${child.x}`, plus: { x: (x1 + child.x) / 2, y }, label: null });

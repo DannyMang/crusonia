@@ -41,7 +41,7 @@ export default function Home() {
       <div className="flex flex-col gap-7 xl:flex-row xl:items-start xl:gap-6">
         <div className="flex min-w-0 grow basis-0 flex-col gap-7">
           <WaitingForYou approvals={data?.pending_approvals} total={data?.pending_approvals_total ?? 0} loading={!data && !summary.isError} />
-          <ActiveWorkflows workflows={data?.active_workflows} loading={!data && !summary.isError} partial={missing} />
+          <ActiveWorkflows workflows={data?.active_workflows} loading={!data && !summary.isError} partial={missing} hasLeads={(data?.total_leads ?? 0) > 0} />
         </div>
         <div className="flex w-full shrink-0 flex-col gap-6 min-[1280px]:w-80 min-[1440px]:w-90">
           <Spend spend={data?.spend} loading={!data && !summary.isError} />
@@ -104,6 +104,7 @@ function Header({ data }: { data: Summary | undefined }) {
   const first = user?.name?.split(" ")[0];
   const total = data?.total_leads ?? 0;
   const waiting = data?.pending_approvals_total ?? 0;
+  const finding = Boolean(useAutopilot().data?.running.length);
   // Only send approvals are drafts; tool calls and agent questions are counted separately.
   const drafts = Math.min(waiting, data?.pending_sends_total ?? data?.pending_approvals.filter((a) => a.kind === "send").length ?? 0);
   return (
@@ -125,7 +126,7 @@ function Header({ data }: { data: Summary | undefined }) {
           ) : waiting ? (
             <WaitingOnYou drafts={drafts} others={waiting - drafts} />
           ) : (
-            "No leads yet. Tell Crusonia about your company and your agents start finding them."
+            finding ? "No leads yet. Your agents are looking." : "No leads yet. Tell Crusonia about your company and your agents start finding them."
           )}
         </p>
       </div>
@@ -450,7 +451,6 @@ function WorkflowCard({ w }: { w: Workflow }) {
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <Link to={to} className="flex min-w-0 items-baseline gap-2.5 hover:underline">
           <span className="truncate text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink">{w.name}</span>
-          <span className="shrink-0 text-xs/4 text-faint">{w.purpose}</span>
         </Link>
         <div className="flex items-center gap-2.5">
           {w.status === "running" ? (
@@ -500,7 +500,7 @@ function WfStat({ title, value, first }: { title: string; value: string; first?:
   );
 }
 
-function ActiveWorkflows({ workflows, loading, partial }: { workflows: Workflow[] | undefined; loading: boolean; partial: boolean }) {
+function ActiveWorkflows({ workflows, loading, partial, hasLeads }: { workflows: Workflow[] | undefined; loading: boolean; partial: boolean; hasLeads: boolean }) {
   const [tab, setTab] = useState<"running" | "paused">("running");
   const running = workflows?.filter((w) => RUNNING.has(w.status)) ?? [];
   const paused = workflows?.filter((w) => !RUNNING.has(w.status)) ?? [];
@@ -554,10 +554,10 @@ function ActiveWorkflows({ workflows, loading, partial }: { workflows: Workflow[
               partial
                 ? "Workflow status is not available on this deployment yet."
                 : tab === "running"
-                  ? "Workflows research, score and draft for you. Start one by finding your first leads."
+                  ? "Workflows research, score and draft for you. Start one by finding leads."
                   : "Paused workflows show up here until you resume them."
             }
-            action={tab === "running" && !partial ? <Button onClick={() => navigate("/onboarding/1")}>Find leads</Button> : undefined}
+            action={tab === "running" && !partial ? <Button onClick={() => navigate(hasLeads ? "/app/leads/find" : "/onboarding/1")}>Find leads</Button> : undefined}
           />
         </Card>
       )}
@@ -608,7 +608,7 @@ function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loadin
               ? "No agent spend recorded this week yet."
               : budget !== null
                 ? `${usd(Math.max(0, budget - used))} left of this week's budget`
-                : "Naive usage across every run active this week"}
+                : "Credits used across every run this week"}
           </div>
         </>
       )}

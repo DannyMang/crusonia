@@ -10,7 +10,7 @@ export { IMPORT_FIELDS, type ImportMapField } from "../lib/import-mapping.ts";
 /** Crusonia field -> CSV column name. Unmapped fields are left out. */
 export type ImportMapping = Partial<Record<ImportMapField, string>>;
 
-export type ImportBody = { csv: string; mapping: ImportMapping; source: string };
+export type ImportBody = { csv: string; mapping: ImportMapping; source: string; file_name?: string };
 
 export type ImportRowStatus = "new" | "duplicate" | "invalid";
 

@@ -90,10 +90,10 @@ export default function Step2Reading() {
             icon={running ? <Ring size={22} width={2.5} /> : done ? <DoneDot size={22} check={12} /> : null}
             subtitle={
               done
-                ? "Everything here is a draft. Check it and edit it on the next step."
+                ? "Check it and edit it on the next step."
                 : stopped
                   ? "You can fill in your profile yourself and come back to this later."
-                  : "About a minute. Everything here is a draft you can edit on the next step."
+                  : "A few minutes. You can edit everything here on the next step."
             }
           />
           {done ? (
@@ -156,7 +156,7 @@ export default function Step2Reading() {
           ) : running ? (
             "Fine to reload this page: it picks up the same run instead of starting a new one."
           ) : done ? (
-            "Nothing is saved until you confirm your profile on the next step."
+            "Your agents work from this. Change it any time."
           ) : null}
         </div>
       </div>

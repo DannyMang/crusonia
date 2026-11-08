@@ -1,4 +1,5 @@
-// Starting points for "Suggested" on the workflow list and the blank workflow behind "Build workflow".
+// Starting points for "Suggested" on the workflow list and the blank workflow behind "Build workflow". Templates start
+// off: "Use" opens the builder and spends nothing until "Turn on" (a schedule that never ran is due at once).
 import type { FlowInput, FlowStep } from "../../api/workflows.ts";
 
 const step = (id: string, kind: FlowStep["kind"], title: string, provider: string | null, next: string[] = [], branch: string | null = null): FlowStep => ({
@@ -22,6 +23,7 @@ export const TEMPLATES: Template[] = [
     input: {
       name: "Re-research stale leads",
       source: "template",
+      enabled: false,
       trigger: { kind: "schedule", label: "Every other Monday" },
       steps: [
         step("t1", "trigger", "Every other Monday", null, ["f1"]),
@@ -42,6 +44,7 @@ export const TEMPLATES: Template[] = [
     input: {
       name: "Lookalikes from a new customer",
       source: "template",
+      enabled: false,
       trigger: { kind: "manual", label: "On HubSpot closed-won" },
       steps: [
         step("t1", "trigger", "On HubSpot closed-won", null, ["f1"]),
@@ -62,6 +65,7 @@ export const TEMPLATES: Template[] = [
     input: {
       name: "Event follow-up",
       source: "template",
+      enabled: false,
       trigger: { kind: "csv_import", label: "On CSV upload" },
       steps: [
         step("t1", "trigger", "On CSV upload", null, ["r1"]),

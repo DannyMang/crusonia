@@ -57,6 +57,13 @@ export function useRole() {
   return { role, canManage: role === "owner" || role === "admin", isOwner: role === "owner" };
 }
 
+/** Whether this is the instance owner's workspace: HubSpot, Notion and iMessage run only there. Null until it's known; true on deployments without workspaces. */
+export function useOwnerWorkspace(): boolean | null {
+  const list = useWorkspaces();
+  if (list.isPending) return null;
+  return list.data?.data.find((w) => w.id === list.data?.current)?.owner ?? true;
+}
+
 export function useSummary() {
   const api = useApi();
   return useQuery({ queryKey: keys.summary, queryFn: () => api.summary(), refetchInterval: 30_000 });

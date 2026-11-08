@@ -58,7 +58,8 @@ export default function ImportCsv() {
 
   const mapping = useMemo<ImportMapping>(() => toMapping(map), [map]);
   const debouncedSource = useDebounced(source);
-  const body: ImportBody | null = file ? { csv: file.csv, mapping, source: debouncedSource.trim() } : null;
+  // The debounce is still empty right after a pick, and an empty source is refused: use what's in the field until it catches up.
+  const body: ImportBody | null = file ? { csv: file.csv, mapping, source: (debouncedSource.trim() || source).trim(), file_name: file.name } : null;
   const preview = useImportPreview(body, file?.key ?? "");
   const counts = preview.data?.counts;
   const importable = (counts?.new ?? 0) + (counts?.duplicate ?? 0);
@@ -162,7 +163,7 @@ export default function ImportCsv() {
               );
             })}
             <label className="flex flex-col gap-1.5 border-t border-t-[#200D0D14] bg-panel px-4 pb-4 pt-3.5">
-              <span className="text-xs/4 font-medium text-muted">Source</span>
+              <span className="text-xs/4 font-medium text-muted">Cohort</span>
               <input
                 value={source}
                 onChange={(e) => setSource(e.target.value)}

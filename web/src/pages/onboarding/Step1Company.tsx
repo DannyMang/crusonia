@@ -84,7 +84,7 @@ export default function Step1Company() {
   return (
     <div className="flex grow justify-center px-6 pb-16 pt-20 lg:pt-33">
       <form className="flex w-full max-w-100 flex-col" onSubmit={submit} noValidate>
-        <StepTitle step={1} title="What's your website?" subtitle="We'll read it and propose who to sell to. You confirm before a single lead is found." />
+        <StepTitle step={1} title="What's your website?" subtitle="We'll read it and propose who to sell to. You can change it any time." />
         <div className="flex flex-col gap-3 pt-8">
           {mode === "url" ? (
             <label
