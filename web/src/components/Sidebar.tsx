@@ -18,7 +18,6 @@ import {
   SearchIcon,
   SendIcon,
   SettingsIcon,
-  TerminalIcon,
   WorkflowsIcon,
   XIcon,
 } from "./icons.tsx";
@@ -203,13 +202,12 @@ function SidebarContent({ drawer }: { drawer?: boolean }) {
         <div className="flex flex-col">
           <NavItem to="/app" end label="Home" icon={HomeIcon} />
           <NavItem to="/app/leads" label="Leads" icon={LeadsIcon} />
-          <NavItem to="/app/approvals" label="Approvals" icon={ApprovalsIcon} badge={pending} />
+          <NavItem to="/app/outreach" label="Outreach" icon={ApprovalsIcon} badge={pending} />
           <NavItem to="/app/workflows" label="Workflows" icon={WorkflowsIcon} />
           <NavItem to="/app/replies" label="Replies" icon={RepliesIcon} />
         </div>
         <div className="flex flex-col border-t border-t-[#200D0D14] pt-3.25">
           <NavItem to="/app/integrations" label="Integrations" icon={IntegrationsIcon} />
-          <NavItem to="/app/connect" label="Connect your agent" icon={TerminalIcon} />
           <NavItem to="/app/settings" label="Settings" icon={SettingsIcon} />
         </div>
       </nav>
@@ -262,8 +260,8 @@ export function MobileBar() {
         <span className="grow" />
         {pending ? (
           <NavLink
-            to="/app/approvals"
-            aria-label={`${pending} waiting for approval`}
+            to="/app/outreach"
+            aria-label={`${pending} waiting in Outreach`}
             className="flex h-8 items-center gap-1.5 rounded-full bg-ink px-3 tabular-nums text-xs/4 font-semibold text-white"
           >
             <ApprovalsIcon width={14} height={14} />

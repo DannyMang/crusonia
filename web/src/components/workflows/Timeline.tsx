@@ -4,6 +4,7 @@
 import { Fragment, useState, type ReactNode } from "react";
 import type { RunLead, RunStep } from "../../api.ts";
 import { cx, duration, leadTitle, usd } from "../../lib/format.ts";
+import { usePhone } from "../../lib/media.ts";
 import { jsonText, shortUrl } from "../approvals/model.ts";
 
 // ---------- categories (legend colors from the design) ----------
@@ -132,6 +133,8 @@ export function Timeline({
   footer?: ReactNode;
 }) {
   const [open, setOpen] = useState<number | null>(null);
+  // Phones keep #, Tool (with what happened under it), Time and the chevron; full-width rows span those 4.
+  const colSpan = usePhone() ? 4 : 7;
   const axis = axisOf(runStart, steps);
   const cats = steps.map(categorize);
   const present = (Object.keys(CATS) as CatKey[]).filter((k) => cats.some((c) => c.cat === k));
@@ -139,14 +142,14 @@ export function Timeline({
 
   return (
     <div className="flex min-w-0 grow flex-col overflow-clip rounded-xl border border-[#200D0D1A]">
-      <div className="flex h-11 shrink-0 items-center justify-between gap-4 px-4">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-4 py-3 sm:h-11 sm:flex-nowrap sm:py-0">
         <div className="flex min-w-0 items-baseline gap-2.5">
           <h2 className="text-sm/4 font-semibold text-ink">Timeline</h2>
           <span className="truncate text-xs/4 font-medium text-muted">
             {steps.length ? `${steps.length} ${steps.length === 1 ? "step" : "steps"} · click a step to see its input and output` : "no steps yet"}
           </span>
         </div>
-        <div className="flex shrink-0 items-center gap-3.5">
+        <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 sm:shrink-0">
           {present.map((k) => (
             <span key={k} className="flex items-center gap-1.5">
               <span className="size-2 shrink-0 rounded-xs" style={{ background: CATS[k].color }} />
@@ -160,11 +163,11 @@ export function Timeline({
         {/* Tool and the time bar are narrower below 1440px so "What happened" keeps room. */}
         <colgroup>
           <col className="w-13" />
-          <col className="w-36 min-[1440px]:w-45" />
-          <col />
-          <col className="w-24 min-[1440px]:w-33" />
+          <col className="w-36 max-sm:w-auto min-[1440px]:w-45" />
+          <col className="hidden sm:table-column" />
+          <col className="hidden w-24 sm:table-column min-[1440px]:w-33" />
           <col className="w-17" />
-          <col className="w-16" />
+          <col className="hidden w-16 sm:table-column" />
           <col className="w-8" />
         </colgroup>
         <thead>
@@ -175,10 +178,10 @@ export function Timeline({
             <th scope="col" className="pr-3 font-medium">
               Tool
             </th>
-            <th scope="col" className="pr-3 font-medium">
+            <th scope="col" className="hidden pr-3 font-medium sm:table-cell">
               What happened
             </th>
-            <th scope="col" className="pr-3 font-normal">
+            <th scope="col" className="hidden pr-3 font-normal sm:table-cell">
               <div className="flex justify-between text-[11px]/4 tabular-nums">
                 <span>0s</span>
                 <span>{spanLabel(axis.span)}</span>
@@ -187,7 +190,7 @@ export function Timeline({
             <th scope="col" className="pr-3 text-right font-medium">
               Time
             </th>
-            <th scope="col" className="pr-3 text-right font-medium">
+            <th scope="col" className="hidden pr-3 text-right font-medium sm:table-cell">
               Cost
             </th>
             <th scope="col" className="pr-4">
@@ -211,14 +214,17 @@ export function Timeline({
                   className={cx("h-11.5 cursor-pointer", expanded ? "bg-[#BDE6891A]" : "border-b border-b-[#200D0D14] hover:bg-[#200D0D04]")}
                 >
                   <td className="pl-4 pr-3 align-middle text-[11px]/3.5 font-medium tabular-nums text-faint">{step.seq}</td>
-                  <td className="pr-3">
+                  <td className="py-2 pr-3 sm:py-0">
                     <div className="truncate text-xs/4 font-semibold text-ink">{c.name}</div>
                     <div className="truncate text-[11px]/3.5 font-medium text-faint">{c.caption}</div>
+                    <div className="pt-0.5 sm:hidden">
+                      <WhatHappened step={step} lead={lead} name={c.name} />
+                    </div>
                   </td>
-                  <td className="pr-3">
+                  <td className="hidden pr-3 sm:table-cell">
                     <WhatHappened step={step} lead={lead} name={c.name} />
                   </td>
-                  <td className="pr-3">
+                  <td className="hidden pr-3 sm:table-cell">
                     <div className="relative h-1.5 rounded-xs bg-[#200D0D0A]">
                       {left === null ? null : width > 0 ? (
                         <div
@@ -240,7 +246,7 @@ export function Timeline({
                   <td className={cx("pr-3 text-right text-xs/4 tabular-nums", pending ? "text-green-dark" : "text-muted")}>
                     {step.duration_ms !== undefined ? duration(step.duration_ms) : pending ? duration(now - t!) : "—"}
                   </td>
-                  <td className={cx("pr-3 text-right text-xs/4 font-medium tabular-nums", step.cost_usd ? "text-ink" : "text-faint")}>
+                  <td className={cx("hidden pr-3 text-right text-xs/4 font-medium tabular-nums sm:table-cell", step.cost_usd ? "text-ink" : "text-faint")}>
                     {step.cost_usd !== undefined ? usd(step.cost_usd) : "—"}
                   </td>
                   <td className="pr-4 text-center">
@@ -263,8 +269,8 @@ export function Timeline({
                 </tr>
                 {expanded ? (
                   <tr id={id} className="border-b border-b-[#200D0D14] bg-[#BDE6891A]">
-                    <td colSpan={7} className="pb-3.5 pl-13 pr-4">
-                      <div className="flex gap-2.5">
+                    <td colSpan={colSpan} className="pb-3.5 pl-4 pr-4 sm:pl-13">
+                      <div className="flex flex-col gap-2.5 sm:flex-row">
                         <Panel title="INPUT" value={step.input} />
                         <Panel title="OUTPUT" value={step.output} />
                       </div>
@@ -276,7 +282,7 @@ export function Timeline({
           })}
           {!steps.length ? (
             <tr>
-              <td colSpan={7} className="px-4 py-10 text-center">
+              <td colSpan={colSpan} className="px-4 py-10 text-center">
                 <div className="text-[13px]/4 font-semibold text-ink">No steps recorded yet</div>
                 <div className="mt-1 text-xs/4 font-medium text-muted">Steps appear here as the agent works: every tool call, message and model request.</div>
               </td>

@@ -52,7 +52,7 @@ export function SendButton({
   }, [confirming]);
   const height = size === "card" ? "h-8.5 px-4" : "h-7.5 px-3.5";
   if (approve.isSuccess && approve.variables === approval.code) {
-    return <span className={cx(pillBase, height, "bg-[#16A34A1F] text-[#15803D]", className)}>Approved · sending</span>;
+    return <span className={cx(pillBase, height, "bg-[#16A34A1F] text-[#166534]", className)}>Approved · sending</span>;
   }
   return (
     <button
@@ -226,7 +226,7 @@ export function DraftCard({
               </p>
             ))}
             {draft.error ? (
-              <div className="self-start rounded-full bg-[#C4873B1F] px-2 text-[11px]/4.5 font-medium text-[#A16207]">{draft.error}</div>
+              <div className="self-start rounded-full bg-[#C4873B1F] px-2 text-[11px]/4.5 font-medium text-[#854D0E]">{draft.error}</div>
             ) : null}
           </div>
         </>
@@ -311,7 +311,7 @@ export function DraftCard({
             <div key={d.id} className="flex flex-wrap items-center gap-1.5 text-xs/4 font-medium text-ink">
               <span className="tabular-nums">v{d.version}</span>
               <span className="text-muted">{(DRAFT_STATUS[d.status]?.label ?? d.status).toLowerCase()}</span>
-              {d.error ? <span className="rounded-full bg-[#C4873B1F] px-2 text-[11px]/4.5 text-[#A16207]">{d.error}</span> : null}
+              {d.error ? <span className="rounded-full bg-[#C4873B1F] px-2 text-[11px]/4.5 text-[#854D0E]">{d.error}</span> : null}
             </div>
           ))}
         </div>
