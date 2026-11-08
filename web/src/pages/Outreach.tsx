@@ -6,7 +6,7 @@
 // - Tasks: the manual queue (LinkedIn, X, warm intro, own mailbox): copy the text, open the profile, send it
 //   yourself, mark it sent or skip it; after sending, record the outcome. Recent replies sit on the right.
 // Routes: /app/outreach(/:code) and /app/outreach/tasks(/:id); /app/approvals(/:code) redirects here.
-// Keys (Approvals): J / K move, A approve, E edit, R reject.
+// Keys (Approvals): J / K move, A then Enter approve, E edit, R reject.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router";
@@ -233,6 +233,13 @@ function SendCard({ a, now, onDecided, editingRef }: { a: ApprovalListItem; now:
   const [body, setBody] = useState(draft?.body ?? "");
   const [reason, setReason] = useState("");
   editingRef.current = mode !== "view";
+  // J / K in the tab must work again once this card is gone (decided, or another one selected).
+  useEffect(
+    () => () => {
+      editingRef.current = false;
+    },
+    [editingRef],
+  );
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["approvals"] });
     void qc.invalidateQueries({ queryKey: keys.summary });
@@ -276,10 +283,15 @@ function SendCard({ a, now, onDecided, editingRef }: { a: ApprovalListItem; now:
       }
       if (isTypingTarget(e) || mode !== "view" || busy) return;
       const k = e.key.toLowerCase();
-      if (k === "a") armed ? approve.mutate() : setArmed(true);
+      // A arms, Enter sends: a second A never sends, so stray typing cannot email anyone. Any other key disarms.
+      if (k === "a") setArmed(true);
+      else if (k === "enter" && armed) approve.mutate();
       else if (k === "e") startEdit();
       else if (k === "r") setMode("reject");
-      else return;
+      else {
+        if (armed && k.length === 1) setArmed(false);
+        return;
+      }
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);

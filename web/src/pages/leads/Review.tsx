@@ -249,6 +249,8 @@ function FocusLead({ full, onDone }: { full: LeadFull; onDone: (id: string) => v
   const { lead, evidence } = full;
   const notes = full.notes ?? [];
   const [asking, setAsking] = useState(false);
+  // A number key only picks a reason; Enter (or a click) commits it, so stray typing never disqualifies a lead.
+  const [picked, setPicked] = useState<number | null>(null);
   const [other, setOther] = useState<string | null>(null);
   const [fixing, setFixing] = useState(false);
   const noteRef = useRef<HTMLInputElement>(null);
@@ -281,11 +283,15 @@ function FocusLead({ full, onDone }: { full: LeadFull; onDone: (id: string) => v
       if (k === "f") confirm();
       else if (k === "n") setAsking(true);
       else if (k === "e") fix();
-      else if (asking && /^[1-5]$/.test(k)) {
+      else if (k === "escape" && asking) {
+        setAsking(false);
+        setPicked(null);
+      } else if (asking && /^[1-5]$/.test(k)) {
         const i = Number(k) - 1;
-        if (i < REASONS.length) notFit(REASONS[i]!);
+        if (i < REASONS.length) setPicked(i);
         else setOther("");
-      } else return;
+      } else if (k === "enter" && asking && picked !== null) notFit(REASONS[picked]!);
+      else return;
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
@@ -350,7 +356,12 @@ function FocusLead({ full, onDone }: { full: LeadFull; onDone: (id: string) => v
         </div>
         {asking ? (
           <div className="flex flex-col gap-2.5 rounded-[10px] border border-panel-line bg-panel px-4 py-3.5">
-            <h4 className="text-[13px]/4.5 font-semibold text-ink">Why isn't it a fit?</h4>
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-[13px]/4.5 font-semibold text-ink">Why isn't it a fit?</h4>
+              {picked !== null ? (
+                <kbd className="flex h-5.5 items-center rounded-[5px] border border-[#200D0D26] bg-white px-1.75 font-sans text-[11px]/3.5 font-semibold text-muted">Enter</kbd>
+              ) : null}
+            </div>
             <div className="flex flex-wrap gap-1.5">
               {REASONS.map((r, i) => (
                 <button
@@ -358,9 +369,10 @@ function FocusLead({ full, onDone }: { full: LeadFull; onDone: (id: string) => v
                   type="button"
                   disabled={decide.isPending}
                   onClick={() => notFit(r)}
+                  aria-pressed={picked === i}
                   className={cx(
                     "flex h-7 items-center rounded-full px-3 text-xs/4 font-medium disabled:opacity-60",
-                    decide.variables?.reason === r ? "bg-ink text-white" : "border border-[#200D0D26] bg-white text-ink hover:bg-[#200D0D08]",
+                    picked === i || decide.variables?.reason === r ? "bg-ink text-white" : "border border-[#200D0D26] bg-white text-ink hover:bg-[#200D0D08]",
                   )}
                 >
                   {i + 1} {r}
