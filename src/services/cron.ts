@@ -1,5 +1,7 @@
-// The minute cron: expire stale approvals, reconcile Naive sessions that missed a webhook, and settle
-// sends AgentMail did not confirm. Each step is independent; one failing does not skip the others.
+// The minute cron: expire stale approvals, reconcile Naive sessions that missed a webhook, settle sends
+// AgentMail did not confirm, and debit finished sessions that still owe credits. Each step is independent;
+// one failing does not skip the others.
+import { settleUsage } from "../billing/usage.ts";
 import { getSql } from "../db.ts";
 import type { Env } from "../env.ts";
 import type { FetchFn } from "../providers/http.ts";
@@ -15,6 +17,8 @@ export async function runScheduled(env: Env, fetchFn?: FetchFn): Promise<Record<
     ["expired_approvals", () => expireStaleApprovals(sql, env, fetchFn)],
     ["reconciled_sessions", () => reconcileSessions(sql, env, fetchFn)],
     ["reconciled_sends", () => reconcileSending(sql, env, fetchFn)],
+    // Debit finished Naive sessions that still owe credits (missed or failed debits, spend reported later).
+    ["settled_usage", () => settleUsage(sql, env, fetchFn)],
   ];
   for (const [name, step] of steps) {
     try {

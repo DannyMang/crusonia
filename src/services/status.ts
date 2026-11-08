@@ -31,6 +31,7 @@ export async function getStatus(env: Env): Promise<Status> {
     naive: provider(env, "managed agent sessions (research and drafting)", ["NAIVE_API_KEY"]),
     hubspot: provider(env, "CRM sync", ["HUBSPOT_ACCESS_TOKEN"]),
     notion: provider(env, "CRM sync (Notion database)", ["NOTION_API_TOKEN"]),
+    stripe: provider(env, "billing: credit packs and monthly plans (Checkout, Customer Portal, webhook)", ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"]),
   };
 
   const database: Status["database"] = { configured: providers.database.configured, reachable: null };

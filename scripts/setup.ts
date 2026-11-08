@@ -3,6 +3,11 @@
 //   bun run setup --write         also write them into .dev.vars
 //   bun run setup --naive-credential   re-add the MCP credentials to an existing Naive vault
 //   bun run setup --agent         only create or update the Naive agent (e.g. after editing playbooks/)
+//   bun run setup --stripe        only Stripe billing: products/prices from src/billing/plans.ts, the Customer
+//                                 Portal and the webhook endpoint (test key; --live for a live key,
+//                                 --rotate-webhook-secret for a new signing secret, --verify-checkout to create
+//                                 and expire one test Checkout Session). The webhook secret is written to
+//                                 .dev.vars.stripe.<mode> (gitignored), never printed.
 //
 // Needs: PUBLIC_URL (wrangler.jsonc, after the first deploy), MCP_TOKEN, and the API key of each
 // provider to set up (AGENTMAIL_API_KEY, NAIVE_API_KEY, APIFY_TOKEN). Providers without a key are skipped.
@@ -11,6 +16,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { AgentMailClient } from "agentmail";
 import { ROOT, getVar, requireVar } from "./lib/env.ts";
 import { APIFY_MCP_URL, PLAYBOOK_PATH, agentSettings, changedFields, naiveAgentConfig, parsePlaybook } from "./lib/naive-agent.ts";
+import { setupStripe } from "./lib/stripe-setup.ts";
 
 export { APIFY_MCP_URL };
 
@@ -288,6 +294,28 @@ export async function createNaiveAgent(baseUrl: string, naive: Naive) {
   return { id, version: updated.current_version, status: `updated (${Object.keys(update).join(", ")})` as const, config };
 }
 
+// ---------- Stripe ----------
+
+// `bun run setup --stripe`: needs STRIPE_SECRET_KEY (Crusonia's own account). Refuses a live key without --live.
+async function setupStripeBilling(baseUrl: string) {
+  const result = await setupStripe({
+    key: getVar("STRIPE_SECRET_KEY"),
+    baseUrl,
+    live: args.has("--live"),
+    rotateWebhookSecret: args.has("--rotate-webhook-secret"),
+    verifyCheckout: args.has("--verify-checkout"),
+    secretPath: (mode) => `${ROOT}.dev.vars.stripe.${mode}`,
+    log: (line) => console.log(line),
+  });
+  notes.push(...result.notes);
+  if (result.secretWritten) {
+    notes.push(
+      `Stripe webhook secret written to .dev.vars.stripe.${result.mode} (mode 600, gitignored). Upload it with ` +
+        `\`bunx wrangler secret bulk .dev.vars.stripe.${result.mode}\` (and copy the line into .dev.vars for wrangler dev).`,
+    );
+  }
+}
+
 // ---------- output ----------
 
 function writeDevVars(values: Record<string, string>) {
@@ -307,7 +335,9 @@ console.log(`PUBLIC_URL: ${baseUrl}\n`);
 
 const steps: [string, (baseUrl: string) => Promise<void>][] = args.has("--agent")
   ? [["Naive agent", setupNaiveAgent]]
-  : [
+  : args.has("--stripe")
+    ? [["Stripe", setupStripeBilling]]
+    : [
       ["AgentMail", setupAgentMail],
       ["Naive", setupNaive],
     ];

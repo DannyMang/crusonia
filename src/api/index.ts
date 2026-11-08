@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../lib/context.ts";
 import { approvals } from "./approvals.ts";
 import { requireAuth } from "./auth.ts";
+import { billing } from "./billing.ts";
 import { dashboard } from "./dashboard.ts";
 import { experiments } from "./experiments.ts";
 import { keys } from "./keys.ts";
@@ -25,5 +26,6 @@ api.route("/profile", profile);
 api.route("/onboarding", onboarding);
 api.route("/experiments", experiments);
 api.route("/keys", keys);
+api.route("/billing", billing);
 
 // TODO(crm-sync): HubSpot and Notion sync endpoints.

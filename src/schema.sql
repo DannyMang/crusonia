@@ -237,3 +237,73 @@ create table if not exists api_keys (
   last_used_at timestamptz,
   revoked_at   timestamptz
 );
+
+-- ---------------------------------------------------------------------------
+-- Billing (Stripe). Additive and idempotent. Tiers and the credit definition live in src/billing/plans.ts.
+-- ---------------------------------------------------------------------------
+
+-- One row per billing owner: the Clerk user id, or 'owner' for MCP_TOKEN and API-key callers.
+-- The Stripe customer is created by us for this owner (never matched by email). `plan` is the plans.ts key of
+-- the current monthly plan (null = pay as you go). `subscription_event_at` is the `created` time of the last
+-- subscription event applied, so an older event delivered late never overwrites a newer state.
+create table if not exists billing_accounts (
+  owner_id               text primary key,
+  stripe_customer_id     text unique,
+  stripe_subscription_id text,
+  plan                   text,
+  -- Stripe subscription status: active | trialing | past_due | unpaid | canceled | incomplete | incomplete_expired | paused
+  subscription_status    text,
+  current_period_end     timestamptz,
+  cancel_at_period_end   boolean not null default false,
+  subscription_event_at  timestamptz,
+  created_at             timestamptz not null default now(),
+  updated_at             timestamptz not null default now()
+);
+
+-- Append-only credit ledger. `amount` is in whole credits (1 credit = $0.01 of list value), signed:
+-- + grant | pack | plan, - usage | refund. The balance is sum(amount) per owner (may go negative after a refund
+-- or a long session). `source` makes every write idempotent:
+--   signup:<owner>          free sample (once per owner)
+--   checkout:<session id>   credit pack bought through Checkout (payment mode)
+--   invoice:<invoice id>    monthly plan credits for a paid subscription invoice
+--   usage:<naive session>   hosted agent spend x markup when the session finishes (+ `:<micro-usd>` top-ups if
+--                           the session resumes and spends more)
+--   refund:<charge>:<cumulative amount refunded>   claw-back of the purchase in `purchase_source`
+--   adjustment:<anything>   manual correction (insert by hand)
+create table if not exists credit_ledger (
+  id                    bigserial primary key,
+  owner_id              text not null,
+  amount                bigint not null check (amount <> 0),
+  reason                text not null check (reason in ('grant', 'pack', 'plan', 'usage', 'refund', 'adjustment')),
+  source                text not null unique,
+  -- usage rows: the Naive session; refund rows: the source of the purchase clawed back
+  session_id            text,
+  purchase_source       text,
+  -- purchases paid through a Checkout payment: the PaymentIntent a later refund points to
+  stripe_payment_intent text,
+  data                  jsonb not null default '{}',
+  created_at            timestamptz not null default now()
+);
+create index if not exists credit_ledger_owner_idx on credit_ledger (owner_id, id desc);
+create index if not exists credit_ledger_session_idx on credit_ledger (session_id) where session_id is not null;
+create index if not exists credit_ledger_purchase_idx on credit_ledger (purchase_source) where purchase_source is not null;
+create index if not exists credit_ledger_pi_idx on credit_ledger (stripe_payment_intent) where stripe_payment_intent is not null;
+
+-- Enforce append-only: corrections are new rows. Deletes are allowed only inside a transaction that sets
+-- `crusonia.allow_ledger_delete = 'on'` (test cleanup on a dev branch).
+create or replace function credit_ledger_append_only() returns trigger language plpgsql as $$
+begin
+  if tg_op = 'DELETE' and current_setting('crusonia.allow_ledger_delete', true) = 'on' then
+    return old;
+  end if;
+  raise exception 'credit_ledger is append-only: add a correcting row instead';
+end
+$$;
+drop trigger if exists credit_ledger_append_only on credit_ledger;
+create trigger credit_ledger_append_only before update or delete on credit_ledger
+  for each row execute function credit_ledger_append_only();
+
+-- Who pays for a Naive session (the billing owner of the caller that started it). Null for sessions started
+-- before billing existed: those are never debited.
+alter table naive_sessions add column if not exists billing_owner_id text;
+create index if not exists naive_sessions_billing_idx on naive_sessions (status, updated_at) where billing_owner_id is not null;
