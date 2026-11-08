@@ -238,11 +238,13 @@ export async function handleBridgePoll(getSql: () => Sql, env: Env, poll: Bridge
   const failed = poll.acks.filter((a) => !a.ok);
   const status = JSON.stringify({ ...poll.bridge, seen_at: new Date().toISOString() });
   const results = await sql.transaction([
+    // Delivered either way; the bubble id is recorded once and never reassigned to another notice.
     sql`update imessage_outbox o set delivered_at = coalesce(o.delivered_at, now()), last_error = null,
-          message_id = coalesce(o.message_id, nullif(f.message_id, ''))
+          message_id = coalesce(o.message_id, case
+            when exists (select 1 from imessage_outbox x where x.message_id = nullif(f.message_id, '') and x.id <> o.id) then null
+            else nullif(f.message_id, '') end)
         from unnest(${delivered.map((a) => a.id)}::text[], ${delivered.map((a) => a.message_id ?? "")}::text[]) as f(id, message_id)
-        where o.id = f.id
-          and not exists (select 1 from imessage_outbox x where x.message_id = nullif(f.message_id, '') and x.id <> o.id)`,
+        where o.id = f.id`,
     sql`update imessage_outbox o set leased_at = null, last_error = f.err
         from unnest(${failed.map((f) => f.id)}::text[], ${failed.map((f) => f.error ?? "send failed")}::text[]) as f(id, err)
         where o.id = f.id and o.delivered_at is null`,
