@@ -609,7 +609,7 @@ Clerk). Designs are in Paper (approved before code). The Worker serves `web/dist
 | `/app/outreach[/:code]`, `/app/outreach/tasks` (`/app/approvals[/:code]` redirects) | Approve, edit or reject the exact draft; manual tasks |
 | `/app/workflows`, `/app/workflows/runs/:id` | Agent runs and their step-by-step timeline |
 | `/app/integrations` | Provider status |
-| `/app/settings/agent` (`/app/settings/keys`, `/app/connect` and `?connect=1` redirect here) | Connect your agent: add to Cursor, Claude Code or Codex in one click; API keys: create, copy once, revoke, last used |
+| `/app/settings/agent` (`/app/settings/keys`, `/app/connect` and `?connect=1` redirect here) | Connect your agent: add to Claude Code or Codex in one click; API keys: create, copy once, revoke, last used |
 | `/app/replies`, `/app/settings` | Inbound replies; pause switch, do-not-contact list, account |
 
 ```sh

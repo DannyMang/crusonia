@@ -46,7 +46,7 @@ export function siteCopy(): SitePage[] {
         `No website yet? ${LANDING_LINES[2]}.`,
         `${LANDING_LINES[3]} ${LANDING_LINES[4]}`,
         ...[5, 7, 9, 11].map((i) => `${LANDING_LINES[i]}: ${LANDING_LINES[i + 1]}`),
-        `Set-up fast. ${LANDING_LINES[13]} Add to Cursor, Claude Code or Codex.`,
+        `Set-up fast. ${LANDING_LINES[13]} Add to Claude Code or Codex.`,
         `${LANDING_LINES[14]} ${LANDING_LINES[15]}`,
       ].join("\n"),
     },

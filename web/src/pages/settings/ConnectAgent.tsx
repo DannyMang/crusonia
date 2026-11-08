@@ -1,5 +1,5 @@
 // Settings · Connect your agent at /app/settings/agent (Paper: "Settings · Connect your agent"): the one-click Add to
-// Cursor / Claude Code / Codex buttons (shared with the landing) and the API keys agents use: create (full key shown
+// Claude Code / Codex buttons (shared with the landing) and the API keys agents use: create (full key shown
 // once), revoke, last used. /app/settings/keys, /app/connect and any ?connect=1 link redirect here.
 import { useState } from "react";
 import { isApiError } from "../../api.ts";
