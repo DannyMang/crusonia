@@ -250,7 +250,7 @@ export function QueryError({ error, what, onRetry, className }: { error: unknown
         <div className="font-semibold text-ink">{c.title}</div>
         <div className="font-medium text-muted">{c.body}</div>
       </div>
-      {onRetry && !c.calm ? (
+      {onRetry && !c.calm && !(isApiError(error) && error.status === 404) ? (
         <Button variant="soft" size="sm" onClick={onRetry}>
           Retry
         </Button>
