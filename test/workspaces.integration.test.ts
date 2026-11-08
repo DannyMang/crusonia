@@ -149,7 +149,7 @@ suite("workspaces (database, faked Naive)", () => {
       }
       expect((await sql`select id from workspaces where id = 'ws_owner'`).length).toBe(1);
       const idx = (await sql`select indexname from pg_indexes where schemaname = 'public'`).map((r) => r.indexname as string);
-      expect(idx).toEqual(expect.arrayContaining(["leads_ws_email_uq", "leads_ws_no_email_uq", "suppressions_ws_email_uq", "billing_accounts_ws_uq", "workspace_members_user_uq"]));
+      expect(idx).toEqual(expect.arrayContaining(["leads_ws_email_uq", "leads_ws_company_uq", "suppressions_ws_email_uq", "billing_accounts_ws_uq", "workspace_members_user_uq"]));
       expect(idx).not.toContain("leads_no_email_uq");
       expect((await sql`select 1 from pg_constraint where conname = 'leads_email_key'`).length).toBe(0);
       // At most one billing account and one free-sample grant per workspace.
@@ -217,19 +217,20 @@ suite("workspaces (database, faked Naive)", () => {
         { company: "Acme Inc", domain: `APP.${d.toUpperCase()}`, source: "it", source_url: "https://example.com/b" },
         { name: "Pat Lee", domain: `blog.${d}`, source: "it", source_url: "https://example.com/c" },
       ]);
-      expect(added.counts).toEqual({ added: 2, updated: 0, skipped: 1 }); // the second is the same company, merged
-      expect(await sql`select domain, name from leads where workspace_id = ${A} and domain = ${d} order by name nulls first`).toEqual([
-        { domain: d, name: null },
-        { domain: d, name: "Pat Lee" },
-      ]);
+      // The second and third are the same company (its subdomains): merged into one lead, the person as a contact.
+      expect(added.counts).toEqual({ created: 1, merged: 2, known: 0, skipped: 0 });
+      const rowsA = await sql`select domain, contacts from leads where workspace_id = ${A} and domain = ${d}`;
+      expect(rowsA).toHaveLength(1);
+      expect((rowsA[0]!.contacts as { name: string }[]).map((c) => c.name)).toContain("Pat Lee");
       // Another workspace has its own copy of the company.
-      expect((await addLeads(sql, B, [{ company: "Acme", domain: d, source: "it", source_url: "https://example.com/a" }])).counts.added).toBe(1);
+      expect((await addLeads(sql, B, [{ company: "Acme", domain: d, source: "it", source_url: "https://example.com/a" }])).counts.created).toBe(1);
       // Whatever writes a lead, the database stores the normalized domain, and a second company row is refused.
-      await sql`insert into leads (id, workspace_id, name, domain, source, variant, stage) values (${`lead_it_${run}_raw`}, ${A}, 'Raw', ${`https://WWW.Shop.${d}/x`}, 'it', 'A', 'no_consent')`;
-      expect((await sql`select domain from leads where id = ${`lead_it_${run}_raw`}`)[0]!.domain).toBe(d);
+      const raw = `raw-${d}`;
+      await sql`insert into leads (id, workspace_id, name, domain, source, variant, stage) values (${`lead_it_${run}_raw`}, ${A}, 'Raw', ${`https://WWW.Shop.${raw.toUpperCase()}/x`}, 'it', 'A', 'no_consent')`;
+      expect((await sql`select domain from leads where id = ${`lead_it_${run}_raw`}`)[0]!.domain).toBe(raw);
       await expect(
-        Promise.resolve(sql`insert into leads (id, workspace_id, domain, source, variant, stage) values (${`lead_it_${run}_dup`}, ${A}, ${`www.${d}`}, 'it', 'A', 'no_consent')`),
-      ).rejects.toThrow(/leads_ws_no_email_uq/);
+        Promise.resolve(sql`insert into leads (id, workspace_id, name, domain, source, variant, stage) values (${`lead_it_${run}_dup`}, ${A}, 'Other name', ${`www.${raw}`}, 'it', 'A', 'no_consent')`),
+      ).rejects.toThrow(/leads_ws_company_uq/);
     });
   });
 
