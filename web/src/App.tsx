@@ -17,7 +17,6 @@ const pages = {
   SignUp: () => import("./pages/auth/SignUp.tsx"),
   SsoCallback: () => import("./pages/auth/SsoCallback.tsx"),
   Connect: () => import("./pages/Connect.tsx"),
-  Experiments: () => import("./pages/Experiments.tsx"),
   Home: () => import("./pages/Home.tsx"),
   Integrations: () => import("./pages/Integrations.tsx"),
   LeadDetail: () => import("./pages/LeadDetail.tsx"),
@@ -166,8 +165,8 @@ export function App() {
                   <Route path="approvals/:code" element={page(L.Approvals)} />
                   <Route path="workflows" element={page(L.Workflows)} />
                   <Route path="workflows/runs/:id" element={page(L.WorkflowRun)} />
-                  <Route path="experiments" element={page(L.Experiments)} />
-                  <Route path="experiments/:id" element={page(L.Experiments)} />
+                  {/* Experiments were removed (owner, Nov 8); old links land on Home. */}
+                  <Route path="experiments/*" element={<Navigate to="/app" replace />} />
                   <Route path="replies" element={page(L.Replies)} />
                   <Route path="integrations" element={page(L.Integrations)} />
                   <Route path="connect" element={page(L.Connect)} />

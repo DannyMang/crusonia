@@ -26,8 +26,6 @@ export const keys = {
   workflows: ["workflows"] as const,
   run: (id: string) => ["run", id] as const,
   replies: ["replies"] as const,
-  experiments: ["experiments"] as const,
-  experiment: (id: string) => ["experiment", id] as const,
   keys: ["keys"] as const,
   suppressions: (q?: string) => ["suppressions", q ?? ""] as const,
   billing: ["billing"] as const,
@@ -104,16 +102,6 @@ export function useWorkflowRun(id: string | undefined, live = false) {
 export function useReplies(q: { label?: string; limit?: number } = {}) {
   const api = useApi();
   return useQuery({ queryKey: [...keys.replies, q], queryFn: () => api.replies({ limit: 100, ...q }) });
-}
-
-export function useExperiments() {
-  const api = useApi();
-  return useQuery({ queryKey: keys.experiments, queryFn: () => api.experiments() });
-}
-
-export function useExperiment(id: string | undefined) {
-  const api = useApi();
-  return useQuery({ queryKey: keys.experiment(id ?? ""), queryFn: () => api.experiment(id!), enabled: Boolean(id) });
 }
 
 export function useApiKeys() {

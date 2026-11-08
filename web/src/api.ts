@@ -419,43 +419,6 @@ export type WorkflowRun = {
   sync?: { ok: boolean; fetched?: number; error?: string; skipped?: string };
 };
 
-export type ArmStats = { sent: number; replies: number; positive: number; cost_usd: number | null };
-export type Variant = { name?: string | null; description?: string | null };
-
-/** A/B experiment over the stable lead variants A and B. */
-export type Experiment = {
-  id: string;
-  name: string;
-  hypothesis: string | null;
-  segment: string | null;
-  metric: string;
-  stop_rule_sends_per_arm: number | null;
-  stop_rule_days: number | null;
-  status: "running" | "stopped";
-  variants: { A: Variant; B: Variant };
-  enrolled: { A: number; B: number };
-  stats: { A: ArmStats; B: ArmStats };
-  stop_rule_met: boolean;
-  stop_rule_reason: string | null;
-  created_at: string;
-  stopped_at: string | null;
-};
-
-/** Per UTC day (not cumulative), from the start to today or the stop, last 120 days at most. */
-export type DailyPoint = { date: string; A_replies: number; B_replies: number; A_sent: number; B_sent: number };
-export type ExperimentDetail = { experiment: Experiment; daily: DailyPoint[] };
-
-export type CreateExperimentInput = {
-  name: string;
-  hypothesis?: string;
-  segment?: string;
-  metric?: string;
-  stop_rule_sends_per_arm?: number;
-  stop_rule_days?: number;
-  variants?: { A?: Variant; B?: Variant };
-  lead_ids?: string[];
-};
-
 export type ApiKey = {
   id: string;
   name: string;
@@ -624,15 +587,6 @@ export function createApi(getToken: TokenGetter, base = "") {
     workflowRun: (sessionId: string) => get<WorkflowRun>(`/api/workflows/runs/${id(sessionId)}`),
     replies: (q: { limit?: number; cursor?: string; label?: string; lead_id?: string } = {}) => get<Page<Reply>>("/api/replies", q),
 
-    // experiments
-    experiments: () => list<Experiment>("/api/experiments"),
-    experiment: (experimentId: string) => get<ExperimentDetail>(`/api/experiments/${id(experimentId)}`),
-    createExperiment: (input: CreateExperimentInput) =>
-      post<{ experiment: Experiment; enrollment: { enrolled: number; skipped: string[] } }>("/api/experiments", input),
-    /** Only stopping is supported; a stopped experiment keeps its stats. */
-    stopExperiment: (experimentId: string) => patch<{ experiment: Experiment }>(`/api/experiments/${id(experimentId)}`, { status: "stopped" }),
-    enrollLeads: (experimentId: string, leadIds: string[]) =>
-      post<{ enrolled: number; skipped: string[] }>(`/api/experiments/${id(experimentId)}/leads`, { lead_ids: leadIds }),
 
     // billing
     billing: () => get<Billing>("/api/billing"),

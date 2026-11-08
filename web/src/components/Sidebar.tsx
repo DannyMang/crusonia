@@ -10,7 +10,6 @@ import {
   ApprovalsIcon,
   ChevronRight,
   ChevronUpDown,
-  ExperimentsIcon,
   HomeIcon,
   IntegrationsIcon,
   LeadsIcon,
@@ -206,7 +205,6 @@ function SidebarContent({ drawer }: { drawer?: boolean }) {
           <NavItem to="/app/leads" label="Leads" icon={LeadsIcon} />
           <NavItem to="/app/approvals" label="Approvals" icon={ApprovalsIcon} badge={pending} />
           <NavItem to="/app/workflows" label="Workflows" icon={WorkflowsIcon} />
-          <NavItem to="/app/experiments" label="Experiments" icon={ExperimentsIcon} />
           <NavItem to="/app/replies" label="Replies" icon={RepliesIcon} />
         </div>
         <div className="flex flex-col border-t border-t-[#200D0D14] pt-3.25">

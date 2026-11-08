@@ -2,7 +2,6 @@
 import { approvalHandlers } from "./approvals.ts";
 import { billingHandlers } from "./billing.ts";
 import { coreHandlers } from "./core.ts";
-import { experimentHandlers } from "./experiments.ts";
 import { keyHandlers } from "./keys.ts";
 import { leadHandlers } from "./leads.ts";
 import { onboardingHandlers } from "./onboarding.ts";
@@ -13,7 +12,6 @@ export const handlers = [
   ...leadHandlers,
   ...approvalHandlers,
   ...workflowHandlers,
-  ...experimentHandlers,
   ...keyHandlers,
   ...onboardingHandlers,
   ...billingHandlers,

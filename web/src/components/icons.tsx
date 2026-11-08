@@ -56,13 +56,6 @@ export const WorkflowsIcon = (p: P) => (
   </svg>
 );
 
-export const ExperimentsIcon = (p: P) => (
-  <svg {...base(18)} {...p}>
-    <path d="M6.75 1.75h4.5M7.5 1.75v4.6L3.1 14.2a1.4 1.4 0 001.22 2.05h9.36a1.4 1.4 0 001.22-2.05L10.5 6.35v-4.6" />
-    <path d="M5 11.25h8" />
-  </svg>
-);
-
 export const RepliesIcon = (p: P) => (
   <svg {...base(18)} {...p}>
     <path d="M15.75 8.4a6.4 6.4 0 01-9.3 5.7L2.25 15.5l1.4-3.9A6.4 6.4 0 1115.75 8.4z" />
