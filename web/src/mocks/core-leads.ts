@@ -3,7 +3,7 @@
 // the backend). Sample data follows "Final · Finding leads", "Final · Research · Review queue / Lead detail" and
 // "Final · Outreach · Tasks". leads.ts merges these leads and fields into its own sample data.
 import { http } from "msw";
-import type { Evidence, FindRun, Lead, LeadContact, LeadLink, LeadNote, NoteKind, Task, Trace } from "../api.ts";
+import type { Evidence, FindRun, Lead, LeadContact, LeadLink, LeadNote, NoteKind, RunStep, Task, Trace, WorkflowRun } from "../api.ts";
 import { ago, body, DAY, fail, HOUR, isEmpty, MIN, noContent, ok, scenario } from "./util.ts";
 
 // ---------- leads the find sample returns ----------
@@ -402,6 +402,61 @@ function trace(sessionId: string): Trace {
   };
 }
 
+// ---------- research runs on the review queue and lead detail ("What the agent did") ----------
+
+const researchRuns: Record<string, { lead: string; cost: number; lines: [string, string | undefined, string][] }> = {
+  ses_tz5: {
+    lead: "lead_tess",
+    cost: 0.31,
+    lines: [
+      ["tool", "read_website", "Read tessellate.ai and /about: AI analytics, 64 people"],
+      ["tool", "search_web", 'Searched "Tessellate AI funding": 2 results, 1 read'],
+      ["tool", "save_research", "Saved 4 facts, each with a quote and source"],
+      ["crusonia", undefined, "Scored 81 with stage unclear, so it sent the lead here instead of drafting"],
+    ],
+  },
+  ses_hb2: {
+    lead: "lead_harbor",
+    cost: 0.27,
+    lines: [
+      ["tool", "read_website", "Read harborlabs.dev and /about: billing API, 34 people"],
+      ["tool", "search_web", 'Searched "Harbor Labs Series A": 3 results, 1 read'],
+      ["tool", "save_research", "Saved 4 facts, each with a quote and source"],
+      ["crusonia", undefined, "Scored 87: fits on size, stage and signal"],
+      ["tool", "create_draft", "Drafted a LinkedIn note for Arjun Patel, citing 2 sources"],
+    ],
+  },
+};
+
+function researchRun(id: string): WorkflowRun | undefined {
+  const r = researchRuns[id];
+  if (!r) return undefined;
+  const start = Date.now() - 30 * MIN;
+  const at = (s: number) => new Date(start + s * 1000).toISOString();
+  const lead = findSampleLeads.find((l) => l.id === r.lead);
+  return {
+    run: {
+      id,
+      workflow_id: "research",
+      name: "Lead research",
+      purpose: "research",
+      status: "done",
+      stop_reason: "end_turn",
+      lead_id: r.lead,
+      input: {},
+      started_at: at(0),
+      updated_at: at(52),
+      last_event_at: at(52),
+      leads_processed: 1,
+      cost_usd: r.cost,
+    },
+    steps: r.lines.map(([type, tool, summary], i): RunStep => ({ seq: i + 1, type, ...(tool ? { tool } : {}), summary, started_at: at(i * 14), source: type === "crusonia" ? "crusonia" : "naive" })),
+    lead: lead ? { id: lead.id, email: null, name: lead.name, title: lead.title, company: lead.company, domain: lead.domain, stage: lead.stage, score: lead.score, qualified: lead.qualified, has_consent: false } : null,
+    approvals: [],
+    sync: { ok: true, skipped: "cache is current" },
+  };
+}
+
 // ---------- handlers ----------
 
 const unshipped = () => scenario() === "unconfigured";
@@ -496,6 +551,12 @@ export const coreLeadHandlers = [
     if (t.status !== "open") return fail(409, "conflict", `Task ${t.id} is ${t.status}, not open.`);
     Object.assign(t, { status: "skipped", closed_at: new Date().toISOString() });
     return ok({ task: t });
+  }),
+
+  // Run detail for the research runs above; any other run falls through to workflows.ts.
+  http.get("/api/workflows/runs/:id", ({ params }) => {
+    const run = isEmpty() ? undefined : researchRun(String(params.id));
+    return run ? ok(run) : undefined;
   }),
 
   // Full trace

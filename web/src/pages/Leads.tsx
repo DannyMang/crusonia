@@ -10,7 +10,7 @@ import { Page } from "../components/AppShell.tsx";
 import { Dropdown, MenuItem } from "../components/leads/Overlay.tsx";
 import { Button, ButtonLink, Card, QueryError, Skeleton, StageBadge, stageLabel } from "../components/ui.tsx";
 import { cx, duration, num, timeAgo } from "../lib/format.ts";
-import { keys, useApprovals } from "../queries.ts";
+import { keys, useApprovals, useLeads } from "../queries.ts";
 import { AddContactDialog, AddLeadsButton } from "./leads/AddLeads.tsx";
 import { ImportCsvDialog } from "./leads/ImportCsvDialog.tsx";
 import { contactOf, GROUPS, groupOf, sourceLabel, type Group, type GroupKey } from "./leads/shared.ts";
@@ -111,6 +111,7 @@ export default function Leads() {
       <div className="flex h-10 shrink-0 items-center justify-between">
         <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Leads</h1>
         <div className="flex items-center gap-2.5">
+          <ReviewLink />
           <SearchBox value={filters.q ?? ""} onChange={onSearch} params={params} />
           <Button variant="outline" size="md" className="gap-1.5" onClick={() => setImporting(true)}>
             <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden className="shrink-0">
@@ -738,5 +739,18 @@ function NoLeadsYet({ onImport, onAdd }: { onImport: () => void; onAdd: () => vo
         ))}
       </div>
     </Card>
+  );
+}
+
+/** "Review · 3": the leads the agent sent for review (Paper: "Final · Research · Review queue"). Hidden at zero. */
+function ReviewLink() {
+  const review = useLeads({ stage: "needs_review", limit: 100 });
+  const n = review.data?.data.length ?? 0;
+  if (!n) return null;
+  return (
+    <ButtonLink to="/app/leads/review" variant="outline" size="md" className="gap-2">
+      Review
+      <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-ink px-1.5 text-[11px]/3.5 font-semibold tabular-nums text-white">{n}</span>
+    </ButtonLink>
   );
 }

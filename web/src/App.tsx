@@ -22,6 +22,7 @@ const pages = {
   LeadDetail: () => import("./pages/LeadDetail.tsx"),
   Leads: () => import("./pages/Leads.tsx"),
   FindLeads: () => import("./pages/leads/Find.tsx"),
+  ReviewLeads: () => import("./pages/leads/Review.tsx"),
   NotFound: () => import("./pages/NotFound.tsx"),
   OnboardingLayout: () => import("./pages/onboarding/Layout.tsx"),
   Step1Company: () => import("./pages/onboarding/Step1Company.tsx"),
@@ -163,6 +164,8 @@ export function App() {
                   <Route index element={page(L.Home)} />
                   <Route path="leads" element={page(L.Leads)} />
                   <Route path="leads/find" element={page(L.FindLeads)} />
+                  <Route path="leads/review" element={page(L.ReviewLeads)} />
+                  <Route path="leads/review/:id" element={page(L.ReviewLeads)} />
                   <Route path="leads/:id" element={page(L.LeadDetail)} />
                   <Route path="approvals" element={page(L.Approvals)} />
                   <Route path="approvals/:code" element={page(L.Approvals)} />
