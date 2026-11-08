@@ -1,5 +1,10 @@
-// The Naive research agent's definition: the request body for POST/PATCH /v1/agents (Naive REST API,
-// https://usenaive.ai/docs/api/agents). Pure, so tests can check it; scripts/setup.ts sends it.
+// The Naive agents' definitions: the request bodies for POST/PATCH /v1/agents (Naive REST API,
+// https://usenaive.ai/docs/api/agents). Pure, so tests can check them; scripts/setup.ts sends them.
+//   Research agent  reads the web, sees only its target lead (one session per lead or per lead-finding run).
+//   Operator        reads the whole pipeline and manages work, with no web tool at all (src/mcp/toolsets.ts).
+// Both are Naive agents, started by our Worker over REST, not by a handoff (send_to_agent): a start from the Operator has to
+// pass the pause switch, the caps and the credit check, and it carries lead ids, never free text.
+import { ALL_TOOLS, OPERATOR_TOOLS, RESEARCHER_TOOLS } from "../../src/mcp/toolsets.ts";
 
 // Apify's hosted MCP server, limited to the one tool the playbook uses: the single-page reader (charged per request,
 // starts no Actor run in the account). Apify adds the read-only run/dataset getters (and abort-actor-run) with it.
@@ -12,33 +17,11 @@ export const APIFY_MCP_URL = "https://mcp.apify.com?tools=apify/rag-web-browser"
 
 export const AGENT_NAME = "Crusonia Research";
 export const PLAYBOOK_PATH = "playbooks/research.md";
+export const OPERATOR_AGENT_NAME = "Crusonia Operator";
+export const OPERATOR_PLAYBOOK_PATH = "playbooks/operator.md";
 
 /** Every tool our MCP server registers (src/mcp/server.ts). A test checks this against tools/list. */
-export const CRUSONIA_TOOLS = [
-  "get_status",
-  "read_website",
-  "search_web",
-  "get_company_summary",
-  "update_company_summary",
-  "save_profile",
-  "get_profile",
-  "add_leads",
-  "list_leads",
-  "get_lead",
-  "save_evidence",
-  "score_lead",
-  "save_research",
-  "create_draft",
-  "list_pending_approvals",
-  "list_tasks",
-  "add_note",
-  "get_workflow",
-  "create_workflow",
-  "flag_for_review",
-] as const;
-
-/** Crusonia tools the research agent may call only with the owner's approval (its run never needs them). */
-export const CRUSONIA_ASK_TOOLS = ["create_workflow"] as const;
+export const CRUSONIA_TOOLS = ALL_TOOLS;
 
 // Apify tools that run without asking: the single-page reader the playbook uses (charged per request, starts
 // no run) and the free readers for run results. Anything else (abort-actor-run, or an Actor tool if the URL above
@@ -128,10 +111,16 @@ export function agentSettings(get: (key: string) => string | undefined): { model
   return { model: get("NAIVE_AGENT_MODEL")?.trim() || DEFAULTS.model, ...(harness ? { harness } : {}), budget };
 }
 
+/** Built-in tools with a way out to the network or a shell. Withheld from every agent: the model never sees them. */
+export const DENIED_BUILTINS = ["web_fetch", "browser", "bash", "fetch_file", "publish_file", "apps", "post_to_channel", "send_to_agent"] as const;
+/** The MCP URLs setup needs vault credentials for. One per agent: Naive matches the credential by exact URL. */
+export const researcherMcpUrl = (baseUrl: string) => `${baseUrl}/mcp?role=researcher`;
+export const operatorMcpUrl = (baseUrl: string) => `${baseUrl}/mcp?role=operator`;
+
 /**
- * The agent: our MCP server and Apify's, the playbook as system prompt, and a toolset that allows the
- * crusonia tools and the research Apify tools, keeps ask_operator as ask (Naive never allows it), and asks
- * for everything else. `handoffs: false`: a research session never starts other agents' sessions.
+ * The research agent: our MCP server (its role's tools) and Apify's, the playbook as system prompt, and a toolset that
+ * allows those, keeps ask_operator as ask (Naive never allows it), denies the operator's tools and anything that reaches
+ * out, and asks for the rest. `handoffs: false`: a research session never starts other agents' sessions.
  */
 export function naiveAgentConfig(input: {
   baseUrl: string;
@@ -143,10 +132,11 @@ export function naiveAgentConfig(input: {
   budget: Budget;
 }): AgentConfig {
   const allow: ToolConfig = { enabled: true, permission: "allow" };
-  const ask: ToolConfig = { enabled: true, permission: "ask" };
+  const deny: ToolConfig = { enabled: false, permission: "deny" };
   const configs: Record<string, ToolConfig> = {};
-  for (const tool of CRUSONIA_TOOLS) configs[`crusonia.${tool}`] = (CRUSONIA_ASK_TOOLS as readonly string[]).includes(tool) ? ask : allow;
+  for (const tool of CRUSONIA_TOOLS) configs[`crusonia.${tool}`] = (RESEARCHER_TOOLS as readonly string[]).includes(tool) ? allow : deny;
   for (const tool of APIFY_ALLOWED_TOOLS) configs[`apify.${tool}`] = allow;
+  for (const tool of DENIED_BUILTINS) configs[tool] = deny;
   configs.ask_operator = { enabled: true, permission: "ask" };
   return {
     name: input.name ?? AGENT_NAME,
@@ -160,9 +150,31 @@ export function naiveAgentConfig(input: {
     tools: { default_config: { permission: "ask" }, configs },
     mcp_servers: [
       // Each url must equal the vault credential's mcp_server_url exactly (see setupNaive).
-      { type: "url", name: "crusonia", url: `${input.baseUrl}/mcp` },
+      { type: "url", name: "crusonia", url: researcherMcpUrl(input.baseUrl) },
       { type: "url", name: "apify", url: APIFY_MCP_URL },
     ],
+    handoffs: false,
+    budget: input.budget,
+    metadata: { app: "crusonia", playbook: input.playbook.name, playbook_version: input.playbook.version },
+  };
+}
+
+/**
+ * The Operator: deny by default, only its crusonia tools allowed. No web tool, no outbound fetch, no Apify server, no
+ * ask_operator (it acts where policy allows and leaves the rest), so nothing it reads can leave and nothing makes it wait.
+ */
+export function operatorAgentConfig(input: { baseUrl: string; playbook: Playbook; name?: string; model: string; harness?: string; budget: Budget }): AgentConfig {
+  const configs: Record<string, ToolConfig> = {};
+  for (const tool of OPERATOR_TOOLS) configs[`crusonia.${tool}`] = { enabled: true, permission: "allow" };
+  return {
+    name: input.name ?? OPERATOR_AGENT_NAME,
+    description: "Runs a Crusonia workspace: reads the pipeline and the owner's ratings, decides what to do next and starts research agents. Never reads the web, never sends anything.",
+    model: input.model,
+    ...(input.harness ? { harness: input.harness } : {}),
+    window: "immediate",
+    system: input.playbook.body,
+    tools: { default_config: { permission: "deny" }, configs },
+    mcp_servers: [{ type: "url", name: "crusonia", url: operatorMcpUrl(input.baseUrl) }],
     handoffs: false,
     budget: input.budget,
     metadata: { app: "crusonia", playbook: input.playbook.name, playbook_version: input.playbook.version },

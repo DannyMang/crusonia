@@ -4,11 +4,12 @@ import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMcpServer } from "../src/mcp/server.ts";
+import { RESEARCHER_TOOLS } from "../src/mcp/toolsets.ts";
 import {
   APIFY_ALLOWED_TOOLS,
   APIFY_MCP_URL,
-  CRUSONIA_ASK_TOOLS,
   CRUSONIA_TOOLS,
+  DENIED_BUILTINS,
   DEFAULT_AGENT_MODEL,
   PLAYBOOK_PATH,
   agentSettings,
@@ -45,7 +46,7 @@ describe("research playbook", () => {
   test("v3+ tells the agent to batch independent calls, cite evidence, and use manual channels without consent", () => {
     const body = parsePlaybook(playbookText).body;
     expect(Number(parsePlaybook(playbookText).version)).toBeGreaterThanOrEqual(3);
-    for (const phrase of ["Batch independent calls in one turn", "about 3", "citations", "why_summary", "linkedin", "intro", "email_manual", "owner_notes", "ask_operator", "change_note", "No invented enrichment"]) {
+    for (const phrase of ["Batch independent calls in one turn", "about 3", "citations", "why_summary", "linkedin", "intro", "email_manual", "owner_notes", "ask_operator", "No invented enrichment"]) {
       expect(body).toContain(phrase);
     }
     // The research workflow no longer starts with get_status.
@@ -68,12 +69,12 @@ describe("research playbook", () => {
 });
 
 describe("agent definition", () => {
-  test("allows every crusonia tool and the research Apify tools, asks for the rest", () => {
+  test("allows the researcher's crusonia tools and the research Apify tools, denies the rest of ours, asks for anything else", () => {
     const { tools } = config();
     expect(tools.default_config).toEqual({ permission: "ask" });
     for (const tool of CRUSONIA_TOOLS) {
-      const permission = (CRUSONIA_ASK_TOOLS as readonly string[]).includes(tool) ? "ask" : "allow";
-      expect(tools.configs[`crusonia.${tool}`]).toEqual({ enabled: true, permission });
+      const allowed = (RESEARCHER_TOOLS as readonly string[]).includes(tool);
+      expect(tools.configs[`crusonia.${tool}`]).toEqual(allowed ? { enabled: true, permission: "allow" } : { enabled: false, permission: "deny" });
     }
     for (const tool of APIFY_ALLOWED_TOOLS) expect(tools.configs[`apify.${tool}`]).toEqual({ enabled: true, permission: "allow" });
     expect(tools.configs.ask_operator).toEqual({ enabled: true, permission: "ask" });
@@ -82,13 +83,13 @@ describe("agent definition", () => {
     expect(APIFY_MCP_URL).not.toContain("actors");
     expect(APIFY_MCP_URL).not.toContain("website-content-crawler");
     expect(tools.configs["apify.apify--website-content-crawler"]).toBeUndefined();
-    expect(Object.keys(tools.configs)).toHaveLength(CRUSONIA_TOOLS.length + APIFY_ALLOWED_TOOLS.length + 1);
+    expect(Object.keys(tools.configs)).toHaveLength(CRUSONIA_TOOLS.length + APIFY_ALLOWED_TOOLS.length + DENIED_BUILTINS.length + 1);
   });
 
   test("MCP servers match the vault credential URLs, and every namespaced tool has its server", () => {
     const c = config();
     expect(c.mcp_servers).toEqual([
-      { type: "url", name: "crusonia", url: "https://crusonia.example.dev/mcp" },
+      { type: "url", name: "crusonia", url: "https://crusonia.example.dev/mcp?role=researcher" },
       { type: "url", name: "apify", url: APIFY_MCP_URL },
     ]);
     const servers = new Set(c.mcp_servers.map((s) => s.name));

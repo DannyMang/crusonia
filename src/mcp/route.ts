@@ -4,6 +4,7 @@ import { StreamableHTTPTransport } from "@hono/mcp";
 import { Hono } from "hono";
 import { requireBearer, type McpEnv } from "../auth.ts";
 import { createMcpServer } from "./server.ts";
+import { resolveRole } from "./toolsets.ts";
 
 // The bearer decides the workspace (MCP_TOKEN = the owner workspace, an API key = its own); a Naive agent's
 // per-workspace URL (/mcp?ws=<id>) must name the same workspace.
@@ -12,7 +13,10 @@ export const mcp = new Hono<McpEnv>();
 mcp.use("*", requireBearer);
 
 mcp.post("/", async (c) => {
-  const server = createMcpServer(c.env, { workspace: c.get("workspace"), bearer: c.get("bearer") });
+  const bearer = c.get("bearer");
+  // An agent's key decides its role; the owner token (shared by the owner's two template agents) goes by ?role=.
+  const role = resolveRole(bearer.kind === "api_key" ? bearer.agentRole : null, c.req.query("role"));
+  const server = createMcpServer(c.env, { workspace: c.get("workspace"), bearer, role });
   const transport = new StreamableHTTPTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await server.connect(transport);
   try {

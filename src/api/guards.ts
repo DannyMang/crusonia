@@ -7,9 +7,10 @@
 //   - granting or changing consent on a lead (consent is what allows email at all)
 //   - removing an address from the do-not-contact list
 //   - Stripe Checkout and the Customer Portal (a portal link manages billing without signing in)
+//   - turning autopilot on or off (it decides whether agents spend on their own)
 //   - the team and its invites, and creating or renaming a workspace (an agent must not add people or send email)
 // On top of that, members can't manage what belongs to the workspace as a whole: billing, API keys and integrations are
-// for owners and admins (and the team, in src/api/team.ts). Reading stays open: the credits pill and the names of the
+// for owners and admins (and the team, in src/api/team.ts), as is turning autopilot on or off. Reading stays open: the credits pill and the names of the
 // keys behind notes are on every member's screen.
 import type { Hono, MiddlewareHandler } from "hono";
 import type { AppEnv } from "../lib/context.ts";
@@ -53,6 +54,8 @@ export function guardHumanRoutes(api: Hono<AppEnv>): void {
   api.on("PATCH", "/leads/:id", consentHumanOnly);
   api.on("DELETE", "/suppressions/*", humanOnly("Removing a suppression"));
   api.on(WRITE, "/billing/*", humanOnly("Billing"));
+  api.on(WRITE, "/autopilot", humanOnly("Turning autopilot on or off"));
+  api.on(WRITE, "/autopilot", requireRole("admin"));
   api.on(["GET", ...WRITE], ["/team", "/team/*"], humanOnly("The team"));
   api.on(WRITE, ["/workspaces", "/workspaces/*"], humanOnly("Creating or renaming a workspace"));
   api.on(WRITE, ["/keys", "/keys/*"], requireRole("admin"));

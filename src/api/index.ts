@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../lib/context.ts";
 import { admin } from "./admin.ts";
 import { approvals } from "./approvals.ts";
+import { autopilot } from "./autopilot.ts";
 import { requireAuth } from "./auth.ts";
 import { billing } from "./billing.ts";
 import { dashboard } from "./dashboard.ts";
@@ -32,6 +33,8 @@ api.route("/leads", leads);
 // Notes on a lead and excluding it: /leads/:id/notes, /leads/:id/exclude.
 api.route("/leads", notes);
 api.route("/approvals", approvals);
+// The workspace's autopilot switch, what its agents are doing, and the tally.
+api.route("/autopilot", autopilot);
 // Manual outreach queue: LinkedIn, X, intro and own-mailbox drafts the owner sends personally.
 api.route("/tasks", tasks);
 api.route("/workflows", workflows);

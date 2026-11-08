@@ -54,7 +54,30 @@ export const DEFAULT_STEPS: WorkflowStep[] = [
   { id: "end", kind: "end", title: "Done", next: [] },
 ];
 
-const triggerSchema = z.object({ kind: z.enum(TRIGGER_KINDS), label: z.string().trim().max(200).nullish() });
+// A schedule fires every `every_hours` (default: read from the label, else daily). `batch`: how many leads a run's find
+// step looks for; `research`: how many of them it researches and drafts for (the rest keep their first score).
+const triggerSchema = z.object({
+  kind: z.enum(TRIGGER_KINDS),
+  label: z.string().trim().max(200).nullish(),
+  every_hours: z.number().min(0.25).max(24 * 60).nullish(),
+  batch: z.number().int().min(1).max(25).nullish(),
+  research: z.number().int().min(0).max(10).nullish(),
+});
+export type WorkflowTrigger = z.infer<typeof triggerSchema>;
+
+/** Hours between runs of a schedule: every_hours, else what the label says ("Every 6 hours", "Every other Monday"), else a day. Pure. */
+export function everyHoursOf(trigger: Pick<WorkflowTrigger, "every_hours" | "label">): number {
+  if (trigger.every_hours) return trigger.every_hours;
+  const label = (trigger.label ?? "").toLowerCase();
+  const hours = /every\s+(\d+(?:\.\d+)?)\s*h/.exec(label);
+  if (hours) return Math.max(0.25, Number(hours[1]));
+  const days = /every\s+(\d+)\s*day/.exec(label);
+  if (days) return Number(days[1]) * 24;
+  if (/every\s+hour|hourly/.test(label)) return 1;
+  if (/every\s+other\s/.test(label)) return 24 * 14;
+  if (/week|every\s+(mon|tue|wed|thu|fri|sat|sun)/.test(label)) return 24 * 7;
+  return 24;
+}
 const icpSchema = z
   .object({ source: z.enum(["company_summary", "custom"]).default("company_summary"), text: z.string().trim().max(4000).nullish() })
   .refine((i) => i.source !== "custom" || Boolean(i.text), { message: "icp.text is required when icp.source is 'custom'" });
@@ -111,13 +134,16 @@ export const definitionPatchSchema = z
 type StoredQuestion = { id: string; question: string };
 type StoredRequirement = { id: string; description: string; required?: boolean };
 
-type DefRow = {
+export type DefRow = {
   id: string;
   workspace_id: string;
   name: string;
   source: WorkflowSource;
   enabled: boolean;
-  trigger: { kind: (typeof TRIGGER_KINDS)[number]; label?: string | null };
+  trigger: WorkflowTrigger;
+  next_run_at?: Date | string | null;
+  is_autopilot?: boolean;
+  last_skip?: string | null;
   spend_cap_usd: string | number | null;
   spend_period: "week" | "run";
   latest_version: number;
@@ -292,6 +318,8 @@ export async function patchDefinition(sql: Sql, ws: string, id: string, raw: z.i
           trigger = coalesce(${patch.trigger ? JSON.stringify(patch.trigger) : null}::jsonb, trigger),
           spend_cap_usd = case when ${patch.spend !== undefined} then ${patch.spend?.cap_usd ?? null}::numeric else spend_cap_usd end,
           spend_period = coalesce(${patch.spend?.period ?? null}, spend_period),
+          -- A new schedule counts from now, so editing one doesn't start a run.
+          next_run_at = case when ${patch.trigger?.kind === "schedule"} then now() + make_interval(mins => ${Math.round(everyHoursOf(patch.trigger ?? {}) * 60)}) else next_run_at end,
           updated_at = now()
         where id = ${def.id}`,
     sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, null, 'workflow_updated', ${JSON.stringify({ workflow_id: def.id, ...patch, resume, actor })}::jsonb)`,
@@ -354,7 +382,7 @@ async function statsFor(sql: Sql, ids: string[]): Promise<Map<string, DefStats>>
       (select count(*)::int from naive_sessions s where s.workflow_run_id = last.id and s.status in ('running', 'idle')) as last_run_running,
       (select count(*)::int from naive_sessions s where s.workflow_run_id = last.id and s.status = 'error') as last_run_errors,
       (select count(*)::int from naive_sessions s where s.workflow_run_id = last.id) as last_run_sessions,
-      (select count(*)::int from workflow_run_leads rl where rl.run_id = last.id and rl.status = 'started') as last_run_found,
+      (select count(*)::int from workflow_run_leads rl where rl.run_id = last.id and rl.status in ('started', 'found', 'queued')) as last_run_found,
       (select count(*)::int from workflow_run_leads rl join leads l on l.id = rl.lead_id where rl.run_id = last.id and rl.status = 'started'
         and (l.score is not null or l.stage in ('qualified', 'disqualified', 'needs_review', 'awaiting_approval', 'sent', 'replied', 'interested', 'not_interested', 'meeting_booked'))) as last_run_researched,
       (select count(*)::int from workflow_run_leads rl join leads l on l.id = rl.lead_id where rl.run_id = last.id and rl.status = 'started' and l.qualified is true) as last_run_qualified,
@@ -403,7 +431,14 @@ function defView(d: DefRow, s: DefStats | undefined, paused: boolean) {
     source: d.source,
     enabled: d.enabled,
     is_default: d.is_default,
-    trigger: { kind: d.trigger.kind, label: d.trigger.label || TRIGGER_LABEL[d.trigger.kind] },
+    trigger: {
+      kind: d.trigger.kind,
+      label: d.trigger.label || TRIGGER_LABEL[d.trigger.kind],
+      ...(d.trigger.kind === "schedule" ? { every_hours: everyHoursOf(d.trigger) } : {}),
+    },
+    is_autopilot: d.is_autopilot === true,
+    next_run_at: d.trigger.kind === "schedule" ? (d.next_run_at ?? null) : null,
+    last_skip: d.last_skip ?? null,
     latest_version: d.latest_version,
     spend: { usd: spendUsd, cap_usd: capUsd, period: d.spend_period },
     status,

@@ -712,7 +712,9 @@ suite("workspaces (database, faked Naive)", () => {
     expect(await verifyApiKey(sql, agentKey)).toMatchObject({ workspace_id: ws, kind: "agent" });
     expect((await tool(agentKey, "get_status", {}, `/mcp?ws=${ws}`)).data.database.reachable).toBe(true);
     expect((await tool(agentKey, "get_status", {}, `/mcp?ws=${B}`)).status).toBe(403);
-    expect((await tool(agentKey, "get_lead", { lead_id: b.lead }, `/mcp?ws=${ws}`)).error).toContain("No lead");
+    // An agent key is a researcher: it can't even ask without its run id, and a run id from another workspace is unknown.
+    expect((await tool(agentKey, "get_lead", { lead_id: b.lead }, `/mcp?ws=${ws}`)).error).toContain("Pass run_id");
+    expect((await tool(agentKey, "get_lead", { lead_id: b.lead, run_id: "run_of_b" }, `/mcp?ws=${ws}`)).error).toContain("No run");
     // The agent key is managed by Crusonia: not listed, not revocable through /api/keys.
     const userKey = await testKey(sql, ws);
     expect((await call(userKey, "GET", "/api/keys")).body.data.map((k: any) => k.name)).toEqual(["test key"]);

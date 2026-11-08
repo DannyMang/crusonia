@@ -74,6 +74,16 @@ OWNER_CLERK_USER_ID=
 # Clerk user ids of the instance's operators: read-only, audited access to every workspace's agent runs and traces
 # (/api/admin). The owner is always one.
 # PLATFORM_ADMIN_USER_IDS=
+# Autopilot (README: Autopilot). Which workspaces run by themselves: a comma list of ids, or * for all. Unset: none.
+# AUTOPILOT_WORKSPACES=
+# The Operator agent; `bun run setup --agent` creates it and prints its id.
+# NAIVE_OPERATOR_AGENT_ID=
+# AUTOPILOT_EVERY_HOURS=6
+# AUTOPILOT_WEEKLY_CAP_USD=5
+# AUTOPILOT_OPERATOR_EVERY_HOURS=6
+# AUTOPILOT_OPERATOR_MIN_GAP_MINUTES=20
+# AUTOPILOT_OPERATOR_MAX_PER_DAY=8
+# AUTOPILOT_AGENT_STARTS_PER_HOUR=10
 # Naive spend cap per workspace over the last 24 hours, in USD (on top of each agent's Naive budget).
 # WORKSPACE_DAILY_CAP_USD=5
 # For every workspace but the owner's: paid runs started per hour, runs active at once, Apify-backed web reads per hour.

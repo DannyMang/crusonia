@@ -15,11 +15,12 @@ import type { FetchFn } from "../providers/http.ts";
 import { ServiceError } from "./errors.ts";
 import { isPaused } from "./settings.ts";
 import { getDefinition, loadVersion, variantArms } from "./workflow-defs.ts";
-import { MAX_RESEARCH_BATCH, startResearch } from "./workflows.ts";
+import { MAX_RESEARCH_BATCH, startResearch, type ResearchOpts } from "./workflows.ts";
 
 export const MAX_TEST_LEADS = 10;
 
-export type RunInput = { version?: number; test_leads?: number; cohort?: string; lead_ids?: string[] };
+/** `trigger`: what started it (a person when omitted). */
+export type RunInput = { version?: number; test_leads?: number; cohort?: string; lead_ids?: string[]; trigger?: "schedule" | "csv_import" | "reply" | "operator" };
 
 type Candidate = { id: string; stage: string; variant: string; cohort: string | null; excluded_at: Date | null };
 
@@ -31,7 +32,7 @@ export async function runWorkflow(
   workflowId: string,
   input: RunInput,
   actor: string,
-  opts: { fetch?: FetchFn } = {},
+  opts: { fetch?: FetchFn; research?: ResearchOpts } = {},
 ) {
   const { workflow } = await getDefinition(sql, ws, workflowId);
   if (!workflow.enabled) throw new ApiError(409, "workflow_disabled", "This workflow is turned off; enable it first");
@@ -39,7 +40,9 @@ export async function runWorkflow(
   await loadVersion(sql, workflow.id, version); // 404 for an unknown version
   if (!env.NAIVE_API_KEY || !env.NAIVE_AGENT_ID) throw new ServiceError("config_missing", "NAIVE_API_KEY and NAIVE_AGENT_ID must be set to run a workflow.");
   if (await isPaused(sql, ws)) throw new ApiError(423, "paused", "Crusonia is paused; no new work starts (PUT /api/settings/pause to resume)");
-  if (workflow.spend.cap_usd !== null && workflow.spend.usd >= workflow.spend.cap_usd) {
+  // A per-run cap limits one run: it can't stop the next one that starts by itself.
+  const capApplies = !(input.trigger && workflow.spend.period === "run");
+  if (capApplies && workflow.spend.cap_usd !== null && workflow.spend.usd >= workflow.spend.cap_usd) {
     throw new ApiError(409, "spend_cap_reached", `This workflow spent $${workflow.spend.usd} of its $${workflow.spend.cap_usd} ${workflow.spend.period === "week" ? "weekly" : "per-run"} cap`);
   }
 
@@ -80,9 +83,10 @@ export async function runWorkflow(
   const cohorts = [...new Set(eligible.map((c) => c.cohort))];
   const cohort = input.cohort ?? (cohorts.length === 1 ? cohorts[0] : null) ?? null;
   const ids = eligible.map((c) => c.id);
-  await sql.transaction([
-    sql`insert into workflow_runs (id, workspace_id, workflow_id, version, cohort, test, actor)
-        values (${runId}, ${ws}, ${workflow.id}, ${version}, ${cohort}, ${Boolean(input.test_leads)}, ${actor})`,
+  // A run that started by itself is tracked until its sessions finish (./autopilot.ts), and is one at a time per workflow.
+  const insertRun = sql.transaction([
+    sql`insert into workflow_runs (id, workspace_id, workflow_id, version, cohort, test, actor, trigger, phase)
+        values (${runId}, ${ws}, ${workflow.id}, ${version}, ${cohort}, ${Boolean(input.test_leads)}, ${actor}, ${input.trigger ?? "manual"}, ${input.trigger ? "researching" : "done"})`,
     // Research sessions and drafts created for these leads from now on record this run (see schema.sql).
     sql`update leads set workflow_id = ${workflow.id}, workflow_version = ${version}, workflow_run_id = ${runId}, updated_at = now()
         where workspace_id = ${ws} and id = any(${ids}::text[])`,
@@ -96,8 +100,12 @@ export async function runWorkflow(
       actor,
     })}::jsonb)`,
   ]);
+  await insertRun.catch((err) => {
+    if ((err as { code?: string }).code === "23505") throw new ApiError(409, "active_run", "This workflow already has a run going");
+    throw err;
+  });
 
-  const result = await startResearch(sql, env, ws, { lead_ids: ids }, actor, opts.fetch);
+  const result = await startResearch(sql, env, ws, { lead_ids: ids }, actor, opts.fetch, opts.research);
   const session = new Map(result.started.map((s) => [s.lead_id, s.session_id]));
   const failed = new Map(result.failed.map((f) => [f.lead_id, f.error]));
   const late = new Map(result.skipped.map((s) => [s.lead_id, s.reason]));
@@ -147,6 +155,9 @@ export async function resumeWorkflow(sql: Sql, env: Env, ws: string, workflowId:
 
 type RunRow = {
   id: string;
+  trigger: string;
+  phase: string;
+  actor: string | null;
   version: number;
   cohort: string | null;
   test: boolean;
@@ -174,6 +185,7 @@ const REPLY_STAGES = ["replied", "interested", "not_interested", "meeting_booked
 
 const TIMELINE_KINDS = [
   "workflow_run_started",
+  "lead_added",
   "research_started",
   "lead_scored",
   "lead_needs_review",
@@ -192,7 +204,10 @@ function timelineText(kind: string, d: Record<string, unknown>, who: string | nu
   const lead = who ? ` (${who})` : "";
   switch (kind) {
     case "workflow_run_started":
+      if (d.finding) return `Run started by itself: finding up to ${d.finding} leads, version ${d.version}`;
       return `Run started on ${d.leads} lead${d.leads === 1 ? "" : "s"}${d.cohort ? ` from ${d.cohort}` : ""}, version ${d.version}`;
+    case "lead_added":
+      return `Found${lead}`;
     case "research_started":
       return `Research started${lead}`;
     case "lead_scored":
@@ -224,14 +239,18 @@ function timelineText(kind: string, d: Record<string, unknown>, who: string | nu
 
 const usd = (micro: string | number | null | undefined) => Math.round(Number(micro ?? 0) / 10_000) / 100;
 
+// A run's plain tally: what its agents did, and the times a person stepped in.
+const AGENT_TIMELINE_KINDS = new Set(["lead_added", "research_started", "lead_scored", "lead_needs_review", "draft_created", "followup_scheduled"]);
+const OWNER_TIMELINE_KINDS = new Set(["approval_approved", "approval_rejected", "task_sent"]);
+
 /** GET /api/workflow-definitions/:id/runs: runs (newest first), per-variant counts for one version, leads paused for review. */
 export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: { version?: number; limit?: number } = {}) {
   const { workflow } = await getDefinition(sql, ws, workflowId);
   const limit = Math.min(opts.limit ?? 20, 100);
   const paused = await isPaused(sql, ws);
   const runs = (await sql`
-    select r.id, r.version, r.cohort, r.test, r.started_at,
-      count(rl.lead_id) filter (where rl.status = 'started')::int as found,
+    select r.id, r.trigger, r.phase, r.actor, r.version, r.cohort, r.test, r.started_at,
+      count(rl.lead_id) filter (where rl.status in ('started', 'found', 'queued'))::int as found,
       count(rl.lead_id) filter (where rl.status = 'started' and (l.score is not null or l.stage = any(${RESEARCHED}::text[])))::int as researched,
       count(rl.lead_id) filter (where rl.status = 'started' and l.qualified is true)::int as qualified,
       count(rl.lead_id) filter (where rl.status = 'started' and l.stage = 'needs_review' and l.workflow_run_id = r.id)::int as needs_review,
@@ -261,7 +280,7 @@ export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: {
         join workflow_runs r on r.id = rl.run_id
         join events e on e.workspace_id = r.workspace_id and e.lead_id = rl.lead_id and e.created_at >= r.started_at
         left join leads l on l.id = rl.lead_id
-        where rl.run_id = any(${runIds}::text[]) and rl.status = 'started' and e.kind = any(${TIMELINE_KINDS}::text[])
+        where rl.run_id = any(${runIds}::text[]) and rl.status in ('started', 'found', 'queued') and e.kind = any(${TIMELINE_KINDS}::text[])
           -- Events after a later run of the same lead belong to that run.
           and not exists (select 1 from workflow_run_leads rl2 join workflow_runs r2 on r2.id = rl2.run_id
                           where rl2.lead_id = rl.lead_id and r2.started_at > r.started_at and r2.started_at <= e.created_at)
@@ -271,10 +290,14 @@ export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: {
         order by created_at`) as { run_id: string; kind: string; data: Record<string, unknown>; created_at: Date; who: string | null }[])
     : [];
   const timeline = new Map<string, { at: Date; text: string }[]>();
+  const steppedIn = new Map<string, number>();
+  const agentDid = new Map<string, number>();
   for (const e of events) {
     const list = timeline.get(e.run_id) ?? [];
     list.push({ at: e.created_at, text: timelineText(e.kind, e.data ?? {}, e.who) });
     timeline.set(e.run_id, list);
+    const tally = OWNER_TIMELINE_KINDS.has(e.kind) ? steppedIn : AGENT_TIMELINE_KINDS.has(e.kind) ? agentDid : null;
+    if (tally) tally.set(e.run_id, (tally.get(e.run_id) ?? 0) + 1);
   }
 
   // Variants: one version's runs, counted per arm over the distinct leads they started.
@@ -317,9 +340,13 @@ export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: {
       cohort: r.cohort,
       test: r.test,
       started_at: r.started_at,
+      // What started it: schedule, csv_import, reply, operator, or a person (manual).
+      trigger: r.trigger,
+      agent_actions: agentDid.get(r.id) ?? 0,
+      owner_actions: steppedIn.get(r.id) ?? 0,
       // running | paused | waiting (drafts wait for approval) | error (every session failed) | done
       status:
-        r.open_sessions > 0 ? (paused ? "paused" : "running") : r.waiting > 0 ? "waiting" : r.sessions > 0 && r.error_sessions === r.sessions ? "error" : "done",
+        r.open_sessions > 0 || r.phase !== "done" ? (paused ? "paused" : "running") : r.waiting > 0 ? "waiting" : r.sessions > 0 && r.error_sessions === r.sessions ? "error" : "done",
       needs_review: r.needs_review,
       cost_usd: usd(r.cost_micro),
       counts: { found: r.found, researched: r.researched, qualified: r.qualified, drafted: r.drafted, sent: r.sent },

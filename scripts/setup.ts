@@ -2,8 +2,8 @@
 //   bun run setup                 print the values to add to .dev.vars
 //   bun run setup --write         also write them into .dev.vars
 //   bun run setup --naive-credential   re-add the MCP credentials to an existing Naive vault
-//   bun run setup --agent         only create or update the Naive agent (e.g. after editing playbooks/), and add the
-//                                 vault credential for its Apify MCP URL if that URL changed
+//   bun run setup --agent         only create or update the Naive agents (research and Operator, e.g. after editing
+//                                 playbooks/), and add the vault credentials for their MCP URLs if those changed
 //   bun run setup --stripe        only Stripe billing: products/prices from src/billing/plans.ts, the Customer
 //                                 Portal and the webhook endpoint (test key; --live for a live key,
 //                                 --rotate-webhook-secret for a new signing secret, --verify-checkout to create
@@ -22,7 +22,21 @@ import { HubSpotClient } from "../src/providers/hubspot.ts";
 import { NotionClient } from "../src/providers/notion.ts";
 import { setupHubSpot, setupNotion } from "./lib/crm-setup.ts";
 import { DEV_VARS, ROOT, WRANGLER_ENV, getVar, requireVar } from "./lib/env.ts";
-import { AGENT_NAME, APIFY_MCP_URL, PLAYBOOK_PATH, agentSettings, changedFields, naiveAgentConfig, parsePlaybook } from "./lib/naive-agent.ts";
+import {
+  AGENT_NAME,
+  APIFY_MCP_URL,
+  OPERATOR_AGENT_NAME,
+  OPERATOR_PLAYBOOK_PATH,
+  PLAYBOOK_PATH,
+  agentSettings,
+  changedFields,
+  naiveAgentConfig,
+  operatorAgentConfig,
+  operatorMcpUrl,
+  parsePlaybook,
+  researcherMcpUrl,
+  type AgentConfig,
+} from "./lib/naive-agent.ts";
 import { setupStripe } from "./lib/stripe-setup.ts";
 
 export { APIFY_MCP_URL };
@@ -241,7 +255,8 @@ async function setupNaiveAgent(baseUrl: string) {
     return;
   }
   const apifyToken = getVar("APIFY_TOKEN");
-  await applyNaiveAgent(baseUrl, naiveClient(apiKey, [apiKey, ...(apifyToken ? [apifyToken] : [])]));
+  const mcpToken = getVar("MCP_TOKEN");
+  await applyNaiveAgent(baseUrl, naiveClient(apiKey, [apiKey, ...(apifyToken ? [apifyToken] : []), ...(mcpToken ? [mcpToken] : [])]));
 }
 
 type VaultCredential = { id: string; key?: string; mcp_server_url?: string | null };
@@ -251,13 +266,7 @@ type VaultCredential = { id: string; key?: string; mcp_server_url?: string | nul
  * new APIFY_MCP_URL needs its own credential. Adds it once (re-runs find it and send nothing). Needs NAIVE_VAULT_ID,
  * APIFY_TOKEN, and a Naive key with the admin scope.
  */
-async function ensureApifyCredential(naive: Naive) {
-  const vaultId = getVar("NAIVE_VAULT_ID");
-  const apifyToken = getVar("APIFY_TOKEN");
-  if (!vaultId || !apifyToken) {
-    notes.push(`Apify MCP credential not checked: ${!vaultId ? "NAIVE_VAULT_ID" : "APIFY_TOKEN"} is not set. The agent's Apify tools need a vault credential for ${APIFY_MCP_URL}.`);
-    return;
-  }
+async function vaultCredentials(naive: Naive, vaultId: string): Promise<VaultCredential[]> {
   const creds: VaultCredential[] = [];
   let after: string | null = null;
   for (let page = 0; page < 20; page++) {
@@ -270,6 +279,36 @@ async function ensureApifyCredential(naive: Naive) {
     if (!res.has_more || !res.next_cursor) break;
     after = res.next_cursor;
   }
+  return creds;
+}
+
+/**
+ * Each owner agent reaches our MCP server on its own URL (?role=), and Naive injects a token only for an exact URL match,
+ * so each URL needs a credential holding MCP_TOKEN. Adds what is missing (re-runs send nothing).
+ */
+async function ensureCrusoniaCredentials(naive: Naive, baseUrl: string) {
+  const vaultId = getVar("NAIVE_VAULT_ID");
+  const mcpToken = getVar("MCP_TOKEN");
+  if (!vaultId || !mcpToken) {
+    notes.push(`Crusonia MCP credentials not checked: ${!vaultId ? "NAIVE_VAULT_ID" : "MCP_TOKEN"} is not set. The agents need one for ${researcherMcpUrl(baseUrl)} and ${operatorMcpUrl(baseUrl)}.`);
+    return;
+  }
+  const creds = await vaultCredentials(naive, vaultId);
+  for (const [key, url] of [["Crusonia MCP (research)", researcherMcpUrl(baseUrl)], ["Crusonia MCP (operator)", operatorMcpUrl(baseUrl)]] as const) {
+    if (creds.some((c) => c.mcp_server_url === url)) continue;
+    await naive.post(`/v1/vaults/${encodeURIComponent(vaultId)}/credentials`, { kind: "static_bearer", key, mcp_server_url: url, value: mcpToken }, `naive-credential:${vaultId}:${url}:${await sha256Hex(mcpToken)}`);
+    console.log(`Naive vault credential: ${key} -> ${url}`);
+  }
+}
+
+async function ensureApifyCredential(naive: Naive) {
+  const vaultId = getVar("NAIVE_VAULT_ID");
+  const apifyToken = getVar("APIFY_TOKEN");
+  if (!vaultId || !apifyToken) {
+    notes.push(`Apify MCP credential not checked: ${!vaultId ? "NAIVE_VAULT_ID" : "APIFY_TOKEN"} is not set. The agent's Apify tools need a vault credential for ${APIFY_MCP_URL}.`);
+    return;
+  }
+  const creds = await vaultCredentials(naive, vaultId);
   if (!creds.some((c) => c.mcp_server_url === APIFY_MCP_URL)) {
     try {
       await naive.post(
@@ -290,14 +329,21 @@ async function ensureApifyCredential(naive: Naive) {
 
 async function applyNaiveAgent(baseUrl: string, naive: Naive) {
   await ensureApifyCredential(naive);
+  await ensureCrusoniaCredentials(naive, baseUrl);
+  const usd = (micro: number) => `$${(micro / 1_000_000).toFixed(2)}`;
+  const report = (agent: Awaited<ReturnType<typeof createNaiveAgent>>) => {
+    const { budget } = agent.config;
+    console.log(
+      `Naive agent: "${agent.config.name}" ${agent.status} (v${agent.version}), playbook ${agent.config.metadata.playbook} v${agent.config.metadata.playbook_version}, ` +
+        `model ${agent.config.model}, budget ${usd(budget.cap_micro_usd)}/${budget.period} and ${usd(budget.max_task_micro_usd)} per session`,
+    );
+  };
   const agent = await createNaiveAgent(baseUrl, naive);
   results.NAIVE_AGENT_ID = agent.id;
-  const { budget } = agent.config;
-  const usd = (micro: number) => `$${(micro / 1_000_000).toFixed(2)}`;
-  console.log(
-    `Naive agent: "${agent.config.name}" ${agent.status} (v${agent.version}), playbook ${agent.config.metadata.playbook} v${agent.config.metadata.playbook_version}, ` +
-      `model ${agent.config.model}, budget ${usd(budget.cap_micro_usd)}/${budget.period} and ${usd(budget.max_task_micro_usd)} per session`,
-  );
+  report(agent);
+  const operator = await createOperatorAgent(baseUrl, naive);
+  results.NAIVE_OPERATOR_AGENT_ID = operator.id;
+  report(operator);
 }
 
 type AgentRow = { id: string; name: string; current_version: number; harness?: string };
@@ -325,14 +371,23 @@ export async function createNaiveAgent(baseUrl: string, naive: Naive) {
   // Setup finds the agent by name, so each wrangler environment needs its own: `--env staging` defaults to
   // "Crusonia Research (staging)". NAIVE_AGENT_NAME overrides it.
   const name = getVar("NAIVE_AGENT_NAME") ?? (WRANGLER_ENV ? `${AGENT_NAME} (${WRANGLER_ENV})` : undefined);
-  const config = naiveAgentConfig({ baseUrl, playbook, ...(name ? { name } : {}), ...agentSettings(getVar) });
+  return applyAgent(naive, naiveAgentConfig({ baseUrl, playbook, ...(name ? { name } : {}), ...agentSettings(getVar) }), getVar("NAIVE_AGENT_ID"), "NAIVE_AGENT_ID");
+}
 
-  let id = getVar("NAIVE_AGENT_ID");
+/** The Operator (playbooks/operator.md), kept in step the same way. NAIVE_OPERATOR_AGENT_ID, else the one with its name. */
+export async function createOperatorAgent(baseUrl: string, naive: Naive) {
+  const playbook = parsePlaybook(readFileSync(`${ROOT}${OPERATOR_PLAYBOOK_PATH}`, "utf8"));
+  const name = WRANGLER_ENV ? `${OPERATOR_AGENT_NAME} (${WRANGLER_ENV})` : undefined;
+  return applyAgent(naive, operatorAgentConfig({ baseUrl, playbook, ...(name ? { name } : {}), ...agentSettings(getVar) }), getVar("NAIVE_OPERATOR_AGENT_ID"), "NAIVE_OPERATOR_AGENT_ID");
+}
+
+async function applyAgent(naive: Naive, config: AgentConfig, configuredId: string | undefined, idVar: string) {
+  let id = configuredId;
   const byName = !id;
   if (!id) {
     const matches = await agentsNamed(naive, config.name);
     if (matches.length > 1) {
-      throw new Error(`Naive has ${matches.length} agents named "${config.name}". Set NAIVE_AGENT_ID to the one to keep.`);
+      throw new Error(`Naive has ${matches.length} agents named "${config.name}". Set ${idVar} to the one to keep.`);
     }
     id = matches[0]?.id;
   }
@@ -347,14 +402,16 @@ export async function createNaiveAgent(baseUrl: string, naive: Naive) {
     current = await naive.request("GET", `/v1/agents/${encodeURIComponent(id)}`);
   } catch (err) {
     if (err instanceof NaiveError && err.status === 404) {
-      throw new Error("NAIVE_AGENT_ID is set, but Naive has no such agent. Remove it from .dev.vars to create a new one.");
+      throw new Error(`${idVar} is set, but Naive has no such agent. Remove it from .dev.vars to create a new one.`);
     }
     throw err;
   }
   // Never repoint another environment's agent: one found by name must already serve this PUBLIC_URL.
+  // Same Worker on another ?role= is this environment's own agent moving to its role URL, not another environment's.
+  const hostOf = (url: string) => url.split("?")[0];
   const servedUrl = (current.mcp_servers as { name?: string; url?: string }[] | undefined)?.find((s) => s.name === "crusonia")?.url;
   const ownUrl = config.mcp_servers.find((s) => s.name === "crusonia")!.url;
-  if (byName && servedUrl && servedUrl !== ownUrl) {
+  if (byName && servedUrl && hostOf(servedUrl) !== hostOf(ownUrl)) {
     throw new Error(
       `The Naive agent "${config.name}" serves ${servedUrl}, not ${ownUrl}. Set NAIVE_AGENT_NAME (or --env) for a separate agent, ` +
         "or NAIVE_AGENT_ID to move that agent on purpose.",

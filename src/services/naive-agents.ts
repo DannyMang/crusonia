@@ -23,6 +23,7 @@ import { isOwnerWorkspace } from "./workspaces.ts";
 export const CRUSONIA_SERVER = "crusonia";
 const SYNC_EVERY_MS = 10 * 60_000;
 
+
 /** The workflow version a run records: the playbook and the agent version, e.g. "research@3, agent v12". */
 export function workflowVersionOf(agent: NaiveAgent): string | null {
   const playbook = agent.metadata?.playbook ?? "playbook";
@@ -37,6 +38,7 @@ let templateVersion: { agentId: string; value: string | null; at: number } | und
 export const resetTemplateVersionCache = () => (templateVersion = undefined);
 
 export const workspaceMcpUrl = (env: Env, ws: string) => `${env.PUBLIC_URL.replace(/\/+$/, "")}/mcp?ws=${encodeURIComponent(ws)}`;
+export const workspaceOperatorMcpUrl = (env: Env, ws: string) => `${workspaceMcpUrl(env, ws)}&role=operator`;
 
 function naiveFailure(err: unknown): never {
   if (err instanceof ProviderError) throw new ApiError(502, "naive_error", err.message);
@@ -166,4 +168,71 @@ async function ensureWorkspaceAgent(
     await sql`update workspaces set naive_provisioning_at = null where id = ${ws}`.catch(() => {});
     throw err;
   }
+}
+
+// ---------- the Operator (playbooks/operator.md, src/mcp/toolsets.ts) ----------
+
+type OperatorRow = {
+  agent_id?: string;
+  credential_id?: string;
+  api_key_id?: string;
+  template_version?: number | null;
+  workflow_version?: string | null;
+  synced_at?: string;
+};
+
+export const operatorConfigured = (env: Env) => Boolean(env.NAIVE_API_KEY && env.NAIVE_OPERATOR_AGENT_ID);
+
+/**
+ * The Naive agent that runs this workspace's Operator sessions. Same scoping as naiveAgentFor: the owner workspace runs
+ * on the template (NAIVE_OPERATOR_AGENT_ID), any other on its own copy, whose vault credential holds a key of kind
+ * 'operator' for exactly /mcp?ws=<id>&role=operator.
+ */
+export async function naiveOperatorFor(sql: Sql, env: Env, ws: string, fetchFn?: FetchFn): Promise<WorkspaceAgent> {
+  if (!env.NAIVE_API_KEY) throw notConfigured("NAIVE_API_KEY");
+  if (!env.NAIVE_OPERATOR_AGENT_ID) throw notConfigured("NAIVE_OPERATOR_AGENT_ID");
+  const client = new NaiveClient(env.NAIVE_API_KEY, fetchFn);
+  const templateId = env.NAIVE_OPERATOR_AGENT_ID;
+  if (isOwnerWorkspace(ws)) {
+    const template = await client.getAgent(templateId).then(workflowVersionOf, () => null);
+    return { client, agentId: templateId, workflowVersion: template };
+  }
+  const [row] = await sql`select naive_operator from workspaces where id = ${ws}`;
+  if (!row) throw new ApiError(404, "not_found", "Workspace not found");
+  const saved = (row.naive_operator ?? {}) as OperatorRow;
+  const fresh = saved.synced_at && Date.now() - new Date(saved.synced_at).getTime() < SYNC_EVERY_MS;
+  if (saved.agent_id && saved.credential_id && fresh) return { client, agentId: saved.agent_id, workflowVersion: saved.workflow_version ?? null };
+
+  const current = await client.getAgent(templateId).catch(naiveFailure);
+  const workflowVersion = workflowVersionOf(current);
+  const url = workspaceOperatorMcpUrl(env, ws);
+  const save = async (fields: OperatorRow) => {
+    await sql`update workspaces set naive_operator = coalesce(naive_operator, '{}'::jsonb) || ${JSON.stringify(fields)}::jsonb where id = ${ws}`;
+  };
+  const stamp = { template_version: current.current_version ?? null, workflow_version: workflowVersion, synced_at: new Date().toISOString() };
+  if (saved.agent_id && saved.credential_id) {
+    if (saved.template_version !== (current.current_version ?? null)) {
+      await client.updateAgent(saved.agent_id, workspaceAgentConfig(current, url, ws)).catch(naiveFailure);
+    }
+    await save(stamp);
+    return { client, agentId: saved.agent_id, workflowVersion };
+  }
+  if (!env.NAIVE_VAULT_ID) throw notConfigured("NAIVE_VAULT_ID");
+  let agentId = saved.agent_id;
+  if (!agentId) {
+    agentId = (await client.createAgent(workspaceAgentConfig(current, url, ws), `crusonia-operator-${ws}`).catch(naiveFailure)).id;
+    await save({ agent_id: agentId });
+  }
+  if (saved.api_key_id) await revokeApiKey(sql, ws, saved.api_key_id, "system:naive_agent", "operator").catch(() => {});
+  const { api_key, key } = await createApiKey(sql, ws, "Naive operator", "system:naive_agent", "operator");
+  const credential = await client
+    .createVaultCredential(
+      env.NAIVE_VAULT_ID,
+      { kind: "static_bearer", key: `Crusonia operator ${ws}`, mcp_server_url: url, agent_id: agentId, value: key },
+      `crusonia-operator-credential-${ws}-${api_key.id}`,
+    )
+    .catch(naiveFailure);
+  await save({ credential_id: credential.id, api_key_id: api_key.id, ...stamp });
+  await logEvent(sql, ws, null, "naive_agent_created", { agent_id: agentId, role: "operator", template_version: current.current_version ?? null });
+  return { client, agentId, workflowVersion };
 }

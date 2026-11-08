@@ -24,7 +24,8 @@ export type ApiKey = {
   status: "active" | "revoked";
 };
 
-export type ApiKeyKind = "user" | "agent";
+/** 'agent': a workspace's research agent. 'operator': its Operator agent (src/mcp/toolsets.ts). Both live in the Naive vault. */
+export type ApiKeyKind = "user" | "agent" | "operator";
 export type ApiKeyIdentity = { id: string; name: string; workspace_id: string; kind: ApiKeyKind };
 export type ApiKeyLookup = (token: string) => Promise<ApiKeyIdentity | null>;
 

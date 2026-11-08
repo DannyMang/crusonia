@@ -9,6 +9,7 @@ import { getSql } from "../db.ts";
 import type { Env } from "../env.ts";
 import type { FetchFn } from "../providers/http.ts";
 import { expireStaleApprovals } from "./approvals.ts";
+import { runAutopilot } from "./autopilot.ts";
 import { runCrmSync } from "./crm-sync.ts";
 import { sendDueFollowUps } from "./followups.ts";
 import { pruneOutbox } from "./imessage.ts";
@@ -38,6 +39,8 @@ export async function runScheduled(env: Env, fetchFn?: FetchFn): Promise<Record<
     ["pruned_trace_events", () => pruneTraces(sql, env)],
     // Old iMessage notices (only while iMessage approvals are on).
     ["pruned_imessage_notices", () => pruneOutbox(sql, env)],
+    // Work that starts by itself: schedules, new imports and replies, the Operator (off unless AUTOPILOT_WORKSPACES is set).
+    ["autopilot", () => runAutopilot(sql, env, fetchFn)],
   ];
   for (const [name, step] of steps) {
     try {
