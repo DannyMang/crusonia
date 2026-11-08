@@ -21,7 +21,7 @@ export type Expiry = { source: string; credits: number; expiresAt: Date };
 const time = (v: Date | string) => new Date(v).getTime();
 
 /**
- * Replays an owner's ledger (any order; sorted by id here). `due`: lots whose expiry is at or before `now`, with
+ * Replays a workspace's ledger (any order; sorted by id here). `due`: lots whose expiry is at or before `now`, with
  * their unused credits at that moment, that have no `expire` row yet. `upcoming`: unexpired lots with credits left.
  */
 export function replayLedger(entries: LedgerEntry[], now: Date = new Date()): { due: Expiry[]; upcoming: Expiry[] } {
@@ -81,10 +81,10 @@ export function replayLedger(entries: LedgerEntry[], now: Date = new Date()): { 
   };
 }
 
-export async function loadLedger(sql: Sql, ownerId: string): Promise<LedgerEntry[]> {
+export async function loadLedger(sql: Sql, ws: string): Promise<LedgerEntry[]> {
   const rows = await sql`
     select id::int, amount::text, reason, source, purchase_source, expires_at, created_at
-    from credit_ledger where owner_id = ${ownerId} order by id`;
+    from credit_ledger where workspace_id = ${ws} order by id`;
   return rows.map((r) => ({ ...(r as LedgerEntry), amount: Number(r.amount) }));
 }
 
@@ -94,25 +94,25 @@ export async function loadLedger(sql: Sql, ownerId: string): Promise<LedgerEntry
  */
 export async function expireCredits(sql: Sql, now: Date = new Date()): Promise<number> {
   const owners = await sql`
-    select distinct g.owner_id from credit_ledger g
+    select distinct g.workspace_id from credit_ledger g
     where g.expires_at is not null and g.expires_at <= ${now.toISOString()}::timestamptz
       and g.expires_at > ${now.toISOString()}::timestamptz - interval '3 days'
       and not exists (select 1 from credit_ledger e where e.reason = 'expire' and e.purchase_source = g.source)
     limit 50`;
   let written = 0;
-  for (const { owner_id } of owners) {
-    const ownerId = owner_id as string;
-    const { due } = replayLedger(await loadLedger(sql, ownerId), now);
+  for (const { workspace_id } of owners) {
+    const ws = workspace_id as string;
+    const { due } = replayLedger(await loadLedger(sql, ws), now);
     for (const e of due) {
       const inserted = await sql`
-        insert into credit_ledger (owner_id, amount, reason, source, purchase_source, data)
-        values (${ownerId}, ${-e.credits}::bigint, 'expire', ${`expire:${e.source}`}, ${e.source},
+        insert into credit_ledger (workspace_id, owner_id, amount, reason, source, purchase_source, data)
+        values (${ws}, ${ws}, ${-e.credits}::bigint, 'expire', ${`expire:${e.source}`}, ${e.source},
                 ${JSON.stringify({ expired_at: e.expiresAt.toISOString() })}::jsonb)
         on conflict (source) do nothing
         returning id`;
       if (inserted.length) {
         written++;
-        await logEvent(sql, null, "billing_credits_expired", { owner_id: ownerId, credits: e.credits, purchase_source: e.source });
+        await logEvent(sql, ws, null, "billing_credits_expired", { workspace_id: ws, credits: e.credits, purchase_source: e.source });
       }
     }
   }

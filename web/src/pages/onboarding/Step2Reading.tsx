@@ -254,7 +254,8 @@ function DescriptionCard({ text }: { text: string }) {
 
 // ---------- right: what the agent proposes ----------
 
-const eyebrow = "text-xs/4 font-medium uppercase tracking-[0.08em] text-muted";
+// Field labels in sentence case with no tracking (Paper "Onboarding · 2": What you sell, Who buys, Buying signals).
+const eyebrow = "text-xs/4 font-medium text-muted";
 
 function sourcesFor(profile: Profile | null, test: (field: string) => boolean) {
   return (profile?.sources ?? []).filter((x) => test(x.field)).map((x) => x.url);
@@ -365,7 +366,7 @@ function WaitingOnYou({ kind, approvals }: { kind: "approval" | "answer"; approv
           {approvals.map((a) => (
             <li key={a.code}>
               <Link to={`/app/approvals/${encodeURIComponent(a.code)}`} className="flex items-center gap-2 text-[13px]/4.5 font-medium text-ink hover:underline">
-                <span className="shrink-0 font-semibold tabular-nums">{a.code}</span>
+                <span className="shrink-0 font-semibold">{a.code}</span>
                 <span className="min-w-0 truncate text-muted">{a.summary}</span>
                 <ChevronRight className="ml-auto text-green" />
               </Link>
@@ -419,7 +420,7 @@ function ComingOnline({ onFill }: { onFill: () => void }) {
           Continue and fill it in yourself
           <ArrowIcon />
         </button>
-        <Link to="/app/connect" className="inline-flex h-10 items-center rounded-[10px] border border-ink bg-white px-4 text-sm/4.5 font-semibold text-ink hover:bg-[#200D0D08]">
+        <Link to="/app?connect=1" className="inline-flex h-10 items-center rounded-[10px] border border-ink bg-white px-4 text-sm/4.5 font-semibold text-ink hover:bg-[#200D0D08]">
           Connect your agent
         </Link>
       </div>

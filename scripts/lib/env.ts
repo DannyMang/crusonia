@@ -1,10 +1,25 @@
 // Loads config for local scripts: process.env wins, then .dev.vars (same file wrangler dev uses).
+// `--env <name>` (e.g. `bun run setup --env staging`) targets a wrangler environment instead: its file is
+// .dev.vars.<name> (gitignored) and its PUBLIC_URL comes from wrangler.jsonc env.<name>.vars.
 // Never log values returned from here.
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const DEV_VARS = `${ROOT}.dev.vars`;
+
+function envFlag(argv: string[]): string | undefined {
+  const i = argv.indexOf("--env");
+  const name = i >= 0 ? argv[i + 1] : argv.find((a) => a.startsWith("--env="))?.slice("--env=".length);
+  if (name !== undefined && !/^[a-z][a-z0-9-]*$/.test(name)) {
+    console.error("--env needs a wrangler environment name, e.g. --env staging.");
+    process.exit(1);
+  }
+  return name;
+}
+
+/** The wrangler environment a script targets (`--env staging`), or undefined for the top-level Worker. */
+export const WRANGLER_ENV = envFlag(process.argv.slice(2));
+export const DEV_VARS = `${ROOT}.dev.vars${WRANGLER_ENV ? `.${WRANGLER_ENV}` : ""}`;
 
 function parseDotenv(text: string): Record<string, string> {
   const out: Record<string, string> = {};

@@ -14,15 +14,19 @@ import { ProviderError, type FetchFn } from "../providers/http.ts";
 import { checkSendApproval } from "./approval-rules.ts";
 import type { ApprovalRow } from "./approvals.ts";
 import type { Draft } from "../db.ts";
+import { canSendEmail } from "./workspaces.ts";
 
-type DraftRow = Draft & { sending_at: Date | null; delivered_at: Date | null };
+type DraftRow = Draft & { workspace_id: string; sending_at: Date | null; delivered_at: Date | null };
 
-/** `via` is recorded as the approval's `decided_via` ('api' by default, 'imessage' from the bridge). */
-export type SendDeps = { sql: Sql; env: Env; fetch?: FetchFn; actor: string; now?: Date; via?: "api" | "imessage" };
+/** `ws`: the approver's workspace (an approval of another workspace is "not found"). `via` is recorded as the
+ * approval's `decided_via` ('api' by default, 'imessage' from the bridge). */
+export type SendDeps = { sql: Sql; ws: string; env: Env; fetch?: FetchFn; actor: string; now?: Date; via?: "api" | "imessage" };
 
 export type SendResult =
   | { status: "sent"; draft_id: string; message_id: string; thread_id: string }
-  | { status: "sending"; draft_id: string; note: string };
+  | { status: "sending"; draft_id: string; note: string }
+  // A follow-up approved before it is due: the minute cron sends it at send_at (src/services/followups.ts).
+  | { status: "scheduled"; draft_id: string; send_at: string };
 
 function agentMail(env: Env, fetchFn?: FetchFn) {
   if (!env.AGENTMAIL_API_KEY) throw notConfigured("AGENTMAIL_API_KEY");
@@ -31,17 +35,25 @@ function agentMail(env: Env, fetchFn?: FetchFn) {
 }
 
 export async function approveAndSend(deps: SendDeps, code: string): Promise<SendResult> {
-  const { sql, env, actor } = deps;
+  const { sql, ws, env, actor } = deps;
   const via = deps.via ?? "api";
+  // Checked before anything is read or consumed: the approval stays pending for when sending is enabled.
+  if (!canSendEmail(env, ws)) {
+    throw new ApiError(
+      403,
+      "sending_not_enabled",
+      "This workspace can't send email yet: every workspace would send from the instance owner's inbox. Ask the owner to add it to SEND_WORKSPACE_IDS.",
+    );
+  }
   const rows = await sql`
     select a.*, to_jsonb(d) as draft, to_jsonb(l) as lead,
            (select max(version) from drafts where lead_id = a.lead_id) as latest_version,
-           exists (select 1 from suppressions s where s.email = lower(a.recipient)) as suppressed,
-           coalesce((select value = 'true'::jsonb from settings where key = 'paused'), false) as paused
+           exists (select 1 from suppressions s where s.workspace_id = a.workspace_id and s.email = lower(a.recipient)) as suppressed,
+           coalesce((select paused from workspaces w where w.id = a.workspace_id), false) as paused
     from approvals a
-    left join drafts d on d.id = a.draft_id
-    left join leads l on l.id = a.lead_id
-    where a.code = ${code.toUpperCase()}`;
+    left join drafts d on d.id = a.draft_id and d.workspace_id = a.workspace_id
+    left join leads l on l.id = a.lead_id and l.workspace_id = a.workspace_id
+    where a.workspace_id = ${ws} and a.code = ${code.toUpperCase()}`;
   const row = rows[0];
   if (!row) throw notFound("Approval");
   const approval = row as ApprovalRow;
@@ -56,9 +68,9 @@ export async function approveAndSend(deps: SendDeps, code: string): Promise<Send
   });
   if (!check.ok) {
     if (check.code === "approval_expired") {
-      await sql`update approvals set status = 'expired', decided_at = now() where code = ${approval.code} and status = 'pending'`;
+      await sql`update approvals set status = 'expired', decided_at = now() where workspace_id = ${ws} and code = ${approval.code} and status = 'pending'`;
     }
-    await sql`insert into events (lead_id, kind, data) values (${approval.lead_id}, 'send_refused', ${JSON.stringify({
+    await sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, ${approval.lead_id}, 'send_refused', ${JSON.stringify({
       code: approval.code,
       reason: check.code,
       actor,
@@ -70,25 +82,51 @@ export async function approveAndSend(deps: SendDeps, code: string): Promise<Send
   const claimed = await sql`
     with a as (
       update approvals set status = 'approved', decided_at = now(), decided_via = ${via}
-      where code = ${approval.code} and kind = 'send' and status = 'pending' and expires_at > now()
-        and not coalesce((select value = 'true'::jsonb from settings where key = 'paused'), false)
-        and not exists (select 1 from suppressions s where s.email = lower(approvals.recipient))
-        and exists (select 1 from leads l where l.id = approvals.lead_id
+      where workspace_id = ${ws} and code = ${approval.code} and kind = 'send' and status = 'pending' and expires_at > now()
+        and not coalesce((select w.paused from workspaces w where w.id = approvals.workspace_id), false)
+        and not exists (select 1 from suppressions s where s.workspace_id = approvals.workspace_id and s.email = lower(approvals.recipient))
+        and exists (select 1 from leads l where l.id = approvals.lead_id and l.workspace_id = approvals.workspace_id
                     and l.consent_at is not null and lower(l.email) = lower(approvals.recipient))
-        and exists (select 1 from drafts d where d.id = approvals.draft_id and d.status = 'pending_approval' and d.channel = 'email'
+        and exists (select 1 from drafts d where d.id = approvals.draft_id and d.workspace_id = approvals.workspace_id
+                    and d.status = 'pending_approval' and d.channel = 'email'
                     and d.version = (select max(version) from drafts where lead_id = approvals.lead_id))
-      returning code, lead_id, draft_id, recipient
+      returning code, workspace_id, lead_id, draft_id, recipient
     ), d as (
-      update drafts set status = 'sending', sending_at = now(), error = null
+      -- A follow-up that isn't due yet is only scheduled; the cron sends it when due (src/services/followups.ts).
+      update drafts set status = case when scheduled_for > now() then 'scheduled' else 'sending' end,
+                        sending_at = case when scheduled_for > now() then null else now() end, error = null
       where id = (select draft_id from a)
       returning *
     ), ev as (
-      insert into events (lead_id, kind, data)
-      select lead_id, 'approval_approved', jsonb_build_object('via', ${via}::text, 'code', code, 'draft_id', draft_id, 'actor', ${actor}::text) from a
+      insert into events (workspace_id, lead_id, kind, data)
+      select workspace_id, lead_id, 'approval_approved', jsonb_build_object('via', ${via}::text, 'code', code, 'draft_id', draft_id, 'actor', ${actor}::text) from a
     )
     select d.*, a.recipient from d, a`;
   if (!claimed[0]) throw new ApiError(409, "approval_not_pending", "Approval was consumed or invalidated concurrently");
-  const draft = claimed[0] as DraftRow & { recipient: string };
+  const draft = claimed[0] as DraftRow & { recipient: string; scheduled_for?: Date | null };
+  if (draft.status === "scheduled") {
+    const sendAt = new Date(draft.scheduled_for!).toISOString();
+    await sql`insert into events (workspace_id, lead_id, kind, data) values (${draft.workspace_id}, ${draft.lead_id}, 'followup_scheduled', ${JSON.stringify({
+      draft_id: draft.id,
+      version: draft.version,
+      send_at: sendAt,
+      actor,
+    })}::jsonb)`;
+    return { status: "scheduled", draft_id: draft.id, send_at: sendAt };
+  }
+  return deliverClaimed(sql, env, client, draft);
+}
+
+/**
+ * Sends a draft already claimed as 'sending' (its approval consumed) and records the result. Ambiguous provider
+ * failures leave it 'sending' for reconcileSending; definite ones mark it send_failed.
+ */
+export async function deliverClaimed(
+  sql: Sql,
+  env: Env,
+  client: AgentMailClient,
+  draft: DraftRow & { recipient: string },
+): Promise<Extract<SendResult, { status: "sent" | "sending" }>> {
 
   let sent: SentMessage;
   try {
@@ -105,7 +143,7 @@ export async function approveAndSend(deps: SendDeps, code: string): Promise<Send
     if (ambiguous) {
       await sql.transaction([
         sql`update drafts set error = ${message} where id = ${draft.id} and status = 'sending'`,
-        sql`insert into events (lead_id, kind, data) values (${draft.lead_id}, 'email_send_unknown', ${JSON.stringify({
+        sql`insert into events (workspace_id, lead_id, kind, data) values (${draft.workspace_id}, ${draft.lead_id}, 'email_send_unknown', ${JSON.stringify({
           draft_id: draft.id,
           error: message,
         })}::jsonb)`,
@@ -114,7 +152,7 @@ export async function approveAndSend(deps: SendDeps, code: string): Promise<Send
     }
     await sql.transaction([
       sql`update drafts set status = 'send_failed', error = ${message} where id = ${draft.id} and status = 'sending'`,
-      sql`insert into events (lead_id, kind, data) values (${draft.lead_id}, 'email_send_failed', ${JSON.stringify({
+      sql`insert into events (workspace_id, lead_id, kind, data) values (${draft.workspace_id}, ${draft.lead_id}, 'email_send_failed', ${JSON.stringify({
         draft_id: draft.id,
         error: message,
       })}::jsonb)`,
@@ -131,13 +169,13 @@ async function recordSent(sql: Sql, env: Env, draft: DraftRow & { recipient?: st
     sql`update drafts set status = 'sent', provider_message_id = ${sent.message_id}, provider_thread_id = ${sent.thread_id},
           error = null
         where id = ${draft.id} and status = 'sending'`,
-    sql`insert into messages (lead_id, direction, provider_message_id, thread_id, from_addr, to_addr, subject, body)
-        values (${draft.lead_id}, 'out', ${sent.message_id}, ${sent.thread_id}, ${env.AGENTMAIL_INBOX_ID ?? null}, ${to},
+    sql`insert into messages (workspace_id, lead_id, direction, provider_message_id, thread_id, from_addr, to_addr, subject, body)
+        values (${draft.workspace_id}, ${draft.lead_id}, 'out', ${sent.message_id}, ${sent.thread_id}, ${env.AGENTMAIL_INBOX_ID ?? null}, ${to},
                 ${draft.subject}, ${draft.body})
         on conflict (provider_message_id) do nothing`,
     sql`update leads set stage = 'sent', updated_at = now()
         where id = ${draft.lead_id} and stage not in ('replied', 'interested', 'not_interested', 'meeting_booked', 'unsubscribed')`,
-    sql`insert into events (lead_id, kind, data) values (${draft.lead_id}, 'email_sent', ${JSON.stringify({
+    sql`insert into events (workspace_id, lead_id, kind, data) values (${draft.workspace_id}, ${draft.lead_id}, 'email_sent', ${JSON.stringify({
       draft_id: draft.id,
       version: draft.version,
       message_id: sent.message_id,
@@ -170,7 +208,7 @@ export async function reconcileSending(sql: Sql, env: Env, fetchFn?: FetchFn): P
         await sql.transaction([
           sql`update drafts set status = 'send_failed', error = coalesce(error, 'Not found at AgentMail after an unconfirmed send')
               where id = ${draft.id} and status = 'sending'`,
-          sql`insert into events (lead_id, kind, data) values (${draft.lead_id}, 'email_send_failed', ${JSON.stringify({
+          sql`insert into events (workspace_id, lead_id, kind, data) values (${draft.workspace_id}, ${draft.lead_id}, 'email_send_failed', ${JSON.stringify({
             draft_id: draft.id,
             error: "not found at AgentMail after an unconfirmed send",
           })}::jsonb)`,

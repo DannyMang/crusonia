@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { isApiError } from "../../api.ts";
 import { useApi } from "../../auth.tsx";
+import { BrandTile, type BrandName } from "../../components/BrandLogo.tsx";
 import { QueryError, Skeleton } from "../../components/ui.tsx";
 import {
   emptyDraft,
@@ -328,7 +329,7 @@ function SegmentCard({
           <label htmlFor={`${id}-size`} className="text-xs/4 font-medium text-faint">
             Company size
           </label>
-          <BoxInput id={`${id}-size`} value={s.company_size} placeholder="10–50" onChange={(e) => set({ company_size: e.target.value })} className="tabular-nums" />
+          <BoxInput id={`${id}-size`} value={s.company_size} placeholder="10–50" onChange={(e) => set({ company_size: e.target.value })} />
         </div>
         <div className="flex w-full shrink-0 flex-col gap-1.25 sm:w-40">
           <label htmlFor={`${id}-industry`} className="text-xs/4 font-medium text-faint">
@@ -423,16 +424,16 @@ function Sharpen() {
         </div>
         <p className="text-[13px]/4.5 font-medium text-muted">Show us who already bought. The agent looks for more like them and skips existing customers.</p>
       </div>
-      <ConnectRow letter="H" label="Connect HubSpot" />
-      <ConnectRow letter="N" label="Connect Notion" />
+      <ConnectRow logo="hubspot" label="Connect HubSpot" />
+      <ConnectRow logo="notion" label="Connect Notion" />
     </section>
   );
 }
 
-function ConnectRow({ letter, label }: { letter: string; label: string }) {
+function ConnectRow({ logo, label }: { logo: BrandName; label: string }) {
   return (
     <div className="flex h-12 shrink-0 items-center gap-2.5 rounded-[10px] border border-[#200D0D1A] pl-2.5 pr-2">
-      <span className="flex size-6.5 shrink-0 items-center justify-center rounded-[7px] bg-pill text-xs/4 font-semibold text-ink">{letter}</span>
+      <BrandTile name={logo} size={26} mark={16} />
       <span className="grow basis-0 text-sm/4.5 font-medium text-ink">{label}</span>
       <Link to="/app/integrations" className="flex h-7.5 items-center rounded-lg border border-[#200D0D26] px-3 text-[13px]/4 font-medium text-ink hover:bg-[#200D0D08]" aria-label={label}>
         Connect
@@ -502,11 +503,11 @@ function RunCard({ draft, validate }: { draft: ProfileDraft; validate: () => boo
       <dl className="flex flex-col gap-2.5 text-[13px]/4 font-medium">
         <div className="flex justify-between">
           <dt className="text-muted">Segments</dt>
-          <dd className="tabular-nums text-ink">{segments}</dd>
+          <dd className="text-ink">{segments}</dd>
         </div>
         <div className="flex justify-between">
           <dt className="text-muted">Buying signals</dt>
-          <dd className="tabular-nums text-ink">{signals}</dd>
+          <dd className="text-ink">{signals}</dd>
         </div>
       </dl>
       {saveError ? <QueryError error={saveError} what="saving your profile" /> : null}

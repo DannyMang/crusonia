@@ -2,6 +2,7 @@
 // (opted-in contacts), patch (stage, consent, fields), delete and imports (CSV here; HubSpot records go
 // through the same applyImportCandidates from ./crm-sync.ts). Agent-side writes (add_leads,
 // evidence, scoring, drafts) live in ./leads.ts and ./drafts.ts. Every state change writes an `events` row.
+// Every function acts on one workspace (`ws`): dedupe, suppression checks and lookups never cross workspaces.
 import type { Lead, Sql } from "../db.ts";
 import { newId, variantFor } from "../ids.ts";
 import { ApiError } from "../lib/errors.ts";
@@ -50,7 +51,7 @@ function decodeCursor(cursor: string): [string, string] {
 const likePattern = (q: string) => `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
 
 /** Newest first, keyset-paginated on (created_at, id), which never change (updated_at does). */
-export async function searchLeads(sql: Sql, f: LeadFilters) {
+export async function searchLeads(sql: Sql, ws: string, f: LeadFilters) {
   const [cursorTs, cursorId] = f.cursor ? decodeCursor(f.cursor) : [null, null];
   const pattern = f.q ? likePattern(f.q) : null;
   // notes_count and rating (the latest thumbs note: "up" | "down" | null) save the list one request per row.
@@ -61,7 +62,8 @@ export async function searchLeads(sql: Sql, f: LeadFilters) {
               from lead_notes n where n.lead_id = l.id and n.kind in ('thumbs_up', 'thumbs_down')
               order by n.id desc limit 1) as rating
     from leads l
-    where (${f.stage ?? null}::text is null or stage = ${f.stage ?? null})
+    where l.workspace_id = ${ws}
+      and (${f.stage ?? null}::text is null or stage = ${f.stage ?? null})
       and (${f.min_score ?? null}::int is null or score >= ${f.min_score ?? null})
       and (${f.source ?? null}::text is null or source = ${f.source ?? null})
       and (${pattern}::text is null or email ilike ${pattern} or name ilike ${pattern}
@@ -78,17 +80,17 @@ export async function searchLeads(sql: Sql, f: LeadFilters) {
 // ---------- detail ----------
 
 /** The shared detail (lead, evidence, drafts, approvals) plus messages, Naive sessions and the timeline. */
-export async function getLeadFull(sql: Sql, id: string) {
-  const detail = await getLeadDetail(sql, id);
+export async function getLeadFull(sql: Sql, ws: string, id: string) {
+  const detail = await getLeadDetail(sql, ws, id);
   const [lookalikes, messages, sessions, timeline] = await sql.transaction(
     [
-      sql`select id, company, domain, why_fit, source_url, created_at from lookalikes where lead_id = ${id} order by id`,
+      sql`select id, company, domain, why_fit, source_url, created_at from lookalikes where workspace_id = ${ws} and lead_id = ${id} order by id`,
       // Inbound bodies are untrusted: returned as data for display, never as instructions.
       sql`select id, direction, provider_message_id, thread_id, from_addr, to_addr, subject, body, label, created_at
-          from messages where lead_id = ${id} order by id desc limit 100`,
+          from messages where workspace_id = ${ws} and lead_id = ${id} order by id desc limit 100`,
       sql`select id, purpose, status, stop_reason, created_at, updated_at from naive_sessions
-          where lead_id = ${id} order by created_at desc limit 20`,
-      sql`select id, kind, data, created_at from events where lead_id = ${id} order by id desc limit 200`,
+          where workspace_id = ${ws} and lead_id = ${id} order by created_at desc limit 20`,
+      sql`select id, kind, data, created_at from events where workspace_id = ${ws} and lead_id = ${id} order by id desc limit 200`,
     ],
     { readOnly: true },
   );
@@ -114,11 +116,11 @@ export type CreateLeadInput = {
 };
 
 /** An owner-entered contact. Leads without an email come from CSV import or the MCP add_leads tool. */
-export async function createLead(sql: Sql, input: CreateLeadInput, actor: string): Promise<Lead> {
+export async function createLead(sql: Sql, ws: string, input: CreateLeadInput, actor: string): Promise<Lead> {
   const email = normalizeEmail(input.email);
   if (!email) throw new ServiceError("invalid", `Not an email address: ${input.email}`);
   // Same rule as add_leads and CSV import: people who asked not to be contacted are not stored again.
-  if ((await sql`select 1 from suppressions where email = ${email}`)[0]) {
+  if ((await sql`select 1 from suppressions where workspace_id = ${ws} and email = ${email}`)[0]) {
     throw new ApiError(409, "suppressed", `${email} is on the suppression list (DELETE /api/suppressions/:email first if that is wrong)`);
   }
   const id = newId("lead");
@@ -126,22 +128,22 @@ export async function createLead(sql: Sql, input: CreateLeadInput, actor: string
   const domain = normalizeDomain(input.domain) ?? companyDomain({ website: input.website, email }) ?? null;
   const rows = await sql`
     with ins as (
-      insert into leads (id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
+      insert into leads (id, workspace_id, cohort, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
                          consent_text, consent_at, variant, stage)
-      values (${id}, ${email}, ${input.name ?? null}, ${input.title ?? null}, ${input.company ?? null}, ${domain},
+      values (${id}, ${ws}, 'manual', ${email}, ${input.name ?? null}, ${input.title ?? null}, ${input.company ?? null}, ${domain},
               ${input.website ?? null}, ${input.linkedin_url ?? null}, ${input.sells ?? null}, ${input.best_customers ?? null},
               ${input.source ?? "api"}, ${input.consent?.text ?? null}, ${consentAt}::timestamptz, ${await variantFor(email)},
               ${consentAt ? "new" : "no_consent"})
-      on conflict (email) do nothing
+      on conflict (workspace_id, email) do nothing
       returning *
     ), ev as (
-      insert into events (lead_id, kind, data)
-      select id, 'lead_added', jsonb_build_object('via', 'api', 'source', source, 'consent', consent_at is not null, 'actor', ${actor}::text)
+      insert into events (workspace_id, lead_id, kind, data)
+      select workspace_id, id, 'lead_added', jsonb_build_object('via', 'api', 'source', source, 'consent', consent_at is not null, 'actor', ${actor}::text)
       from ins
     )
     select *, consent_at is not null as has_consent from ins`;
   if (!rows[0]) {
-    const existing = await sql`select id from leads where email = ${email}`;
+    const existing = await sql`select id from leads where workspace_id = ${ws} and email = ${email}`;
     throw new ApiError(409, "lead_exists", `A lead with email ${email} already exists`, { lead_id: existing[0]?.id });
   }
   return rows[0] as Lead;
@@ -163,8 +165,8 @@ export type PatchLeadInput = {
 
 const PATCHABLE = ["name", "title", "company", "website", "linkedin_url", "sells", "best_customers"] as const;
 
-export async function patchLead(sql: Sql, id: string, patch: PatchLeadInput, actor: string): Promise<Lead> {
-  const lead = (await sql`select * from leads where id = ${id}`)[0] as Lead | undefined;
+export async function patchLead(sql: Sql, ws: string, id: string, patch: PatchLeadInput, actor: string): Promise<Lead> {
+  const lead = (await sql`select * from leads where workspace_id = ${ws} and id = ${id}`)[0] as Lead | undefined;
   if (!lead) throw notFound(id);
 
   const next = { ...lead };
@@ -205,18 +207,18 @@ export async function patchLead(sql: Sql, id: string, patch: PatchLeadInput, act
           domain = ${next.domain}, linkedin_url = ${next.linkedin_url}, sells = ${next.sells},
           best_customers = ${next.best_customers}, consent_text = ${next.consent_text},
           consent_at = ${next.consent_at}::timestamptz, stage = ${next.stage}, updated_at = now()
-        where id = ${id} returning *, consent_at is not null as has_consent`,
-    sql`insert into events (lead_id, kind, data)
-        select ${id}, e->>'kind', e->'data' from jsonb_array_elements(${JSON.stringify(events)}::jsonb) e`,
+        where workspace_id = ${ws} and id = ${id} returning *, consent_at is not null as has_consent`,
+    sql`insert into events (workspace_id, lead_id, kind, data)
+        select ${ws}, ${id}, e->>'kind', e->'data' from jsonb_array_elements(${JSON.stringify(events)}::jsonb) e`,
   ];
   if (consentChange === "revoked") {
     // No consent, no email: pending send approvals close now (the send path re-checks consent anyway).
     queries.push(
-      sql`update drafts set status = 'draft' where lead_id = ${id} and status = 'pending_approval'`,
+      sql`update drafts set status = 'draft' where workspace_id = ${ws} and lead_id = ${id} and status = 'pending_approval'`,
       sql`with v as (update approvals set status = 'expired', decided_at = now(), decided_via = 'consent_revoked'
-                     where lead_id = ${id} and kind = 'send' and status = 'pending' returning code)
-          insert into events (lead_id, kind, data)
-          select ${id}, 'approval_closed', jsonb_build_object('code', code, 'reason', 'consent_revoked') from v`,
+                     where workspace_id = ${ws} and lead_id = ${id} and kind = 'send' and status = 'pending' returning code)
+          insert into events (workspace_id, lead_id, kind, data)
+          select ${ws}, ${id}, 'approval_closed', jsonb_build_object('code', code, 'reason', 'consent_revoked') from v`,
     );
   }
   const [updated] = await sql.transaction(queries);
@@ -225,12 +227,12 @@ export async function patchLead(sql: Sql, id: string, patch: PatchLeadInput, act
 
 // ---------- delete ----------
 
-export async function deleteLead(sql: Sql, id: string, actor: string): Promise<void> {
+export async function deleteLead(sql: Sql, ws: string, id: string, actor: string): Promise<void> {
   // Cascades to evidence, drafts, approvals, messages and sessions; the events (audit trail) stay.
   const rows = await sql`
-    with del as (delete from leads where id = ${id} returning id)
-    insert into events (lead_id, kind, data)
-    select id, 'lead_deleted', jsonb_build_object('via', 'api', 'actor', ${actor}::text) from del
+    with del as (delete from leads where workspace_id = ${ws} and id = ${id} returning id, workspace_id)
+    insert into events (workspace_id, lead_id, kind, data)
+    select workspace_id, id, 'lead_deleted', jsonb_build_object('via', 'api', 'actor', ${actor}::text) from del
     returning lead_id`;
   if (!rows[0]) throw notFound(id);
 }
@@ -248,7 +250,8 @@ export type ImportInput = {
   dry_run?: boolean;
 };
 
-export async function importLeads(sql: Sql, input: ImportInput, actor: string) {
+/** `allowConsent: false` (an API key): consent columns, mapped or guessed, are never read (src/api/guards.ts). */
+export async function importLeads(sql: Sql, ws: string, input: ImportInput, actor: string, opts: { allowConsent?: boolean } = {}) {
   let rows: string[][];
   let map;
   try {
@@ -260,6 +263,11 @@ export async function importLeads(sql: Sql, input: ImportInput, actor: string) {
     if (err instanceof CsvError) throw new ApiError(400, "invalid_csv", err.message);
     throw err;
   }
+  if (opts.allowConsent === false) {
+    delete map.consent;
+    delete map.consent_at;
+    delete map.consent_text;
+  }
   if (map.email === undefined && map.website === undefined && map.domain === undefined) {
     throw new ApiError(400, "invalid_csv", 'No email, domain or website column found; pass `mapping`, e.g. {"email": "Work Email"}', {
       headers: rows[0],
@@ -267,19 +275,23 @@ export async function importLeads(sql: Sql, input: ImportInput, actor: string) {
   }
 
   const source = input.source ?? "csv_import";
-  const results = await applyImportCandidates(sql, toCandidates(rows, map, new Date().toISOString()), {
+  const cohort = `import:${newId("imp")}`;
+  const results = await applyImportCandidates(sql, ws, toCandidates(rows, map, new Date().toISOString()), {
     source,
     actor,
     via: "csv_import",
     dryRun: input.dry_run,
+    cohort,
   });
   const { skip_reasons, ...summary } = summarizeImport(results);
   if (!input.dry_run) {
-    await sql`insert into events (lead_id, kind, data)
-              values (null, 'leads_imported', ${JSON.stringify({ via: "csv_import", ...summary, source, actor })}::jsonb)`;
+    await sql`insert into events (workspace_id, lead_id, kind, data)
+              values (${ws}, null, 'leads_imported', ${JSON.stringify({ via: "csv_import", ...summary, source, cohort, actor })}::jsonb)`;
   }
   return {
     dry_run: Boolean(input.dry_run),
+    // The batch the created leads are recorded under (leads.cohort).
+    ...(input.dry_run ? {} : { cohort }),
     ...summary,
     skip_reasons,
     columns: Object.fromEntries(Object.entries(map).map(([field, idx]) => [field, rows[0]![idx!]])),
@@ -295,6 +307,8 @@ export type ApplyImportOptions = {
   /** events.data.via: 'csv_import', 'hubspot_import'. The CRM sync trigger ignores 'hubspot_import'. */
   via: string;
   dryRun?: boolean;
+  /** leads.cohort for created leads: the import batch ('import:<id>', 'hubspot_import:<time>'). */
+  cohort?: string;
 };
 
 /**
@@ -302,15 +316,16 @@ export type ApplyImportOptions = {
  * (no consent unless the candidate carries it), fills blank fields on existing ones and grants consent, never
  * overwrites. Suppressed addresses are skipped. Shared by the CSV import and the HubSpot import.
  */
-export async function applyImportCandidates(sql: Sql, candidates: ImportCandidate[], opts: ApplyImportOptions): Promise<RowResult[]> {
+export async function applyImportCandidates(sql: Sql, ws: string, candidates: ImportCandidate[], opts: ApplyImportOptions): Promise<RowResult[]> {
   const { source, actor, via } = opts;
+  const cohort = opts.cohort ?? `import:${newId("imp")}`;
   const emails = [...new Set(candidates.flatMap((c) => (c.email ? [c.email] : [])))];
   const domains = [...new Set(candidates.flatMap((c) => (c.domain ? [c.domain] : [])))];
   const [existing, suppressedRows] = await sql.transaction(
     [
       sql`select id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, consent_at from leads
-          where lower(email) = any(${emails}::text[]) or (email is null and domain = any(${domains}::text[]))`,
-      sql`select email from suppressions where email = any(${emails}::text[])`,
+          where workspace_id = ${ws} and (lower(email) = any(${emails}::text[]) or (email is null and domain = any(${domains}::text[])))`,
+      sql`select email from suppressions where workspace_id = ${ws} and email = any(${emails}::text[])`,
     ],
     { readOnly: true },
   );
@@ -346,15 +361,15 @@ export async function applyImportCandidates(sql: Sql, candidates: ImportCandidat
     const done = await sql`
       with r as (${createRecordset(sql, withEmail.slice(i, i + CHUNK))}),
       ins as (
-        insert into leads (id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
+        insert into leads (id, workspace_id, cohort, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
                            consent_text, consent_at, variant, stage)
-        select id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
+        select id, ${ws}, ${cohort}, email, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
                consent_text, consent_at, variant, stage from r
-        on conflict (email) do nothing
+        on conflict (workspace_id, email) do nothing
         returning id, email, consent_at
       ), ev as (
-        insert into events (lead_id, kind, data)
-        select id, 'lead_added', jsonb_build_object('via', ${via}::text, 'source', ${source}::text,
+        insert into events (workspace_id, lead_id, kind, data)
+        select ${ws}, id, 'lead_added', jsonb_build_object('via', ${via}::text, 'source', ${source}::text,
                                                     'consent', consent_at is not null, 'actor', ${actor}::text)
         from ins
       )
@@ -365,15 +380,15 @@ export async function applyImportCandidates(sql: Sql, candidates: ImportCandidat
     const done = await sql`
       with r as (${createRecordset(sql, withoutEmail.slice(i, i + CHUNK))}),
       ins as (
-        insert into leads (id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
+        insert into leads (id, workspace_id, cohort, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
                            variant, stage)
-        select id, null, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
+        select id, ${ws}, ${cohort}, null, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
                variant, 'no_consent' from r
-        on conflict (domain, (coalesce(lower(name), ''))) where email is null do nothing
+        on conflict (workspace_id, domain) where email is null do nothing
         returning id, domain, name
       ), ev as (
-        insert into events (lead_id, kind, data)
-        select id, 'lead_added', jsonb_build_object('via', ${via}::text, 'source', ${source}::text, 'consent', false, 'actor', ${actor}::text)
+        insert into events (workspace_id, lead_id, kind, data)
+        select ${ws}, id, 'lead_added', jsonb_build_object('via', ${via}::text, 'source', ${source}::text, 'consent', false, 'actor', ${actor}::text)
         from ins
       )
       select 'd:' || domain || '|' || coalesce(lower(name), '') as key from ins`;
@@ -395,7 +410,7 @@ export async function applyImportCandidates(sql: Sql, candidates: ImportCandidat
       ), upd as (
         update leads l set
           email = case when l.email is null and u.email is not null
-                        and not exists (select 1 from leads e where e.email = u.email) then u.email else l.email end,
+                        and not exists (select 1 from leads e where e.workspace_id = ${ws} and e.email = u.email) then u.email else l.email end,
           name = coalesce(l.name, u.name),
           title = coalesce(l.title, u.title),
           company = coalesce(l.company, u.company),
@@ -408,11 +423,11 @@ export async function applyImportCandidates(sql: Sql, candidates: ImportCandidat
           consent_at = coalesce(l.consent_at, u.consent_at),
           stage = case when l.stage = 'no_consent' and l.consent_at is null and u.consent_at is not null then 'new' else l.stage end,
           updated_at = now()
-        from u where l.id = u.id
+        from u where l.workspace_id = ${ws} and l.id = u.id
         returning l.id
       )
-      insert into events (lead_id, kind, data)
-      select u.id, 'lead_updated', jsonb_build_object('via', ${via}::text, 'fields', u.fields, 'actor', ${actor}::text)
+      insert into events (workspace_id, lead_id, kind, data)
+      select ${ws}, u.id, 'lead_updated', jsonb_build_object('via', ${via}::text, 'fields', u.fields, 'actor', ${actor}::text)
       from u join upd on upd.id = u.id`;
   }
   return results;

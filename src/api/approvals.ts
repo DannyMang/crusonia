@@ -1,7 +1,7 @@
 // /api/approvals: list, inspect, approve (send / allow), reject (deny), edit (new draft version), answer.
 import { Hono } from "hono";
 import { z } from "zod";
-import { actorOf, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
+import { actorOf, parseJson, parseQuery, sqlFor, wsOf, type AppEnv } from "../lib/context.ts";
 import { ApiError } from "../lib/errors.ts";
 import {
   answerQuestion,
@@ -18,10 +18,11 @@ import { approveAndSend } from "../services/send.ts";
 
 export const approvals = new Hono<AppEnv>();
 
-const deps = (c: { env: AppEnv["Bindings"]; get: (k: "principal") => AppEnv["Variables"]["principal"] }): Deps => ({
+const deps = (c: { env: AppEnv["Bindings"]; var: AppEnv["Variables"] }): Deps => ({
   sql: sqlFor(c.env),
+  ws: c.var.workspace.id,
   env: c.env,
-  actor: actorOf(c.get("principal")),
+  actor: actorOf(c.var.principal),
   sendTtlMinutes: sendApprovalTtlMinutes(c.env),
 });
 
@@ -34,10 +35,10 @@ const ListQuery = z.object({
 
 approvals.get("/", async (c) => {
   const query = parseQuery(c, ListQuery);
-  return c.json({ data: await listApprovals(sqlFor(c.env), query) });
+  return c.json({ data: await listApprovals(sqlFor(c.env), wsOf(c), query) });
 });
 
-approvals.get("/:code", async (c) => c.json({ approval: await getApproval(sqlFor(c.env), c.req.param("code")) }));
+approvals.get("/:code", async (c) => c.json({ approval: await getApproval(sqlFor(c.env), wsOf(c), c.req.param("code")) }));
 
 const ApproveBody = z.object({ scope: z.enum(["call", "session"]).optional() });
 
@@ -45,9 +46,9 @@ const ApproveBody = z.object({ scope: z.enum(["call", "session"]).optional() });
 // the tool for the rest of that Naive session). question: use /answer.
 approvals.post("/:code/approve", async (c) => {
   const d = deps(c);
-  const approval = await getApproval(d.sql, c.req.param("code"));
+  const approval = await getApproval(d.sql, d.ws, c.req.param("code"));
   if (approval.kind === "send") {
-    const result = await approveAndSend({ sql: d.sql, env: c.env, actor: d.actor }, approval.code);
+    const result = await approveAndSend({ sql: d.sql, ws: d.ws, env: c.env, actor: d.actor }, approval.code);
     return c.json(result, result.status === "sent" ? 200 : 202);
   }
   if (approval.kind === "tool") {
@@ -86,7 +87,7 @@ const QuestionAnswer = z.object({
 // tool: {decision: "allow"|"deny", reason?, scope?}. question: {answers: {<field key>: "text"}}.
 approvals.post("/:code/answer", async (c) => {
   const d = deps(c);
-  const approval = await getApproval(d.sql, c.req.param("code"));
+  const approval = await getApproval(d.sql, d.ws, c.req.param("code"));
   if (approval.kind === "tool") return c.json(await resolveTool(d, approval, await parseJson(c, ToolAnswer)));
   if (approval.kind === "question") return c.json(await answerQuestion(d, approval, (await parseJson(c, QuestionAnswer)).answers));
   throw new ApiError(409, "wrong_kind", "Send approvals are approved, rejected or edited, not answered");

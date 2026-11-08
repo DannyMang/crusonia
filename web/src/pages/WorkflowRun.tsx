@@ -236,7 +236,7 @@ function Breadcrumb({ name, id }: { name?: string; id?: string }) {
 }
 
 function RunChip({ run, waiting }: { run: Run; waiting: boolean }) {
-  const base = "flex h-5.75 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs/4 font-medium tracking-[0.02em]";
+  const base = "flex h-5.75 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs/4 font-medium";
   const soft = "bg-[#BDE68933] text-green-dark";
   if (run.status === "running") {
     return (
@@ -352,7 +352,7 @@ function ApprovalSection({ approvals, lead, now }: { approvals: RunApproval[]; l
         return (
           <div key={a.code} className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
-              <Link to={`/app/approvals/${encodeURIComponent(a.code)}`} className="text-base/5 font-semibold tracking-[0.04em] text-ink hover:underline">
+              <Link to={`/app/approvals/${encodeURIComponent(a.code)}`} className="text-base/5 font-semibold text-ink hover:underline">
                 {a.code}
               </Link>
               <span className="text-xs/4 font-medium text-ink">

@@ -1,7 +1,8 @@
 // Billing against a real Postgres (a Neon dev branch, never production), with Stripe and Naive faked at fetch.
 // Skipped unless TEST_DATABASE_URL is set:
 //   TEST_DATABASE_URL=<dev branch url> bun test test/billing.integration.test.ts
-// Every owner, event and session id carries this run's id; the rows are deleted afterwards.
+// Every billing owner is a throwaway workspace of this run (ws_it_bill<run>_<name>); event and session ids carry
+// the run id. Everything is deleted afterwards.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,15 +19,18 @@ import worker from "../src/index.ts";
 import { ApiError } from "../src/lib/errors.ts";
 import { signStripe } from "../src/lib/signatures.ts";
 import type { FetchFn } from "../src/providers/http.ts";
-import { setPaused } from "../src/services/settings.ts";
 import { handleSessionIdle } from "../src/services/workflows.ts";
+import { resetWorkspaceCache } from "../src/services/workspaces.ts";
 import { fakeStripe, type FakeStripe } from "./fake-stripe.ts";
+import { deleteTestWorkspaces } from "./helpers/workspace.ts";
 
 const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
 
 const run = crypto.randomUUID().slice(0, 8);
-const owner = (name: string) => `user_it_${run}_${name}`;
+/** The workspace that pays in a test (created in beforeAll). */
+const owner = (name: string) => `ws_it_bill${run}_${name}`;
+const OWNERS = ["ledger", "sample", "nosample", "pack", "async", "filter", "intruder", "invoice", "rollover", "sub", "refund", "subrefund", "checkout", "nocustomer", "usage", "idle", "cron", "gate", "legacy"];
 const cus = (name: string) => `cus_it_${run}_${name}`;
 const sid = (name: string) => `ses_bill_${run}_${name}`;
 let n = 0;
@@ -34,7 +38,6 @@ const evtId = () => `evt_it_${run}_${++n}`;
 const secret = "whsec_integration_test_secret";
 const ctx = {} as ExecutionContext;
 let sql: Sql;
-let originalPaused: unknown;
 
 const baseEnv = (): Env => ({ PUBLIC_URL: "https://example.test", DATABASE_URL: url, MCP_TOKEN: "owner-token-it", STRIPE_WEBHOOK_SECRET: secret, STRIPE_SECRET_KEY: "sk_test_fake123", BILLING_FREE_CREDITS: "0" });
 
@@ -49,7 +52,7 @@ async function deliver(evt: StripeEvent, env = baseEnv()) {
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
 
-const meta = (o: string, extra: Record<string, string> = {}) => ({ app: "crusonia", crusonia_user_id: o, ...extra });
+const meta = (o: string, extra: Record<string, string> = {}) => ({ app: "crusonia", crusonia_workspace_id: o, ...extra });
 const packSession = (o: string, name: string, over: Record<string, unknown> = {}) => ({
   id: `cs_it_${run}_${name}`,
   object: "checkout.session",
@@ -83,7 +86,7 @@ const invoice = (o: string, name: string, id: string, priceId: string, billing_r
 });
 
 async function ledger(o: string) {
-  return (await sql`select amount::int, reason, source, stripe_payment_intent, purchase_source from credit_ledger where owner_id = ${o} order by id`) as {
+  return (await sql`select amount::int, reason, source, stripe_payment_intent, purchase_source from credit_ledger where workspace_id = ${o} order by id`) as {
     amount: number;
     reason: string;
     source: string;
@@ -93,7 +96,8 @@ async function ledger(o: string) {
 }
 
 const link = (o: string, name: string) =>
-  sql`insert into billing_accounts (owner_id, stripe_customer_id) values (${o}, ${cus(name)}) on conflict (owner_id) do update set stripe_customer_id = excluded.stripe_customer_id`;
+  sql`insert into billing_accounts (owner_id, workspace_id, stripe_customer_id) values (${o}, ${o}, ${cus(name)})
+      on conflict (workspace_id) do update set stripe_customer_id = excluded.stripe_customer_id`;
 
 /** A fake Stripe with the Pro price registered (metadata as setup writes it). */
 function stripeWithPro(opts: { invoicePayments?: Record<string, string> } = {}): FakeStripe {
@@ -128,8 +132,9 @@ async function clerkToken(sub: string) {
 suite("billing (database, faked Stripe and Naive)", () => {
   beforeAll(async () => {
     sql = getSql(url);
-    originalPaused = (await sql`select value from settings where key = 'paused'`)[0]?.value ?? false;
-    await setPaused(sql, false, "test");
+    const ids = OWNERS.map(owner);
+    await sql`insert into workspaces (id, name) select x, 'billing test' from unnest(${ids}::text[]) x`;
+    await sql`insert into workspace_members (workspace_id, clerk_user_id) values (${owner("gate")}, ${`user_it_${run}_gate`})`;
     const params = { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" };
     keys = (await crypto.subtle.generateKey(params, true, ["sign", "verify"])) as CryptoKeyPair;
     const spki = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64");
@@ -138,29 +143,25 @@ suite("billing (database, faked Stripe and Naive)", () => {
 
   afterAll(async () => {
     if (!sql) return;
-    const pattern = `%_it_${run}_%`;
+    await deleteTestWorkspaces(sql, OWNERS.map(owner));
+    // Events that mapped to no workspace are audited in the owner workspace.
     await sql.transaction([
-      sql`set local crusonia.allow_ledger_delete = 'on'`,
-      sql`delete from credit_ledger where owner_id like ${pattern}`,
-      sql`delete from billing_accounts where owner_id like ${pattern}`,
-      sql`delete from events where data->>'owner_id' like ${pattern} or data->>'event_id' like ${`evt_it_${run}_%`}
-            or data->>'session_id' like ${`ses_bill_${run}_%`} or (kind in ('settings_paused', 'settings_resumed') and data->>'actor' = 'test')`,
+      sql`delete from events where workspace_id = 'ws_owner' and data->>'event_id' like ${`evt_it_${run}_%`}`,
       sql`delete from webhook_events where event_id like ${`evt_it_${run}_%`}`,
-      sql`delete from naive_sessions where id like ${`ses_bill_${run}_%`}`,
-      sql`update settings set value = ${JSON.stringify(originalPaused)}::jsonb where key = 'paused'`,
     ]);
   });
 
   test("the ledger is append-only", async () => {
     const o = owner("ledger");
-    await addLedgerRow(sql, { ownerId: o, amount: 5, reason: "adjustment", source: `adjustment:${o}` });
+    await addLedgerRow(sql, { workspaceId: o, amount: 5, reason: "adjustment", source: `adjustment:${o}` });
     // Neon queries are thenables; wrap them so `rejects` sees a real Promise.
-    await expect(Promise.resolve(sql`update credit_ledger set amount = 500 where owner_id = ${o}`)).rejects.toThrow(/append-only/);
-    await expect(Promise.resolve(sql`delete from credit_ledger where owner_id = ${o}`)).rejects.toThrow(/append-only/);
+    await expect(Promise.resolve(sql`update credit_ledger set amount = 500 where workspace_id = ${o}`)).rejects.toThrow(/append-only/);
+    await expect(Promise.resolve(sql`update credit_ledger set workspace_id = ${owner("pack")} where workspace_id = ${o}`)).rejects.toThrow(/append-only/);
+    await expect(Promise.resolve(sql`delete from credit_ledger where workspace_id = ${o}`)).rejects.toThrow(/append-only/);
     expect(await getBalance(sql, o)).toBe(5);
   });
 
-  test("free sample: granted once per owner on first sight, and BILLING_FREE_CREDITS=0 turns it off", async () => {
+  test("free sample: granted once per workspace on first sight, and BILLING_FREE_CREDITS=0 turns it off", async () => {
     const o = owner("sample");
     const env: Env = { ...baseEnv(), BILLING_FREE_CREDITS: undefined };
     await ensureAccount(sql, env, o);
@@ -169,7 +170,11 @@ suite("billing (database, faked Stripe and Naive)", () => {
     const off = owner("nosample");
     await ensureAccount(sql, baseEnv(), off);
     expect(await ledger(off)).toEqual([]);
-    expect(await getAccount(sql, off)).toMatchObject({ owner_id: off, stripe_customer_id: null, plan: null });
+    expect(await getAccount(sql, off)).toMatchObject({ workspace_id: off, owner_id: off, stripe_customer_id: null, plan: null });
+    // A workspace that already has a signup grant under an older source (the owner's legacy `signup:owner`) gets none.
+    await addLedgerRow(sql, { workspaceId: off, amount: 300, reason: "grant", source: `signup:legacy_${run}` });
+    await ensureAccount(sql, env, off);
+    expect((await ledger(off)).map((r) => r.source)).toEqual([`signup:legacy_${run}`]);
   });
 
   test("webhook: deduped by event id; a pack is credited once per session, with credits from plans.ts", async () => {
@@ -203,15 +208,31 @@ suite("billing (database, faked Stripe and Naive)", () => {
   test("metadata filter: events without app=crusonia change nothing and are audited as ignored", async () => {
     const o = owner("filter");
     await link(o, "filter");
-    const evt = stripeEvent("checkout.session.completed", packSession(o, "filter", { metadata: { crusonia_user_id: o, crusonia_kind: "pack", crusonia_key: "large" } }));
+    const evt = stripeEvent("checkout.session.completed", packSession(o, "filter", { metadata: { crusonia_workspace_id: o, crusonia_kind: "pack", crusonia_key: "large" } }));
     expect((await deliver(evt)).body).toMatchObject({ action: "ignore", reason: "metadata.app is not crusonia" });
     expect(await ledger(o)).toEqual([]);
     const [audit] = await sql`select kind, data->>'reason' as reason from events where data->>'event_id' = ${evt.id}`;
     expect(audit).toEqual({ kind: "billing_event_ignored", reason: "metadata.app is not crusonia" });
-    // A customer that belongs to another owner is refused, not guessed.
+    // A customer that belongs to another workspace is refused, not guessed.
     const other = await deliver(stripeEvent("checkout.session.completed", packSession(owner("intruder"), "filter")));
-    expect(other.body).toMatchObject({ action: "ignore", reason: "customer belongs to another owner" });
+    expect(other.body).toMatchObject({ action: "ignore", reason: "customer belongs to another workspace" });
     expect(await ledger(owner("intruder"))).toEqual([]);
+    // Metadata naming no workspace at all is refused too.
+    const ghost = await deliver(stripeEvent("checkout.session.completed", packSession(`ws_it_ghost_${run}`, "ghost")));
+    expect(ghost.body).toMatchObject({ action: "ignore", reason: "metadata names no known workspace" });
+  });
+
+  test("objects from before workspaces: a legacy crusonia_user_id maps to the workspace its billing account moved to", async () => {
+    const o = owner("legacy");
+    const legacyOwner = `user_it_${run}_legacy`;
+    await sql`insert into billing_accounts (owner_id, workspace_id) values (${legacyOwner}, ${o})`;
+    const evt = stripeEvent("checkout.session.completed", packSession(o, "legacy", { metadata: { app: "crusonia", crusonia_user_id: legacyOwner, crusonia_kind: "pack", crusonia_key: "small" } }));
+    expect((await deliver(evt)).body).toMatchObject({ action: "credit_pack", credits: 1_000 });
+    expect(await ledger(o)).toEqual([
+      { amount: 1_000, reason: "pack", source: `checkout:cs_it_${run}_legacy`, stripe_payment_intent: `pi_it_${run}_legacy`, purchase_source: null },
+    ]);
+    // ...and the customer is now linked to that workspace's account.
+    expect((await getAccount(sql, o))!.stripe_customer_id).toBe(cus("legacy"));
   });
 
   test("invoice.paid grants the plan's monthly credits once per invoice; other billing reasons and prices grant nothing", async () => {
@@ -247,8 +268,8 @@ suite("billing (database, faked Stripe and Naive)", () => {
     await handleStripeEvent(sql, env, stripeEvent("invoice.paid", invoice(o, "rollover", inv, "price_pro_it", "subscription_create", periodEnd)), { fetchFn: stripe.fetch });
     const [grant] = await sql`select expires_at, expires_at = to_timestamp(${periodEnd}) + interval '1 month' as one_month_after from credit_ledger where source = ${`invoice:${inv}`}`;
     expect(grant!.one_month_after).toBe(true);
-    await addLedgerRow(sql, { ownerId: o, amount: 1_000, reason: "pack", source: `checkout:cs_it_${run}_rollover` });
-    await addLedgerRow(sql, { ownerId: o, amount: -500, reason: "usage", source: `usage:ses_it_${run}_rollover` });
+    await addLedgerRow(sql, { workspaceId: o, amount: 1_000, reason: "pack", source: `checkout:cs_it_${run}_rollover` });
+    await addLedgerRow(sql, { workspaceId: o, amount: -500, reason: "usage", source: `usage:ses_it_${run}_rollover` });
 
     // Before the expiry nothing happens; after it the unused 1,500 included credits go, the pack stays.
     expect(await expireCredits(sql, new Date())).toBe(0);
@@ -288,7 +309,7 @@ suite("billing (database, faked Stripe and Naive)", () => {
     expect(new Date((await getAccount(sql, o))!.current_period_end!).getTime()).toBe((t + 30 * 86_400) * 1000);
 
     // A plan checkout while subscribed is refused (change plans in the portal instead).
-    const e = await createCheckout(sql, baseEnv(), { kind: "clerk", userId: o, sessionId: null }, { plan: "pro" }, fakeStripe().fetch).catch((err) => err);
+    const e = await createCheckout(sql, baseEnv(), { kind: "clerk", userId: "user_x", sessionId: null }, o, { plan: "pro" }, fakeStripe().fetch).catch((err) => err);
     expect(e).toBeInstanceOf(ApiError);
     expect((e as ApiError).code).toBe("already_subscribed");
 
@@ -348,7 +369,7 @@ suite("billing (database, faked Stripe and Naive)", () => {
     expect(await getBalance(sql, o)).toBe(0);
   });
 
-  test("checkout and portal: customer found or created by owner id only, our metadata everywhere, never a Clerk user id key", async () => {
+  test("checkout and portal: customer found or created by workspace only, our metadata everywhere, never a Clerk user id key", async () => {
     resetBillingCaches();
     const stripe = fakeStripe();
     const dir = mkdtempSync(join(tmpdir(), "crusonia-billing-it-"));
@@ -358,54 +379,54 @@ suite("billing (database, faked Stripe and Naive)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
     const o = owner("checkout");
-    const principal = { kind: "clerk" as const, userId: o, sessionId: null, email: "billing-it@example.com" };
+    const principal = { kind: "clerk" as const, userId: `user_it_${run}_checkout`, sessionId: null, email: "billing-it@example.com" };
     const env = baseEnv();
     const before = stripe.requests.length;
 
-    const pack = await createCheckout(sql, env, principal, { pack: "small" }, stripe.fetch);
+    const pack = await createCheckout(sql, env, principal, o, { pack: "small" }, stripe.fetch);
     expect(pack.url).toStartWith("https://checkout.stripe.com/");
-    const plan = await createCheckout(sql, env, principal, { plan: "pro" }, stripe.fetch);
+    const plan = await createCheckout(sql, env, principal, o, { plan: "pro" }, stripe.fetch);
     expect(plan.url).toStartWith("https://checkout.stripe.com/");
 
     const mine = stripe.requests.slice(before);
     const customers = mine.filter((r) => r.method === "POST" && r.path === "/v1/customers");
     expect(customers).toHaveLength(1);
-    expect(customers[0]!.params).toMatchObject({ email: "billing-it@example.com", metadata: { app: "crusonia", crusonia_user_id: o } });
+    expect(customers[0]!.params).toMatchObject({ email: "billing-it@example.com", metadata: { app: "crusonia", crusonia_workspace_id: o } });
     const sessions = mine.filter((r) => r.method === "POST" && r.path === "/v1/checkout/sessions");
     expect(sessions.map((s) => s.params.mode)).toEqual(["payment", "subscription"]);
     const customerId = (await getAccount(sql, o))!.stripe_customer_id;
     expect(customerId).toBeTruthy();
     for (const s of sessions) {
       expect(s.params.customer).toBe(customerId);
-      expect(s.params.metadata).toMatchObject({ app: "crusonia", crusonia_user_id: o });
+      expect(s.params.metadata).toMatchObject({ app: "crusonia", crusonia_workspace_id: o });
       expect(s.params.success_url).toBe("https://example.test/app/settings/billing?checkout=success");
       expect(s.params.cancel_url).toBe("https://example.test/app/settings/billing?checkout=cancelled");
     }
-    expect(sessions[0]!.params.payment_intent_data.metadata).toEqual({ app: "crusonia", crusonia_user_id: o, crusonia_kind: "pack", crusonia_key: "small" });
-    expect(sessions[1]!.params.subscription_data.metadata).toEqual({ app: "crusonia", crusonia_user_id: o, crusonia_kind: "subscription", crusonia_key: "pro" });
+    expect(sessions[0]!.params.payment_intent_data.metadata).toEqual({ app: "crusonia", crusonia_workspace_id: o, crusonia_kind: "pack", crusonia_key: "small" });
+    expect(sessions[1]!.params.subscription_data.metadata).toEqual({ app: "crusonia", crusonia_workspace_id: o, crusonia_kind: "subscription", crusonia_key: "pro" });
     for (const r of mine) expect(r.raw).not.toContain("clerk_" + "user_id");
     // Never matched by email: no customer search or list happened.
     expect(mine.some((r) => r.path.startsWith("/v1/customers") && r.method === "GET")).toBe(false);
 
-    const portal = await createPortal(sql, env, principal, stripe.fetch);
+    const portal = await createPortal(sql, env, o, stripe.fetch);
     expect(portal.url).toStartWith("https://billing.stripe.com/");
     const portalReq = stripe.requests.find((r) => r.path === "/v1/billing_portal/sessions")!;
     expect(portalReq.params).toMatchObject({ customer: customerId, return_url: "https://example.test/app/settings/billing", configuration: [...stripe.portals.keys()][0] });
 
-    const nobody = await createPortal(sql, env, { kind: "clerk", userId: owner("nocustomer"), sessionId: null }, stripe.fetch).catch((err) => err);
+    const nobody = await createPortal(sql, env, owner("nocustomer"), stripe.fetch).catch((err) => err);
     expect((nobody as ApiError).code).toBe("no_billing_account");
 
     // A Stripe price that drifted from plans.ts is refused instead of charged.
     resetBillingCaches();
     [...stripe.prices.values()].find((p) => p.lookup_key === "crusonia_credits_small")!.unit_amount = 999;
-    const drift = await createCheckout(sql, env, principal, { pack: "small" }, stripe.fetch).catch((err) => err);
+    const drift = await createCheckout(sql, env, principal, o, { pack: "small" }, stripe.fetch).catch((err) => err);
     expect((drift as ApiError).code).toBe("prices_out_of_date");
   });
 
   test("usage: a finished session is debited once at 2x its spend, topped up if it spends more, safe under concurrency", async () => {
     const o = owner("usage");
     const s = sid("usage");
-    await sql`insert into naive_sessions (id, purpose, status, consumed_micro_usd, billing_owner_id) values (${s}, 'research', 'done', 300000, ${o})`;
+    await sql`insert into naive_sessions (id, workspace_id, purpose, status, consumed_micro_usd, billing_owner_id) values (${s}, ${o}, 'research', 'done', 300000, ${o})`;
     expect(await settleSessionUsage(sql, s)).toBe(60);
     expect(await settleSessionUsage(sql, s)).toBe(0);
     expect((await Promise.all(Array.from({ length: 5 }, () => settleSessionUsage(sql, s)))).reduce((a, b) => a + b, 0)).toBe(0);
@@ -417,17 +438,17 @@ suite("billing (database, faked Stripe and Naive)", () => {
     ]);
 
     // Not billed: no billing owner (started before billing), still running, or no spend.
-    await sql`insert into naive_sessions (id, purpose, status, consumed_micro_usd, billing_owner_id) values
-      (${sid("legacy")}, 'research', 'done', 300000, null),
-      (${sid("running")}, 'research', 'running', 300000, ${o}),
-      (${sid("free")}, 'research', 'done', 0, ${o})`;
+    await sql`insert into naive_sessions (id, workspace_id, purpose, status, consumed_micro_usd, billing_owner_id) values
+      (${sid("legacy")}, ${o}, 'research', 'done', 300000, null),
+      (${sid("running")}, ${o}, 'research', 'running', 300000, ${o}),
+      (${sid("free")}, ${o}, 'research', 'done', 0, ${o})`;
     for (const name of ["legacy", "running", "free"]) expect(await settleSessionUsage(sql, sid(name))).toBe(0);
   });
 
   test("a session that finishes through handleSessionIdle is debited from its reported spend", async () => {
     const o = owner("idle");
     const s = sid("idle");
-    await sql`insert into naive_sessions (id, purpose, status, billing_owner_id) values (${s}, 'onboarding', 'running', ${o})`;
+    await sql`insert into naive_sessions (id, workspace_id, purpose, status, billing_owner_id) values (${s}, ${o}, 'onboarding', 'running', ${o})`;
     const naive: FetchFn = async (u) =>
       u.endsWith(`/v1/sessions/${s}`)
         ? new Response(JSON.stringify({ id: s, status: "completed", stop_reason: "end_turn", pending_actions: [], consumed_micro_usd: 123_457 }))
@@ -440,7 +461,7 @@ suite("billing (database, faked Stripe and Naive)", () => {
   test("the cron fills in unreported spend and debits sessions that still owe", async () => {
     const o = owner("cron");
     const s = sid("cron");
-    await sql`insert into naive_sessions (id, purpose, status, billing_owner_id) values (${s}, 'find_leads', 'done', ${o})`;
+    await sql`insert into naive_sessions (id, workspace_id, purpose, status, billing_owner_id) values (${s}, ${o}, 'find_leads', 'done', ${o})`;
     const naive: FetchFn = async (u) =>
       u.includes(`/v1/sessions/${s}`)
         ? new Response(JSON.stringify({ id: s, status: "completed", consumed_micro_usd: 50_000 }))
@@ -451,17 +472,17 @@ suite("billing (database, faked Stripe and Naive)", () => {
     expect((await ledger(o)).map((r) => r.amount)).toEqual([-10]);
   });
 
-  test("402 through the routes for a Clerk user: on with no credits, off, MCP_TOKEN bypass, and after a top-up", async () => {
+  test("402 through the routes for a Clerk user's workspace: enforced with no credits (whatever BILLING_ENFORCED says), MCP_TOKEN bypass, after a top-up", async () => {
     const o = owner("gate");
+    resetWorkspaceCache();
     const env: Env = {
       ...baseEnv(),
       CLERK_JWT_KEY: pem,
-      CLERK_ALLOWED_USER_IDS: o,
       BILLING_ENFORCED: "true",
       NAIVE_API_KEY: "nv_test",
       NAIVE_AGENT_ID: "agt_test",
     };
-    const token = await clerkToken(o);
+    const token = await clerkToken(`user_it_${run}_gate`);
     const post = (path: string, body: unknown, e: Env = env, bearer = token) =>
       worker.fetch(
         new Request(`https://example.test${path}`, { method: "POST", headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" }, body: JSON.stringify(body) }),
@@ -479,9 +500,10 @@ suite("billing (database, faked Stripe and Naive)", () => {
       expect(res.status).toBe(402);
       expect(((await res.json()) as { error: { code: string; details: { balance: number } } }).error).toMatchObject({ code: "insufficient_credits", details: { balance: 0 } });
     }
-    expect((await post("/api/workflows/research", research, { ...env, BILLING_ENFORCED: undefined })).status).toBe(200);
+    // Not the owner workspace: still enforced with the switch off.
+    expect((await post("/api/workflows/research", research, { ...env, BILLING_ENFORCED: undefined })).status).toBe(402);
     expect((await post("/api/workflows/research", research, env, "owner-token-it")).status).toBe(200);
-    await addLedgerRow(sql, { ownerId: o, amount: 100, reason: "adjustment", source: `adjustment:${o}` });
+    await addLedgerRow(sql, { workspaceId: o, amount: 100, reason: "adjustment", source: `adjustment:${o}` });
     const ok = await post("/api/workflows/research", research);
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ started: [], skipped: [{ lead_id: `lead_missing_${run}`, reason: "not_found" }], failed: [] });
@@ -491,6 +513,7 @@ suite("billing (database, faked Stripe and Naive)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, any>;
     expect(body).toMatchObject({
+      workspace_id: o,
       owner_id: o,
       billing: { configured: true, webhook_configured: true, mode: "test", enforced: true },
       plan: { key: "free", status: null },

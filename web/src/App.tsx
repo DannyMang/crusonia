@@ -12,15 +12,17 @@ type Loader = () => Promise<{ default: ComponentType }>;
 
 const pages = {
   AppShell: () => import("./components/AppShell.tsx").then((m) => ({ default: m.AppShell })),
-  Approvals: () => import("./pages/Approvals.tsx"),
+  Outreach: () => import("./pages/Outreach.tsx"),
+  ApprovalsRedirect: () => import("./pages/Outreach.tsx").then((m) => ({ default: m.ApprovalsRedirect })),
   SignIn: () => import("./pages/auth/SignIn.tsx"),
   SignUp: () => import("./pages/auth/SignUp.tsx"),
   SsoCallback: () => import("./pages/auth/SsoCallback.tsx"),
-  Connect: () => import("./pages/Connect.tsx"),
   Home: () => import("./pages/Home.tsx"),
   Integrations: () => import("./pages/Integrations.tsx"),
   LeadDetail: () => import("./pages/LeadDetail.tsx"),
   Leads: () => import("./pages/Leads.tsx"),
+  FindLeads: () => import("./pages/leads/Find.tsx"),
+  ReviewLeads: () => import("./pages/leads/Review.tsx"),
   NotFound: () => import("./pages/NotFound.tsx"),
   OnboardingLayout: () => import("./pages/onboarding/Layout.tsx"),
   Step1Company: () => import("./pages/onboarding/Step1Company.tsx"),
@@ -31,6 +33,8 @@ const pages = {
   Replies: () => import("./pages/Replies.tsx"),
   Settings: () => import("./pages/Settings.tsx"),
   SettingsBilling: () => import("./pages/settings/Billing.tsx"),
+  SettingsCompany: () => import("./pages/settings/CompanySummary.tsx"),
+  SettingsKeys: () => import("./pages/settings/ApiKeys.tsx"),
   WorkflowRun: () => import("./pages/WorkflowRun.tsx"),
   Workflows: () => import("./pages/workflows/List.tsx"),
   WorkflowBuilder: () => import("./pages/workflows/Builder.tsx"),
@@ -163,10 +167,18 @@ export function App() {
                 <Route path="app" element={screen(L.AppShell)}>
                   <Route index element={page(L.Home)} />
                   <Route path="leads" element={page(L.Leads)} />
+                  <Route path="leads/find" element={page(L.FindLeads)} />
+                  <Route path="leads/review" element={page(L.ReviewLeads)} />
+                  <Route path="leads/review/:id" element={page(L.ReviewLeads)} />
                   <Route path="leads/import" element={page(L.ImportCsv)} />
                   <Route path="leads/:id" element={page(L.LeadDetail)} />
-                  <Route path="approvals" element={page(L.Approvals)} />
-                  <Route path="approvals/:code" element={page(L.Approvals)} />
+                  <Route path="outreach" element={page(L.Outreach)} />
+                  <Route path="outreach/tasks" element={page(L.Outreach)} />
+                  <Route path="outreach/tasks/:id" element={page(L.Outreach)} />
+                  <Route path="outreach/:code" element={page(L.Outreach)} />
+                  {/* Older links, iMessage texts and emails point at /app/approvals(/:code). */}
+                  <Route path="approvals" element={page(L.ApprovalsRedirect)} />
+                  <Route path="approvals/:code" element={page(L.ApprovalsRedirect)} />
                   <Route path="workflows" element={page(L.Workflows)} />
                   <Route path="workflows/runs/:id" element={page(L.WorkflowRun)} />
                   <Route path="workflows/new" element={page(L.WorkflowBuilder)} />
@@ -176,10 +188,13 @@ export function App() {
                   <Route path="experiments/*" element={<Navigate to="/app" replace />} />
                   <Route path="replies" element={page(L.Replies)} />
                   <Route path="integrations" element={page(L.Integrations)} />
-                  <Route path="connect" element={page(L.Connect)} />
+                  {/* The Connect your agent page became the popover in the app shell (components/ConnectAgentPopover.tsx). */}
+                  <Route path="connect" element={<Navigate to="/app?connect=1" replace />} />
                   <Route path="settings" element={page(L.Settings)} />
                   {/* Stripe Checkout success/cancel and the portal return here (src/billing/constants.ts BILLING_APP_PATH). */}
                   <Route path="settings/billing" element={page(L.SettingsBilling)} />
+                  <Route path="settings/company" element={page(L.SettingsCompany)} />
+                  <Route path="settings/keys" element={page(L.SettingsKeys)} />
                   <Route path="*" element={page(L.NotFound)} />
                 </Route>
               </Route>

@@ -39,13 +39,20 @@ const sendApprovals: ApprovalListItem[] = seeds.map(([code, leadId, name, compan
   expires_at: ahead(expiresIn),
   decided_at: null,
   decided_via: null,
+  // Texted to the owner over iMessage (texted_at, asked of the backend with owner_phone_hint).
+  texted_at: code === "R9D1" || code === "M4T6" ? ago(TTL - expiresIn - MIN) : null,
   created_at: ago(TTL - expiresIn),
   draft: {
     id: `drf_${code.toLowerCase()}`,
     version: 2,
     variant,
     subject,
-    body: code === "A7F2" ? fieldnoteBody : `Hi ${name.split(" ")[0]},\n\n${subject}.\n\nDaniel`,
+    body:
+      code === "A7F2"
+        ? fieldnoteBody
+        : code === "R9D1"
+          ? "Hi Sofia, thanks for joining the Fieldnote waitlist. Saw Quillstack is opening an Austin office with 3 AE roles. When founders hand calls to new reps, the notes are usually the first thing to slip. Fieldnote records each call and writes the next steps into HubSpot, so your new AEs start with your context, not a blank CRM. Want early access for the Austin team?\n\nDaniel, Fieldnote"
+          : `Hi ${name.split(" ")[0]},\n\n${subject}.\n\nDaniel`,
     status: "pending_approval",
   },
   lead: { id: leadId, email, name, company, stage: "awaiting_approval", has_consent: true },

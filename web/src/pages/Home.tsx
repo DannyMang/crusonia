@@ -9,7 +9,7 @@ import { Page } from "../components/AppShell.tsx";
 import { ChevronRight, XIcon } from "../components/icons.tsx";
 import { Button, ButtonLink, Card, EmptyState, LiveChip, Pill, QueryError, ReplyLabel, Skeleton, tabListKeys } from "../components/ui.tsx";
 import { cx, duration, greeting, hostOf, num, plural, shortDate, timeAgo, usd, weekdayDate } from "../lib/format.ts";
-import { keys, useApprovals, useLeads, usePause, useProfile, useSummary } from "../queries.ts";
+import { keys, useApprovals, useLeads, usePause, useSummary } from "../queries.ts";
 
 const label = "text-[13px]/4 font-medium text-muted";
 const sectionTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
@@ -51,22 +51,20 @@ export default function Home() {
   );
 }
 
-/** Same buckets as the backend's summary: where each lead is now (unsubscribed leads in none). */
+/** The backend's cumulative funnel, approximated from stages: a lead counts in its step and every earlier one. */
 function fallbackSummary(leads: Lead[], approvals: ApprovalListItem[], paused: boolean): Summary {
   const byStage: Record<string, number> = {};
   for (const l of leads) byStage[l.stage] = (byStage[l.stage] ?? 0) + 1;
   const n = (...stages: string[]) => stages.reduce((sum, st) => sum + (byStage[st] ?? 0), 0);
   const open = new Set(approvals.filter((a) => a.kind === "send").map((a) => a.lead_id));
   const awaiting = leads.filter((l) => l.stage === "awaiting_approval" && open.has(l.id)).length;
-  const pipeline: Pipeline = {
-    found: n("new", "no_consent", "researching"),
-    researched: n("qualified", "disqualified", "needs_review"),
-    drafted: n("awaiting_approval") - awaiting,
-    awaiting_approval: awaiting,
-    sent: n("sent"),
-    replied: n("replied", "interested", "not_interested"),
-    meetings: n("meeting_booked"),
-  };
+  const meetings = n("meeting_booked");
+  const replied = meetings + n("replied", "interested", "not_interested");
+  const sent = replied + n("sent");
+  const drafted = sent + n("awaiting_approval");
+  const qualified = drafted + n("qualified");
+  const researched = qualified + n("disqualified", "needs_review");
+  const pipeline: Pipeline = { found: leads.length, researched, qualified, drafted, awaiting_approval: awaiting, sent, replied, meetings };
   return {
     pipeline,
     pipeline_by_stage: byStage,
@@ -184,7 +182,7 @@ function Arrow() {
   );
 }
 
-function Stat({ title, value, note, accent }: { title: string; value: string | undefined; note: string; accent?: boolean }) {
+function Stat({ title, value, note, accent }: { title: string; value: string | undefined; note?: string; accent?: boolean }) {
   return (
     <div className="flex grow basis-0 flex-col gap-1 px-3 py-1.5">
       <div className={label}>{title}</div>
@@ -193,67 +191,39 @@ function Stat({ title, value, note, accent }: { title: string; value: string | u
       ) : (
         <div className={cx("tabular-nums text-[22px]/7 font-semibold tracking-[-0.02em]", accent ? "text-green-dark" : "text-ink")}>{value}</div>
       )}
-      <div className="text-xs/4 font-medium text-muted">{note}</div>
+      {note ? <div className="text-xs/4 font-medium text-muted">{note}</div> : null}
     </div>
   );
 }
 
-function PipelineStrip({ data, partial }: { data: Summary | undefined; partial: boolean }) {
-  const profile = useProfile();
+function PipelineStrip({ data }: { data: Summary | undefined; partial: boolean }) {
   const p = data?.pipeline;
-  const icp = profile.data?.segments?.[0]?.name ?? profile.data?.icp_description ?? null;
-  const approvals = data?.pending_approvals ?? [];
-  // Only the 5 newest approvals come with the summary, so "oldest" is exact only when that is all of them.
-  const oldest =
-    approvals.length && approvals.length === data?.pending_approvals_total
-      ? Math.max(...approvals.map((a) => Date.now() - new Date(a.created_at).getTime()))
-      : null;
   const v = (n: number | undefined) => (p ? num(n ?? 0) : undefined);
-  const workflows = data?.active_workflows.length;
-  const context = [
-    partial ? "counted from your newest leads" : "where your leads are now",
-    workflows !== undefined && !partial ? plural(workflows, "active workflow") : null,
-    icp ? `ICP “${icp.length > 48 ? `${icp.slice(0, 47)}…` : icp}”` : null,
-  ].filter(Boolean);
+  // The cumulative funnel: how many leads got at least this far. Qualified shows once the summary sends it.
+  const steps: [string, number | undefined][] = [
+    ["Found", p?.found],
+    ["Researched", p?.researched],
+    ...(p && p.qualified === undefined ? [] : ([["Qualified", p?.qualified]] as [string, number | undefined][])),
+    ["Drafted", p?.drafted],
+    ["Sent", p?.sent],
+    ["Replied", p?.replied],
+  ];
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2 className={sectionTitle}>Pipeline</h2>
-          <div className={label}>{context.join(" · ")}</div>
-        </div>
+        <h2 className={sectionTitle}>Pipeline</h2>
         <Link to="/app/leads" className="text-[13px]/4 font-medium text-ink underline decoration-[#200D0D4D] decoration-1 underline-offset-[3px] hover:decoration-ink">
           Open leads
         </Link>
       </div>
-      {/* Phones: three stats a row, "Awaiting approval" on a row of its own, no arrows. */}
+      {/* Phones: three stats a row, no arrows. */}
       <div className="grid grid-cols-3 gap-y-3 border-y border-y-[#200D0D1A] py-3.5 sm:flex">
-        <Stat title="Found" value={v(p?.found)} note="new or in research" />
-        <Arrow />
-        <Stat title="Researched" value={v(p?.researched)} note="scored, sourced" />
-        <Arrow />
-        <Stat title="Drafted" value={v(p?.drafted)} note="draft needs a redo" />
-        <Arrow />
-        <div className="col-span-3 flex grow-[1.25] basis-0 flex-col gap-1 rounded-[10px] border border-panel-line bg-panel px-3 py-1.5">
-          <div className="text-[13px]/4 font-semibold text-ink">Awaiting approval</div>
-          <div className="flex items-center gap-2">
-            {p ? (
-              <div className="text-[22px]/7 font-semibold tracking-[-0.02em] text-ink tabular-nums">{num(p.awaiting_approval)}</div>
-            ) : (
-              <Skeleton className="my-1 h-5 w-8" />
-            )}
-            {p && p.awaiting_approval > 0 ? <Pill tone="lime">needs you</Pill> : null}
-          </div>
-          <div className="text-xs/4 font-medium text-muted">
-            {oldest !== null ? `oldest waiting ${duration(oldest)}` : data?.pending_approvals_total ? plural(data.pending_approvals_total, "open approval") : "nothing waiting"}
-          </div>
-        </div>
-        <Arrow />
-        <Stat title="Sent" value={v(p?.sent)} note="no reply yet" />
-        <Arrow />
-        <Stat title="Replied" value={v(p?.replied)} note="reply received" />
-        <Arrow />
-        <Stat title="Meetings" value={v(p?.meetings)} note={p?.meetings ? "booked" : "none yet"} accent={Boolean(p?.meetings)} />
+        {steps.map(([title, n], i) => (
+          <Fragment key={title}>
+            {i ? <Arrow /> : null}
+            <Stat title={title} value={v(n)} />
+          </Fragment>
+        ))}
       </div>
     </section>
   );
@@ -315,7 +285,7 @@ function WaitingRow({ a }: { a: SummaryApproval }) {
         <div className="whitespace-pre text-[11px]/3.5 font-medium text-muted">waiting {duration(Date.now() - new Date(a.created_at).getTime())}</div>
       </div>
       <div className="order-2 flex shrink-0 items-center gap-1.5 sm:order-none">
-        <ButtonLink to={`/app/approvals/${a.code}`} variant="outline" size="sm">
+        <ButtonLink to={`/app/outreach/${a.code}`} variant="outline" size="sm">
           Review
         </ButtonLink>
         <ApproveButton approval={a} />
@@ -335,7 +305,7 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
           {total ? <Pill tone="lime" mono>{total}</Pill> : null}
           <div className={cx(label, "min-w-0")}>drafts held until you approve · nothing sends on its own</div>
         </div>
-        <Link to="/app/approvals" className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[13px]/4 font-medium text-ink hover:underline">
+        <Link to="/app/outreach" className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[13px]/4 font-medium text-ink hover:underline">
           All approvals
           <ChevronRight className="text-green" />
         </Link>
@@ -362,8 +332,8 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-t-[#200D0D14] bg-[#200D0D06] px-4 py-3 sm:px-4.5">
           <div className="text-xs/4 font-medium text-muted">
             {rest ? (
-              <Link to="/app/approvals" className="hover:text-ink hover:underline">
-                {rest} more in Approvals
+              <Link to="/app/outreach" className="hover:text-ink hover:underline">
+                {rest} more in Outreach
               </Link>
             ) : (
               "That's everything"

@@ -2,6 +2,7 @@
 // opted-in person the owner enters by hand).
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
+import { useNavigate } from "react-router";
 import { isApiError, type CreateLeadInput } from "../../api.ts";
 import { useApi } from "../../auth.tsx";
 import { Dialog, Dropdown, Field, inputClass, MenuItem, textareaClass } from "../../components/leads/Overlay.tsx";
@@ -9,8 +10,9 @@ import { Button, ButtonLink, QueryError } from "../../components/ui.tsx";
 import { cx } from "../../lib/format.ts";
 
 export function AddLeadsButton() {
+  const navigate = useNavigate();
   const [menu, setMenu] = useState(false);
-  const [dialog, setDialog] = useState<"find" | "contact" | null>(null);
+  const [dialog, setDialog] = useState<"contact" | null>(null);
   return (
     <>
       <Dropdown
@@ -29,9 +31,9 @@ export function AddLeadsButton() {
           <MenuItem
             onSelect={() => {
               setMenu(false);
-              setDialog("find");
+              navigate("/app/leads/find");
             }}
-            hint="Researches companies that fit your ICP. Paid run, asks first."
+            hint="A sample of 5 to rate, then more. Paid run, asks first."
           >
             Find leads with your agent
           </MenuItem>
@@ -46,7 +48,6 @@ export function AddLeadsButton() {
           </MenuItem>
         </div>
       </Dropdown>
-      <FindLeadsDialog open={dialog === "find"} onClose={() => setDialog(null)} />
       <AddContactDialog open={dialog === "contact"} onClose={() => setDialog(null)} />
     </>
   );

@@ -18,6 +18,8 @@ export const CRUSONIA_TOOLS = [
   "get_status",
   "read_website",
   "search_web",
+  "get_company_summary",
+  "update_company_summary",
   "save_profile",
   "get_profile",
   "add_leads",
@@ -31,8 +33,12 @@ export const CRUSONIA_TOOLS = [
   "list_tasks",
   "add_note",
   "get_workflow",
+  "create_workflow",
   "flag_for_review",
 ] as const;
+
+/** Crusonia tools the research agent may call only with the owner's approval (its run never needs them). */
+export const CRUSONIA_ASK_TOOLS = ["create_workflow"] as const;
 
 // Apify tools that run without asking: the single-page reader the playbook uses (charged per request, starts
 // no run) and the free readers for run results. Anything else (abort-actor-run, or an Actor tool if the URL above
@@ -130,17 +136,20 @@ export function agentSettings(get: (key: string) => string | undefined): { model
 export function naiveAgentConfig(input: {
   baseUrl: string;
   playbook: Playbook;
+  /** Defaults to AGENT_NAME. Another environment (staging) needs its own name: setup finds agents by name. */
+  name?: string;
   model: string;
   harness?: string;
   budget: Budget;
 }): AgentConfig {
   const allow: ToolConfig = { enabled: true, permission: "allow" };
+  const ask: ToolConfig = { enabled: true, permission: "ask" };
   const configs: Record<string, ToolConfig> = {};
-  for (const tool of CRUSONIA_TOOLS) configs[`crusonia.${tool}`] = allow;
+  for (const tool of CRUSONIA_TOOLS) configs[`crusonia.${tool}`] = (CRUSONIA_ASK_TOOLS as readonly string[]).includes(tool) ? ask : allow;
   for (const tool of APIFY_ALLOWED_TOOLS) configs[`apify.${tool}`] = allow;
   configs.ask_operator = { enabled: true, permission: "ask" };
   return {
-    name: AGENT_NAME,
+    name: input.name ?? AGENT_NAME,
     description:
       "Researches one Crusonia lead per session: sourced evidence, an ICP fit score and, for opted-in leads only, an email draft that a human approves.",
     model: input.model,

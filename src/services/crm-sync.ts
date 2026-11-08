@@ -7,6 +7,8 @@
 //   rules    field ownership lives in ./crm-fields.ts.
 //
 // Nothing is written to HubSpot or Notion unless that target's switch is "true". The import only reads HubSpot.
+// Workspaces: HubSpot and Notion are the instance's own (env keys), so sync and import cover the owner workspace
+// only. The events trigger queues only owner-workspace leads, and every lead read here is filtered to it.
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { ApiError } from "../lib/errors.ts";
@@ -20,6 +22,7 @@ import {
 } from "../providers/hubspot.ts";
 import { isGonePage, NotionClient } from "../providers/notion.ts";
 import { applyImportCandidates, summarizeImport } from "./crm.ts";
+import { OWNER_WORKSPACE_ID } from "./workspaces.ts";
 import {
   companyIdentity,
   companyToCandidate,
@@ -41,6 +44,7 @@ import {
   planNotes,
   planUpdate,
   propertiesHash,
+  syncCohorts,
   syncScope,
   type CrmTarget,
   type EvidenceRow,
@@ -101,8 +105,9 @@ function syncLeadQuery(sql: Sql, leadId: string) {
            (select max(m.created_at) from messages m where m.lead_id = l.id and m.direction = 'out') as last_outreach_at,
            greatest(l.updated_at, (select max(m.created_at) from messages m where m.lead_id = l.id)) as last_activity_at,
            (select count(*)::int from evidence e where e.lead_id = l.id) as evidence_count,
-           (select e.claim from evidence e where e.lead_id = l.id order by e.id limit 1) as signal
-    from leads l where l.id = ${leadId}`;
+           (select e.claim from evidence e where e.lead_id = l.id order by e.id limit 1) as signal,
+           l.cohort
+    from leads l where l.workspace_id = ${OWNER_WORKSPACE_ID} and l.id = ${leadId}`;
 }
 
 export async function loadSyncLead(sql: Sql, leadId: string): Promise<SyncLead | undefined> {
@@ -115,9 +120,10 @@ async function loadHubSpotSnapshot(sql: Sql, leadId: string): Promise<HubSpotSna
   const [leads, evidence, messages] = await sql.transaction(
     [
       syncLeadQuery(sql, leadId),
-      sql`select id::text as id, claim, source_url, created_at, hubspot_note_id from evidence where lead_id = ${leadId} order by id`,
+      sql`select id::text as id, claim, source_url, created_at, hubspot_note_id from evidence
+          where workspace_id = ${OWNER_WORKSPACE_ID} and lead_id = ${leadId} order by id`,
       sql`select id::text as id, direction, subject, body, label, created_at, hubspot_note_id from messages
-          where lead_id = ${leadId} order by id`,
+          where workspace_id = ${OWNER_WORKSPACE_ID} and lead_id = ${leadId} order by id`,
     ],
     { readOnly: true },
   );
@@ -133,6 +139,8 @@ export type HubSpotContext = {
   /** Objects this run found the token cannot write ("companies"); later leads skip them without a call. */
   blocked?: Set<string>;
   maxNotes?: number;
+  /** HUBSPOT_SYNC_COHORTS: only leads in these cohorts are written (even forced ones); null = every cohort. */
+  cohorts?: string[] | null;
 };
 
 export type HubSpotProgress = {
@@ -314,7 +322,7 @@ async function saveHubSpotProgress(sql: Sql, leadId: string, p: HubSpotProgress,
     sql`update leads set hubspot_id = coalesce(${p.contactId}, hubspot_id), hubspot_company_id = coalesce(${p.companyId}, hubspot_company_id),
                hubspot_state = ${JSON.stringify(p.state)}::jsonb,
                hubspot_synced_at = case when ${complete}::boolean then now() else hubspot_synced_at end
-        where id = ${leadId}`,
+        where workspace_id = ${OWNER_WORKSPACE_ID} and id = ${leadId}`,
     sql`update evidence e set hubspot_note_id = x.note_id
         from jsonb_to_recordset(${JSON.stringify(evidence)}::jsonb) as x(id text, note_id text)
         where e.id = x.id::bigint and e.lead_id = ${leadId} and e.hubspot_note_id is null`,
@@ -328,6 +336,7 @@ export async function syncLeadToHubSpot(sql: Sql, client: HubSpotClient, item: Q
   const snap = await loadHubSpotSnapshot(sql, item.lead_id!);
   if (!snap) return { skipped: true };
   if (!item.payload.force && !inScope(snap.lead, "hubspot", ctx.scope)) return { skipped: true };
+  if (ctx.cohorts && !ctx.cohorts.includes(snap.lead.cohort ?? "")) return { skipped: true };
   const p = newProgress(snap.lead);
   try {
     await pushLeadToHubSpot(client, snap, ctx, p);
@@ -405,7 +414,8 @@ export async function syncLeadToNotion(sql: Sql, client: NotionClient, item: Que
   if (!item.payload.force && !inScope(lead, "notion", ctx.scope)) return { skipped: true };
   const out = await pushLeadToNotion(client, lead, ctx);
   if (!out.changed) return { skipped: true };
-  await sql`update leads set notion_page_id = ${out.pageId}, notion_hash = ${out.hash}, notion_synced_at = now() where id = ${lead.id}`;
+  await sql`update leads set notion_page_id = ${out.pageId}, notion_hash = ${out.hash}, notion_synced_at = now()
+            where workspace_id = ${OWNER_WORKSPACE_ID} and id = ${lead.id}`;
   return {};
 }
 
@@ -451,7 +461,8 @@ async function linkImported(sql: Sql, rows: HubSpotImportRow[]): Promise<number>
       with x as (select * from jsonb_to_recordset(${JSON.stringify(contacts)}::jsonb) as x(email text, domain text, name text, hubspot_id text, company_id text))
       update leads l set hubspot_id = coalesce(l.hubspot_id, x.hubspot_id), hubspot_company_id = coalesce(l.hubspot_company_id, x.company_id)
       from x
-      where ((x.email is not null and l.email = x.email)
+      where l.workspace_id = ${OWNER_WORKSPACE_ID}
+        and ((x.email is not null and l.email = x.email)
              or (x.email is null and l.email is null and l.domain = x.domain and coalesce(lower(l.name), '') = coalesce(lower(x.name), '')))
         and (l.hubspot_id is null or (l.hubspot_id = x.hubspot_id and l.hubspot_company_id is null and x.company_id is not null))
       returning l.id`);
@@ -461,7 +472,8 @@ async function linkImported(sql: Sql, rows: HubSpotImportRow[]): Promise<number>
       with x as (select * from jsonb_to_recordset(${JSON.stringify(companies)}::jsonb) as x(domain text, company_id text))
       update leads l set hubspot_company_id = x.company_id
       from x
-      where l.email is null and l.domain = x.domain and coalesce(l.name, '') = '' and l.hubspot_company_id is null
+      where l.workspace_id = ${OWNER_WORKSPACE_ID} and l.email is null and l.domain = x.domain and coalesce(l.name, '') = ''
+        and l.hubspot_company_id is null
       returning l.id`);
   }
   if (!queries.length) return 0;
@@ -508,7 +520,12 @@ export async function runImportStep(sql: Sql, client: HubSpotClient, item: Queue
     after = page.paging?.next?.after;
   }
 
-  const results = await applyImportCandidates(sql, rows, { source: IMPORT_SOURCE, actor: p.actor, via: IMPORT_SOURCE });
+  const results = await applyImportCandidates(sql, OWNER_WORKSPACE_ID, rows, {
+    source: IMPORT_SOURCE,
+    actor: p.actor,
+    via: IMPORT_SOURCE,
+    cohort: `hubspot_import:${p.started_at}`,
+  });
   const s = summarizeImport(results);
   p.created += s.created;
   p.updated += s.updated;
@@ -526,7 +543,7 @@ export async function runImportStep(sql: Sql, client: HubSpotClient, item: Queue
 async function finishImport(sql: Sql, p: ImportPayload): Promise<HandleResult> {
   const summary = { ...p, finished_at: new Date().toISOString() };
   await sql.transaction([
-    sql`insert into events (lead_id, kind, data) values (null, 'leads_imported', ${JSON.stringify({
+    sql`insert into events (workspace_id, lead_id, kind, data) values (${OWNER_WORKSPACE_ID}, null, 'leads_imported', ${JSON.stringify({
       via: IMPORT_SOURCE,
       created: p.created,
       updated: p.updated,
@@ -607,7 +624,7 @@ export async function runCrmSync(sql: Sql, env: Env, fetchFn?: FetchFn, opts: Ru
           if (!ctx) {
             const { available, warnings } = await hubspotAvailability(client);
             r.warnings.push(...warnings);
-            ctx = { available, blocked: new Set(), scope: cfg.hubspot.scope };
+            ctx = { available, blocked: new Set(), scope: cfg.hubspot.scope, cohorts: syncCohorts(env.HUBSPOT_SYNC_COHORTS) };
           }
           return syncLeadToHubSpot(sql, client, item, ctx);
         },
@@ -804,8 +821,8 @@ export async function startHubSpotImport(sql: Sql, env: Env, actor: string) {
     consent_property: consentMapping(env)?.property ?? null,
   };
   const rows = await sql`
-    insert into crm_sync_queue as q (target, entity, lead_id, reason, payload)
-    values ('hubspot', 'import', null, 'manual', ${JSON.stringify(payload)}::jsonb)
+    insert into crm_sync_queue as q (workspace_id, target, entity, lead_id, reason, payload)
+    values (${OWNER_WORKSPACE_ID}, 'hubspot', 'import', null, 'manual', ${JSON.stringify(payload)}::jsonb)
     on conflict (target, entity, (coalesce(lead_id, ''))) do update set
       payload = excluded.payload, status = 'pending', attempts = 0, last_error = null, next_attempt_at = now(),
       locked_until = null, version = q.version + 1, updated_at = now()

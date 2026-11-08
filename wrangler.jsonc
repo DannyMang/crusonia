@@ -27,10 +27,22 @@
   },
   // Version URLs (and aliased ones like app-crusonia.<subdomain>.workers.dev from
   // `bun run deploy:preview`) stay on. They run with production's secrets and database.
-  "preview_urls": true,
+  "preview_urls": false,
   "vars": {
     // Public base URL of this Worker. Webhooks and the MCP endpoint are registered under it.
     "PUBLIC_URL": "https://crusonia.veri-web.workers.dev"
+  },
+  "env": {
+    // Staging: a separate Worker (crusonia-staging) with its own secrets, its own database (a Neon dev branch)
+    // and its own provider webhooks, Naive agent and MCP URL. Deploy with `bun run deploy:staging`; set it up
+    // with `bun run setup --env staging` (reads and writes .dev.vars.staging). See README "Staging".
+    // vars are not inherited from the top level, so PUBLIC_URL is repeated here.
+    "staging": {
+      "name": "crusonia-staging",
+      "vars": {
+        "PUBLIC_URL": "https://crusonia-staging.veri-web.workers.dev"
+      }
+    }
   }
   // Secrets (DATABASE_URL, provider keys, ...) are not declared here: see .dev.vars.example.
   // We deliberately do not use `secrets.required`, because it makes `wrangler deploy` fail until

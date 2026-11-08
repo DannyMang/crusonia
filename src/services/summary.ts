@@ -1,15 +1,18 @@
 // GET /api/summary: the dashboard Home in one call.
-// TODO(workspaces): scope every count to the caller's workspace.
+// Every count is the caller's workspace's.
 import { creditsToUsd } from "../billing/plans.ts";
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { listApprovals } from "./approvals.ts";
+import { spendStatus } from "./limits.ts";
 import { listReplies } from "./replies.ts";
 import { listWorkflows, microToUsd } from "./runs.ts";
 
 export type Pipeline = {
   found: number;
   researched: number;
+  /** Cumulative pipeline only: scored as qualified, or any later step. */
+  qualified?: number;
   drafted: number;
   awaiting_approval: number;
   sent: number;
@@ -18,13 +21,14 @@ export type Pipeline = {
 };
 
 /** How many leads ever reached each step (a lead that reached a later step counts in every earlier one). */
-export type FunnelCounts = { found: number; researched: number; drafted: number; sent: number; replied: number; meetings: number };
+export type FunnelCounts = { found: number; researched: number; qualified?: number; drafted: number; sent: number; replied: number; meetings: number };
 
 /**
- * The funnel, cumulative: found >= researched >= drafted >= sent >= replied >= meetings, so each number reads as
+ * The funnel, cumulative: found >= researched >= qualified >= drafted >= sent >= replied >= meetings, so each number reads as
  * "how many got this far". `awaiting_approval` is not a funnel step: it is how many leads have an email waiting for
  * the owner right now.
  *   found: every lead                       researched: scored, or any later step
+ *   qualified: scored as qualified, or any later step
  *   drafted: has a draft (any channel), or any later step
  *   sent: an outbound message (email, or a manual task marked sent), or any later step
  *   replied: an inbound reply or a reply stage, or a meeting        meetings: meeting_booked
@@ -34,9 +38,10 @@ export function cumulativePipeline(c: FunnelCounts, awaitingWithOpenApproval: nu
   const replied = Math.max(c.replied, meetings);
   const sent = Math.max(c.sent, replied);
   const drafted = Math.max(c.drafted, sent);
-  const researched = Math.max(c.researched, drafted);
+  const qualified = Math.max(c.qualified ?? 0, drafted);
+  const researched = Math.max(c.researched, qualified);
   const found = Math.max(c.found, researched);
-  return { found, researched, drafted, awaiting_approval: Math.max(0, awaitingWithOpenApproval), sent, replied, meetings };
+  return { found, researched, qualified, drafted, awaiting_approval: Math.max(0, awaitingWithOpenApproval), sent, replied, meetings };
 }
 
 /**
@@ -76,36 +81,38 @@ export function weeklyBudgetUsd(env: Env): number | null {
   return env.WEEKLY_BUDGET_USD && Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-export async function getSummary(sql: Sql, env: Env) {
-  const [[counts], [funnel], approvals, replies] = await Promise.all([
+/** The Home dashboard of workspace `ws`. */
+export async function getSummary(sql: Sql, env: Env, ws: string) {
+  const [[counts], [funnel], approvals, replies, today] = await Promise.all([
     sql`select
           (select coalesce(jsonb_object_agg(stage, n), '{}'::jsonb)
-             from (select stage, count(*)::int as n from leads group by stage) s) as by_stage,
+             from (select stage, count(*)::int as n from leads where workspace_id = ${ws} group by stage) s) as by_stage,
           (select count(*)::int from leads l
-             where l.stage = 'awaiting_approval'
-               and exists (select 1 from approvals a where a.lead_id = l.id and a.kind = 'send'
+             where l.workspace_id = ${ws} and l.stage = 'awaiting_approval'
+               and exists (select 1 from approvals a where a.workspace_id = ${ws} and a.lead_id = l.id and a.kind = 'send'
                            and a.status = 'pending' and a.expires_at > now())) as awaiting_open,
-          (select count(*)::int from approvals where status = 'pending' and expires_at > now()) as pending_total,
+          (select count(*)::int from approvals where workspace_id = ${ws} and status = 'pending' and expires_at > now()) as pending_total,
           (select count(*)::int from drafts d join leads l on l.id = d.lead_id
-             where d.channel <> 'email' and d.status = 'open' and l.stage <> 'unsubscribed') as tasks_open,
-          (select count(*)::int from approvals where status = 'pending' and expires_at > now() and kind = 'send') as pending_sends,
+             where d.workspace_id = ${ws} and d.channel <> 'email' and d.status = 'open' and l.stage <> 'unsubscribed') as tasks_open,
+          (select count(*)::int from approvals where workspace_id = ${ws} and status = 'pending' and expires_at > now() and kind = 'send') as pending_sends,
           -- Credits charged in the last 7 days (agent sessions and Apify runs, at the usage markup).
           (select coalesce(-sum(amount), 0)::text from credit_ledger
-             where reason = 'usage' and created_at >= now() - interval '7 days') as week_credits,
+             where workspace_id = ${ws} and reason = 'usage' and created_at >= now() - interval '7 days') as week_credits,
           -- Raw provider cost behind it: Naive's running totals and Apify run usage.
           (select sum(consumed_micro_usd)::text from naive_sessions
-             where coalesce(last_event_at, updated_at) >= now() - interval '7 days') as week_naive_micro,
-          (select sum(usage_micro_usd)::text from apify_runs where created_at >= now() - interval '7 days') as week_apify_micro,
-          coalesce((select value = 'true'::jsonb from settings where key = 'paused'), false) as paused`,
+             where workspace_id = ${ws} and coalesce(last_event_at, updated_at) >= now() - interval '7 days') as week_naive_micro,
+          (select sum(usage_micro_usd)::text from apify_runs where workspace_id = ${ws} and created_at >= now() - interval '7 days') as week_apify_micro,
+          coalesce((select paused from workspaces where id = ${ws}), false) as paused`,
     sql`with base as (
-          select l.stage, l.score,
+          select l.stage, l.score, l.qualified,
                  exists (select 1 from messages m where m.lead_id = l.id and m.direction = 'in') as has_in,
                  exists (select 1 from messages m where m.lead_id = l.id and m.direction = 'out') as has_out,
                  exists (select 1 from drafts d where d.lead_id = l.id) as has_draft
           from leads l
+          where l.workspace_id = ${ws}
         ),
         flags as (
-          select stage, score, has_draft,
+          select stage, score, qualified, has_draft,
                  stage = 'meeting_booked' as meeting,
                  (stage in ('replied', 'interested', 'not_interested', 'meeting_booked') or has_in) as replied,
                  (stage in ('sent', 'replied', 'interested', 'not_interested', 'meeting_booked') or has_in or has_out) as sent
@@ -114,16 +121,18 @@ export async function getSummary(sql: Sql, env: Env) {
         select count(*)::int as found,
                (count(*) filter (where score is not null or stage in ('qualified', 'disqualified', 'needs_review', 'awaiting_approval')
                                    or has_draft or sent))::int as researched,
+               (count(*) filter (where qualified is true or has_draft or stage = 'awaiting_approval' or sent))::int as qualified,
                (count(*) filter (where has_draft or stage = 'awaiting_approval' or sent))::int as drafted,
                (count(*) filter (where sent))::int as sent,
                (count(*) filter (where replied))::int as replied,
                (count(*) filter (where meeting))::int as meetings
         from flags`,
-    listApprovals(sql, { status: "pending", limit: 5 }),
-    listReplies(sql, { limit: 5 }),
+    listApprovals(sql, ws, { status: "pending", limit: 5 }),
+    listReplies(sql, ws, { limit: 5 }),
+    spendStatus(sql, env, ws),
   ]);
   const paused = counts?.paused === true;
-  const workflows = await listWorkflows(sql, { recentRuns: 3, paused });
+  const workflows = await listWorkflows(sql, ws, { recentRuns: 3, paused });
   const byStage = (counts?.by_stage ?? {}) as Record<string, number>;
   const weekCredits = Number(counts?.week_credits ?? 0);
   const naiveUsd = microToUsd(counts?.week_naive_micro);
@@ -155,6 +164,9 @@ export async function getSummary(sql: Sql, env: Env) {
       week_credits: weekCredits,
       provider_usd: providerUsd,
       budget_usd: weeklyBudgetUsd(env),
+      // The per-workspace daily cap (src/services/limits.ts): Naive spend of sessions started in the last 24 hours.
+      day_usd: microToUsd(today.spent_micro_usd),
+      daily_cap_usd: microToUsd(today.cap_micro_usd),
     },
     paused,
   };
