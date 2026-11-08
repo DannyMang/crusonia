@@ -11,6 +11,7 @@ import { ChevronRight } from "../../components/icons.tsx";
 import { QueryError } from "../../components/ui.tsx";
 import {
   ensureStarted,
+  hasValidInput,
   isComingOnline,
   patchOnboarding,
   siteHost,
@@ -32,7 +33,8 @@ export default function Step2Reading() {
   const api = useApi();
   const navigate = useNavigate();
   const s = useOnboarding();
-  const [hasInput] = useState(() => Boolean(s.url || s.description));
+  // Nothing paid starts without a valid website or a description; anything else goes back to step 1.
+  const [hasInput] = useState(() => hasValidInput(s));
 
   // Start (or resume) the run once. ensureStarted marks each call as started before it goes out, so
   // StrictMode's second effect run and later remounts do not start another paid run.

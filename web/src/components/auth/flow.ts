@@ -1,6 +1,7 @@
 // Helpers for the Clerk custom flows (sign in, sign up, SSO callback). No Clerk imports here, so the static
 // variant can use them too.
 import type { NavigateFunction } from "react-router";
+import { cleanWebsite } from "../../lib/website.ts";
 
 /** Only same-origin paths ("/app/leads"), never "//evil.com" or "https://…". */
 export function safeNext(v: string | null | undefined): string | null {
@@ -70,22 +71,11 @@ export const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()
 
 // ---------- website from the landing page ----------
 // The landing page sends visitors to /sign-up?website=<domain>. The domain is kept in sessionStorage through
-// sign-up (OAuth leaves the page) so onboarding step 1 can prefill it and start reading the site.
+// sign-up (OAuth leaves the page) so onboarding step 1 can prefill it and start reading the site. Only values
+// that pass lib/website.ts are kept, so a remembered website is always a plain domain.
 
 const WEBSITE = "crusonia.signupWebsite";
 const WEBSITE_TTL_MS = 60 * 60_000;
-
-/** "acme.com/about" from "https://www.Acme.com/about/", or null when it is not a plausible public host. */
-export function cleanWebsite(raw: string | null | undefined): string | null {
-  const v = (raw ?? "").trim().replace(/^[a-z]+:\/\//i, "").replace(/\/+$/, "");
-  if (!v || v.length > 253 || /\s/.test(v)) return null;
-  try {
-    const host = new URL(`https://${v}`).hostname;
-    return /\.[a-z]{2,}$/i.test(host) ? v : null;
-  } catch {
-    return null;
-  }
-}
 
 export function rememberWebsite(raw: string | null | undefined) {
   const v = cleanWebsite(raw);

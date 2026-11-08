@@ -2,41 +2,46 @@
 // step 2. Nothing paid happens here; Continue only stores the input and moves on.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { cleanWebsite, clearWebsite, peekWebsite } from "../../components/auth/flow.ts";
+import { clearWebsite, peekWebsite } from "../../components/auth/flow.ts";
 import type { Profile } from "../../api.ts";
 import { ChevronRight } from "../../components/icons.tsx";
 import { getOnboarding, patchOnboarding, resetOnboarding } from "../../components/onboarding/store.ts";
 import { ArrowIcon, bigButton, PencilIcon, StepTitle } from "../../components/onboarding/ui.tsx";
 import { cx, plural, timeAgo } from "../../lib/format.ts";
+import { parseWebsite, websiteProblemMessage } from "../../lib/website.ts";
 import { useProfile } from "../../queries.ts";
 
-/** "fieldnote.io/about" from whatever was typed or pasted ("https://www.Fieldnote.io/about/"). */
-function cleanUrl(raw: string) {
+/** The field shows a stored run's address without its scheme ("https://fieldnote.io" -> "fieldnote.io"). */
+function withoutScheme(raw: string) {
   return raw
     .trim()
     .replace(/^[a-z]+:\/\//i, "")
     .replace(/\/+$/, "");
 }
 
-function validHost(v: string) {
-  try {
-    const u = new URL(`https://${v}`);
-    return /\.[a-z]{2,}$/i.test(u.hostname) && !/\s/.test(v);
-  } catch {
-    return false;
-  }
-}
+/** A website handed over from the landing page: a clean domain, or what was typed plus why it is not one. */
+type Incoming = { domain: string } | { raw: string; error: string };
 
 export default function Step1Company() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const stored = getOnboarding();
-  // The website typed on the landing page: ?website= (signed-in visitors) or remembered through sign-up.
-  const [incoming] = useState(() => cleanWebsite(params.get("website")) ?? peekWebsite());
+  // The website typed on the landing page: ?website= (signed-in visitors) or remembered through sign-up. A value
+  // that is not a website (an email, a typo) is shown in the field with the reason and never starts a read.
+  const [incoming] = useState<Incoming | null>(() => {
+    const param = params.get("website")?.trim();
+    if (param) {
+      const parsed = parseWebsite(param);
+      return parsed.ok ? { domain: parsed.domain } : { raw: param, error: websiteProblemMessage(parsed.problem) };
+    }
+    const remembered = peekWebsite();
+    return remembered ? { domain: remembered } : null;
+  });
+  const incomingDomain = incoming && "domain" in incoming ? incoming.domain : null;
   const [mode, setMode] = useState<"url" | "describe">(stored.description && !stored.url && !incoming ? "describe" : "url");
-  const [url, setUrl] = useState(() => incoming ?? cleanUrl(stored.url ?? ""));
+  const [url, setUrl] = useState(() => incomingDomain ?? (incoming && "raw" in incoming ? incoming.raw : withoutScheme(stored.url ?? "")));
   const [description, setDescription] = useState(stored.description ?? "");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => (incoming && "error" in incoming ? incoming.error : null));
   const profile = useProfile();
 
   // The visitor already asked for this site on the landing page, so go straight to reading it (step 2 starts
@@ -46,23 +51,23 @@ export default function Step1Company() {
     if (!incoming || started.current || profile.isPending) return;
     started.current = true;
     clearWebsite();
-    if (profile.data) return;
-    const full = `https://${incoming}`;
+    if (!incomingDomain || profile.data) return;
+    const full = `https://${incomingDomain}`;
     const s = getOnboarding();
     if (s.url !== full || s.description) resetOnboarding({ url: full });
     navigate("/onboarding/2", { replace: true });
-  }, [incoming, profile.isPending, profile.data, navigate]);
+  }, [incoming, incomingDomain, profile.isPending, profile.data, navigate]);
 
   function submit(e: FormEvent) {
     e.preventDefault();
     const s = getOnboarding();
     if (mode === "url") {
-      const v = cleanUrl(url);
-      if (!validHost(v)) {
-        setError("Enter your website's address, like acme.com");
+      const parsed = parseWebsite(url);
+      if (!parsed.ok) {
+        setError(websiteProblemMessage(parsed.problem));
         return;
       }
-      const full = `https://${v}`;
+      const full = `https://${parsed.domain}`;
       // Same site as the run already in progress: pick that run up instead of paying for a new one.
       if (s.url !== full || s.description) resetOnboarding({ url: full });
     } else {
@@ -106,6 +111,7 @@ export default function Step1Company() {
                   setError(null);
                 }}
                 aria-invalid={error ? true : undefined}
+                aria-describedby={error ? "step1-error" : undefined}
                 className="h-full min-w-0 grow bg-transparent pl-0.5 text-sm/5 font-medium text-ink caret-ink outline-none placeholder:text-[#200D0D4D] focus-visible:outline-none"
               />
             </label>
@@ -123,6 +129,7 @@ export default function Step1Company() {
                   setError(null);
                 }}
                 aria-invalid={error ? true : undefined}
+                aria-describedby={error ? "step1-error" : undefined}
                 className={cx(
                   "w-full resize-y rounded-[10px] border bg-white px-4 py-3 text-sm/5.25 font-medium text-ink outline-none transition-[border-color,box-shadow] placeholder:font-[450] placeholder:text-[#200D0D66] focus-visible:outline-none",
                   error ? "border-[#B42318]" : "border-[#200D0D24] focus:border-ink focus:[box-shadow:#BDE68966_0px_0px_0px_3px]",
@@ -131,7 +138,7 @@ export default function Step1Company() {
             </label>
           )}
           {error ? (
-            <div role="alert" className="-mt-1 text-[13px]/4.5 font-medium text-[#B42318]">
+            <div id="step1-error" role="alert" className="-mt-1 text-[13px]/4.5 font-medium text-[#B42318]">
               {error}
             </div>
           ) : null}
