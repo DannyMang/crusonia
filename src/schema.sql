@@ -24,15 +24,21 @@ alter table workspaces add column if not exists naive_synced_at timestamptz;
 alter table workspaces add column if not exists naive_provisioning_at timestamptz;
 insert into workspaces (id, name) values ('ws_owner', 'Owner') on conflict (id) do nothing;
 
--- Who belongs to a workspace. One user per workspace for now (unique clerk_user_id); teams come later.
+-- Who belongs to a workspace. A user can belong to several; the web app names one per request (X-Crusonia-Workspace),
+-- and src/services/workspaces.ts checks it against this table on every request.
 create table if not exists workspace_members (
   workspace_id  text not null references workspaces(id),
   clerk_user_id text not null,
-  role          text not null default 'owner' check (role in ('owner', 'member')),
+  role          text not null default 'member' check (role in ('owner', 'admin', 'member')),
   created_at    timestamptz not null default now(),
   primary key (workspace_id, clerk_user_id)
 );
-create unique index if not exists workspace_members_user_uq on workspace_members (clerk_user_id);
+-- Before teams: one workspace per user, and only owner and member.
+drop index if exists workspace_members_user_uq;
+create index if not exists workspace_members_user_idx on workspace_members (clerk_user_id, created_at);
+alter table workspace_members drop constraint if exists workspace_members_role_check;
+alter table workspace_members add constraint workspace_members_role_check check (role in ('owner', 'admin', 'member'));
+alter table workspace_members alter column role set default 'member';
 -- scripts/migrate.ts passes OWNER_CLERK_USER_ID as the session setting crusonia.owner_clerk_user_id (never in
 -- this file: it stays out of the repo). Without it the owner joins on first sign-in (src/services/workspaces.ts).
 insert into workspace_members (workspace_id, clerk_user_id, role)
@@ -1006,3 +1012,46 @@ create trigger naive_sessions_record_workflow_run before insert on naive_session
 alter table drafts add column if not exists followup_of text references drafts(id) on delete cascade;
 alter table drafts add column if not exists scheduled_for timestamptz;
 create index if not exists drafts_scheduled_idx on drafts (scheduled_for) where status = 'scheduled';
+
+-- Organizations: teammates join a workspace through an emailed invite (src/services/invites.ts). Additive and idempotent.
+-- created_by: who made the workspace (the cap per user and the one free sample per user count it).
+-- no_free_sample: a workspace its creator made after their first; ensureAccount grants it nothing.
+alter table workspaces add column if not exists created_by text;
+alter table workspaces add column if not exists no_free_sample boolean not null default false;
+create index if not exists workspaces_created_by_idx on workspaces (created_by) where created_by is not null;
+update workspaces w set created_by = (
+  select m.clerk_user_id from workspace_members m where m.workspace_id = w.id and m.role = 'owner' order by m.created_at limit 1
+) where w.created_by is null;
+
+-- Only the SHA-256 of a token is stored; the token itself exists only in the email. An invite is single-use, expires,
+-- and can only be accepted by a Clerk user with this verified email. One open invite per address per workspace.
+create table if not exists workspace_invites (
+  id           text primary key,
+  workspace_id text not null references workspaces(id) on delete cascade,
+  email        text not null,
+  role         text not null check (role in ('admin', 'member')),
+  token_hash   text not null unique,
+  invited_by   text not null,
+  inviter_name text,
+  expires_at   timestamptz not null,
+  created_at   timestamptz not null default now(),
+  last_sent_at timestamptz not null default now(),
+  accepted_at  timestamptz,
+  accepted_by  text,
+  revoked_at   timestamptz
+);
+create unique index if not exists workspace_invites_open_uq on workspace_invites (workspace_id, email) where accepted_at is null and revoked_at is null;
+create index if not exists workspace_invites_ws_idx on workspace_invites (workspace_id, created_at desc);
+
+-- One row per invite email sent, for the daily limits (per workspace, per sender, per address, per instance).
+create table if not exists invite_sends (
+  id           bigserial primary key,
+  workspace_id text not null references workspaces(id) on delete cascade,
+  actor        text not null,
+  email        text not null,
+  created_at   timestamptz not null default now()
+);
+create index if not exists invite_sends_ws_idx on invite_sends (workspace_id, created_at);
+create index if not exists invite_sends_actor_idx on invite_sends (actor, created_at);
+create index if not exists invite_sends_email_idx on invite_sends (email, created_at);
+create index if not exists invite_sends_created_idx on invite_sends (created_at);

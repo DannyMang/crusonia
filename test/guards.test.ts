@@ -9,7 +9,7 @@ import type { Env } from "../src/env.ts";
 import type { AppEnv, Principal } from "../src/lib/context.ts";
 import { ApiError } from "../src/lib/errors.ts";
 import { approveAndSend } from "../src/services/send.ts";
-import { canSendEmail } from "../src/services/workspaces.ts";
+import { canSendEmail, type WorkspaceRole } from "../src/services/workspaces.ts";
 
 const PRINCIPALS: Record<string, Principal> = {
   api_key: { kind: "api_key", keyId: "key_1", name: "agent", workspaceId: "ws_a" },
@@ -22,7 +22,9 @@ function app() {
   const a = new Hono<AppEnv>();
   a.onError((err, c) => (err instanceof ApiError ? c.json({ error: { code: err.code } }, err.status) : c.json({ error: String(err) }, 500)));
   a.use("*", async (c, next) => {
-    c.set("principal", PRINCIPALS[c.req.header("x-as") ?? ""]!);
+    const as = c.req.header("x-as") ?? "";
+    c.set("principal", PRINCIPALS[as]!);
+    c.set("role", (c.req.header("x-role") as WorkspaceRole | undefined) ?? (as === "api_key" ? "admin" : "owner"));
     await next();
   });
   guardHumanRoutes(a);
@@ -31,8 +33,9 @@ function app() {
   return a;
 }
 
-async function call(as: string, method: string, path: string, body?: unknown) {
-  const res = await app().request(path, { method, headers: { "x-as": as, "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+async function call(as: string, method: string, path: string, body?: unknown, role?: WorkspaceRole) {
+  const headers = { "x-as": as, "Content-Type": "application/json", ...(role ? { "x-role": role } : {}) };
+  const res = await app().request(path, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return { status: res.status, json: (await res.json()) as { ok?: boolean; body?: string; error?: { code: string } } };
 }
 
@@ -48,6 +51,16 @@ const REFUSED_FOR_KEYS: [string, string, unknown?][] = [
   ["PATCH", "/leads/lead_1", { consent: null }],
   ["DELETE", "/suppressions/a%40b.co"],
   ["POST", "/billing/checkout", { pack: "starter" }],
+  ["GET", "/team/members"],
+  ["GET", "/team/invites"],
+  ["POST", "/team/invites", { email: "a@b.co" }],
+  ["POST", "/team/invites/inv_1/resend", {}],
+  ["DELETE", "/team/invites/inv_1"],
+  ["PATCH", "/team/members/user_2", { role: "owner" }],
+  ["DELETE", "/team/members/user_2"],
+  ["POST", "/team/leave", {}],
+  ["POST", "/workspaces", { name: "New" }],
+  ["PATCH", "/workspaces/current", { name: "New" }],
   ["POST", "/billing/portal"],
 ];
 

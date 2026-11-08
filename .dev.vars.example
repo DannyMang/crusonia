@@ -55,12 +55,19 @@ CLERK_AUTHORIZED_PARTIES=
 # workspaces and is what MCP_TOKEN uses. Also a platform admin. `bun run migrate` reads it too (it never goes in a file
 # in the repo).
 OWNER_CLERK_USER_ID=
-# Anyone who signs up gets their own workspace. "false" closes sign-up (existing members still get in).
+# Anyone who signs up gets their own workspace. "false" closes sign-up (existing members and invited teammates still get in).
 # SIGNUPS_OPEN=true
 # Clerk user ids refused with 403 (comma list).
 # BLOCKED_USER_IDS=
 # Clerk user ids the owner approved: they can sign up while SIGNUPS_OPEN=false.
 # SIGNUP_ALLOWED_USER_IDS=
+# Teammate invite emails over the last 24 hours (they go out from AGENTMAIL_INBOX_ID, from any workspace), and how many
+# workspaces one person may make.
+# INVITES_PER_WORKSPACE_PER_DAY=20
+# INVITES_PER_USER_PER_DAY=30
+# INVITES_PER_EMAIL_PER_DAY=3
+# INVITES_PER_INSTANCE_PER_DAY=200
+# MAX_WORKSPACES_PER_USER=5
 # Workspaces besides the owner's that may send email (comma list of workspace ids). Every workspace sends from
 # AGENTMAIL_INBOX_ID, the owner's inbox, so the others can draft but not send until they are listed here.
 # SEND_WORKSPACE_IDS=

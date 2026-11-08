@@ -3,7 +3,7 @@ import { getSql } from "./db.ts";
 import type { Env } from "./env.ts";
 import { secretEquals } from "./lib/crypto.ts";
 import { isApiKey, verifyApiKey, type ApiKeyLookup } from "./services/api-keys.ts";
-import { OWNER_WORKSPACE_ID, workspaceRef, type Workspace } from "./services/workspaces.ts";
+import { OWNER_WORKSPACE_ID, WORKSPACE_HEADER, workspaceRef, type Workspace } from "./services/workspaces.ts";
 
 // Bearer tokens accepted by /mcp and /api: the shared MCP_TOKEN (the owner workspace) or a workspace API key
 // (`crs_live_...`, see src/services/api-keys.ts), looked up by its SHA-256 hash. Each resolves to one workspace.
@@ -32,7 +32,8 @@ export type McpEnv = { Bindings: Env; Variables: { bearer: BearerIdentity; works
 /**
  * Requires `Authorization: Bearer <MCP_TOKEN or API key>`. Answers 401 with `WWW-Authenticate: Bearer`
  * otherwise, and 503 if the server can check neither (no MCP_TOKEN and no database): fails closed.
- * A `?ws=` query parameter (the per-workspace URL of a Naive agent) must name the token's own workspace.
+ * A `?ws=` query parameter (the per-workspace URL of a Naive agent) and the X-Crusonia-Workspace header must name the
+ * token's own workspace: the token decides, and asking for another one is refused rather than ignored.
  */
 export function bearerAuth(lookup?: ApiKeyLookup): MiddlewareHandler<McpEnv> {
   return async (c, next) => {
@@ -57,8 +58,8 @@ export function bearerAuth(lookup?: ApiKeyLookup): MiddlewareHandler<McpEnv> {
       c.header("WWW-Authenticate", 'Bearer realm="crusonia", error="invalid_token"');
       return c.json({ ok: false, error: "unauthorized", message: "Invalid or revoked token." }, 401);
     }
-    const ws = c.req.query("ws");
-    if (ws !== undefined && ws !== identity.workspaceId) {
+    const named = [c.req.query("ws"), c.req.header(WORKSPACE_HEADER)];
+    if (named.some((ws) => ws !== undefined && ws !== identity.workspaceId)) {
       return c.json({ ok: false, error: "forbidden", message: "This token belongs to another workspace than the one in the URL." }, 403);
     }
     c.set("bearer", identity);

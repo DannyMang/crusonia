@@ -21,7 +21,7 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 | `src/mcp/server.ts` | MCP tool definitions: a thin layer over `src/services` |
 | `src/api/*.ts` | REST routers: `auth` (Clerk, API key or `MCP_TOKEN`), `leads`, `approvals`, `workflows`, `settings`, signed `webhooks`; web app: `dashboard` (me, summary, status, replies), `onboarding` (Company summary, profile, read-website, propose), `keys`; `billing` (Stripe); `integrations` (CRM sync); `admin` (platform admins, read-only) |
 | `src/billing/*.ts` | Stripe billing: `plans` (tiers, packs, the credit definition: the one file to edit), `accounts` (billing owner, ledger, 402 gate), `checkout` (Checkout and Customer Portal), `webhook` (Stripe events), `usage` (debits for finished Naive sessions), `expiry` (plan credit rollover), `overview`, `constants` |
-| `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron`; web app: `runs` (workflows/runs from Naive sessions and events, onboarding and find-leads sessions), `summary`, `replies`, `api-keys`; workspaces: `workspaces` (resolution, first sign-in), `company-summary` (the versioned markdown document), `naive-agents` (one Naive agent per workspace), `limits` (daily cap, rate limits), `domains` (company domain normalization); CRM sync: `crm-sync` (HubSpot/Notion push, HubSpot import, status), `crm-queue` (queue, retry, backoff), `crm-fields` (field mapping and ownership); `imessage` (notice queue for the bridge, owner commands, message wording) |
+| `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron`; web app: `runs` (workflows/runs from Naive sessions and events, onboarding and find-leads sessions), `summary`, `replies`, `api-keys`; workspaces: `workspaces` (resolution, first sign-in), `team` (members, roles, creating workspaces), `invites` and `invite-email` (teammate invites), `company-summary` (the versioned markdown document), `naive-agents` (one Naive agent per workspace), `limits` (daily cap, rate limits), `domains` (company domain normalization); CRM sync: `crm-sync` (HubSpot/Notion push, HubSpot import, status), `crm-queue` (queue, retry, backoff), `crm-fields` (field mapping and ownership); `imessage` (notice queue for the bridge, owner commands, message wording) |
 | `src/providers/*.ts` | Thin REST clients: `agentmail`, `naive`, `hubspot`, `notion` (the last two paced under their rate limits, 429-aware), `stripe` (no SDK, pinned API version) |
 | `src/lib/*.ts` | Errors (`{error: {code, message}}`), request helpers, Web Crypto, webhook signatures |
 | `test/*.test.ts` | `bun test`; `db.integration.test.ts` runs only with `TEST_DATABASE_URL` (a dev branch) |
@@ -231,7 +231,17 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | GET, PUT | `/api/settings/pause` | The workspace's kill switch: no sends, no new sessions, no auto-allowed tools |
 | GET, POST | `/api/suppressions` | List (`q`, `cursor`) / add `{email, reason?}` |
 | DELETE | `/api/suppressions/:email` | Remove |
-| GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token", workspace: {id, name, owner}}` |
+| GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token", workspace: {id, name, owner, role}}` |
+| GET, POST | `/api/workspaces` | The caller's workspaces with their role in each (`current`, `data`) / create one `{name}`. See [Teams](#teams) |
+| PATCH | `/api/workspaces/current` | Rename `{name}` (owner, admin) |
+| GET | `/api/team/members` | The workspace's members, with names and emails from Clerk |
+| PATCH, DELETE | `/api/team/members/:userId` | Change a role `{role}` / remove (owner, admin) |
+| POST | `/api/team/leave` | Leave the workspace (409 `last_owner` for the last owner) |
+| GET, POST | `/api/team/invites` | Open invites / invite `{email, role?}` (owner, admin; 429 `invite_rate_limited`) |
+| POST | `/api/team/invites/:id/resend` | New link, new 7 days; the old link stops working (owner, admin) |
+| DELETE | `/api/team/invites/:id` | Revoke (owner, admin) |
+| GET | `/api/invites/:token` | No auth: what the invite link shows (404 `invite_not_found`; 410 `invite_used`, `invite_revoked`, `invite_expired`) |
+| POST | `/api/invites/:token/accept` | Clerk session only: join (403 `invite_email_mismatch`) |
 | GET | `/api/summary` | Home: `pipeline` (cumulative: how many leads got at least to found, researched, drafted, sent, replied, meetings; plus `awaiting_approval` now), `pipeline_now` (where leads are now, one bucket each), `tasks_open`, top 5 `pending_approvals`, `pending_approvals_total`, `pending_sends_total` (send approvals only), `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` and `week_credits`: credits charged in the last 7 days; `provider_usd`: the raw Naive + Apify cost behind them; `budget_usd` from `WEEKLY_BUDGET_USD`; `day_usd` and `daily_cap_usd` for the workspace's daily cap), `paused` |
 | GET | `/api/status` | `get_status` data plus `workspace_id`, `inbox_address`, `naive_agent_configured`, `mcp_url`, `agent_mcp_url` (the workspace's Naive agent URL), `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error), `imessage` (owner workspace only: `enabled`, `active`, `missing`, `owner_phone_hint` (last 4 digits only), `bridge` as last reported with `online`, `undeliverable_notices`) |
 | GET | `/api/company-summary` | `{markdown, version, updated_at, updated_by, change_note}` (version 0 and a suggested `template` before the first save) |
@@ -291,8 +301,8 @@ than `TRACE_RETENTION_DAYS`.
 
 ## Workspaces
 
-Anyone can sign up: a new Clerk user gets their own private workspace on first sign-in (one user per workspace for now),
-with its own Company summary, leads, approvals, runs, budget and credits, plus the free sample credits once.
+Anyone can sign up: a new Clerk user gets their own private workspace on first sign-in, and can join others (see
+[Teams](#teams)), with its own Company summary, leads, approvals, runs, budget and credits, plus the free sample credits once.
 `SIGNUPS_OPEN=false` closes sign-up (existing members still get in), `BLOCKED_USER_IDS` refuses accounts. The instance
 owner's workspace (`ws_owner`) holds everything from before workspaces; `OWNER_CLERK_USER_ID` and `MCP_TOKEN` resolve
 to it. Every workspace sends from the one `AGENTMAIL_INBOX_ID` (the owner's address), so only the owner's workspace
@@ -305,8 +315,8 @@ deciding approvals, creating or revoking keys, setting a lead's consent, removin
 
 | Caller | Workspace |
 | --- | --- |
-| Clerk session | The user's (`workspace_members`), created on first sign-in; `OWNER_CLERK_USER_ID` is always the owner's |
-| `crs_live_` key | The key's (`api_keys.workspace_id`) |
+| Clerk session | One of the user's (`workspace_members`): the one in `X-Crusonia-Workspace` if they belong to it (403 `not_a_member` otherwise, checked on every request), else their oldest; the owner workspace by default for `OWNER_CLERK_USER_ID`; created on first sign-in for a user with none |
+| `crs_live_` key | The key's (`api_keys.workspace_id`); a header naming another one is refused (403) |
 | `MCP_TOKEN` | The owner's |
 | AgentMail webhook | The workspace of the draft or thread the message is about; a reply matched only by its sender counts only if one workspace has that lead; anything else lands in the owner's (the inbox is the instance's) |
 | Naive webhook, cron | The session's (`naive_sessions.workspace_id`) |
@@ -315,6 +325,41 @@ deciding approvals, creating or revoking keys, setting a lead's consent, removin
 Every tenant table has a `workspace_id`, and every service function takes the workspace and filters by it. Lead dedupe
 is per workspace: by email, else by company domain + name, where the domain is normalized to the registrable domain
 (`blog.acme.co.uk` -> `acme.co.uk`, also enforced by a trigger), so a company is stored once per workspace.
+
+### Teams
+
+A workspace can have several people, and a person can be in several workspaces. We use our own `workspace_members` and
+`workspace_invites` tables rather than Clerk Organizations: it needs no Clerk dashboard change, the membership check sits
+next to the data it protects, and the invite email is ours (`AGENTMAIL_INBOX_ID`).
+
+| Role | Can |
+|---|---|
+| `member` | The everyday work: leads, drafts, approvals, runs, the Company summary. Can read but not manage billing, API keys, the team or integrations |
+| `admin` | Also billing, API keys, integrations and the team; can't change or remove an owner, or make one |
+| `owner` | Everything. Only an owner can make or change an owner. The last owner can't leave or be demoted (409 `last_owner`) |
+
+The app names the current workspace with `X-Crusonia-Workspace`. It's only a request: the membership is read from the
+database on every request, with no cache, so someone removed is out on their next call. API keys and `MCP_TOKEN` are bound
+to their workspace, and an agent can't reach `/api/team`. Removing someone (or them leaving) also revokes the API keys they
+made and the invites they sent there.
+
+**Invites.** A token is 32 random bytes, sent only in the email and stored only as a hash. It works once, for 7 days, and
+only for a signed-in Clerk user with the invited address among their verified emails (read from Clerk). Resending mints a
+new token and the old link stops working. Accepting works while `SIGNUPS_OPEN=false`, and makes no workspace of the
+invitee's own.
+
+The email goes out from the instance's inbox as a fixed template, from any workspace (unlike outreach, `SEND_WORKSPACE_IDS`
+doesn't apply), so it's locked down: no custom message, names are escaped, a name that looks like a link isn't shown,
+addresses on the workspace's or the instance's do-not-contact list are refused (so a complaint stops them everywhere),
+nothing goes out while the workspace is paused, and the link is built from `PUBLIC_URL`. Limits over 24 hours, shared by
+invites and resends: `INVITES_PER_WORKSPACE_PER_DAY` (20), `INVITES_PER_USER_PER_DAY` (30, across workspaces),
+`INVITES_PER_EMAIL_PER_DAY` (3, across workspaces), `INVITES_PER_INSTANCE_PER_DAY` (200).
+
+**Making workspaces.** Up to `MAX_WORKSPACES_PER_USER` (5) per person. The free sample is one per person: only the first
+workspace they make gets it. While sign-ups are closed, someone who only joined through an invite can't make one.
+
+Audit events: `workspace_created`, `workspace_renamed`, `member_invited`, `invite_resent`, `invite_revoked`,
+`invite_accepted`, `invite_refused`, `invite_rate_limited`, `member_role_changed`, `member_removed`, `member_left`.
 
 **Naive, per workspace.** Naive matches vault credentials to an agent's MCP URL and can bind one to a single agent, but
 has no per-session credentials yet, so each workspace runs on its own agent: a copy of the owner's template agent
@@ -664,7 +709,8 @@ BRIDGE_SECRET=<same> bun src/cli.ts tap +15550001111 <bubble id> 👍   # simula
   Stripe; Company summary markdown and domain normalization; iMessage wording, signatures and webhook checks; and the
   bridge's own tests in `bridge/test`). With `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts`
   (send/reply/Naive flows), `test/web-api.integration.test.ts` (keys, summary, replies, workflows, onboarding),
-  `test/workspaces.integration.test.ts` (migration and billing merge, first sign-in, isolation of every route and MCP
+  `test/organizations.integration.test.ts` (a user in two workspaces, spoofed headers, invite tokens, roles, the last
+  owner, rate limits, one free sample per person), `test/workspaces.integration.test.ts` (migration and billing merge, first sign-in, isolation of every route and MCP
   tool, Company summary versions, cohorts and workflow versions, credits and limits, webhooks, platform admins, the
   per-workspace Naive agent), `test/crm-sync.integration.test.ts` (trigger, queue, pushes, import),
   `test/billing.integration.test.ts` (webhook, ledger, refunds, rollover, usage debits, the 402 gate) and

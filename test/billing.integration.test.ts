@@ -20,7 +20,6 @@ import { ApiError } from "../src/lib/errors.ts";
 import { signStripe } from "../src/lib/signatures.ts";
 import type { FetchFn } from "../src/providers/http.ts";
 import { handleSessionIdle } from "../src/services/workflows.ts";
-import { resetWorkspaceCache } from "../src/services/workspaces.ts";
 import { fakeStripe, type FakeStripe } from "./fake-stripe.ts";
 import { deleteTestWorkspaces } from "./helpers/workspace.ts";
 
@@ -134,7 +133,7 @@ suite("billing (database, faked Stripe and Naive)", () => {
     sql = getSql(url);
     const ids = OWNERS.map(owner);
     await sql`insert into workspaces (id, name) select x, 'billing test' from unnest(${ids}::text[]) x`;
-    await sql`insert into workspace_members (workspace_id, clerk_user_id) values (${owner("gate")}, ${`user_it_${run}_gate`})`;
+    await sql`insert into workspace_members (workspace_id, clerk_user_id, role) values (${owner("gate")}, ${`user_it_${run}_gate`}, 'owner')`;
     const params = { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" };
     keys = (await crypto.subtle.generateKey(params, true, ["sign", "verify"])) as CryptoKeyPair;
     const spki = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64");
@@ -474,7 +473,6 @@ suite("billing (database, faked Stripe and Naive)", () => {
 
   test("402 through the routes for a Clerk user's workspace: enforced with no credits (whatever BILLING_ENFORCED says), MCP_TOKEN bypass, after a top-up", async () => {
     const o = owner("gate");
-    resetWorkspaceCache();
     const env: Env = {
       ...baseEnv(),
       CLERK_JWT_KEY: pem,

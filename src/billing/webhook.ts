@@ -201,13 +201,13 @@ type Owner = { workspace: string } | { error: string };
  * The workspace a metadata owner id names: a workspace id, or a legacy billing owner id from before workspaces
  * ('owner', or a Clerk user id) mapped through the merged billing account or the user's membership.
  */
-async function workspaceForOwnerId(sql: Sql, ownerId: string): Promise<string | null> {
+export async function workspaceForOwnerId(sql: Sql, ownerId: string): Promise<string | null> {
   if (ownerId === "owner") return OWNER_WORKSPACE_ID;
   const [row] = await sql`
     select coalesce(
       (select id from workspaces where id = ${ownerId}),
       (select workspace_id from billing_accounts where owner_id = ${ownerId}),
-      (select workspace_id from workspace_members where clerk_user_id = ${ownerId})
+      (select workspace_id from workspace_members where clerk_user_id = ${ownerId} and role = 'owner' order by created_at limit 1)
     ) as workspace_id`;
   return (row?.workspace_id as string | null) ?? null;
 }
