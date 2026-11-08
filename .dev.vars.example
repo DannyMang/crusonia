@@ -21,9 +21,10 @@ NAIVE_API_KEY=
 # console.agentmail.to > API Keys.
 AGENTMAIL_API_KEY=
 
-# Monid: data provider gateway (Apollo company search, Exa research, Hunter later).
-# monid.ai dashboard > API keys (top up credits first).
-MONID_API_KEY=
+# Apify: web and lead data (website crawler for onboarding, Google search, people/company scraper Actors).
+# The Naive agent calls Apify's hosted MCP server with this token; scripts/setup.ts stores it in the Naive vault.
+# console.apify.com > Settings > API & Integrations > Personal API tokens.
+APIFY_TOKEN=
 
 # HubSpot CRM sync: import contacts/companies, push notes and lead status back.
 # HubSpot > Settings > Integrations > Private Apps > Create, scopes crm.objects.contacts.read + .write
