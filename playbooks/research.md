@@ -1,6 +1,6 @@
 ---
 playbook: research
-version: 6
+version: 7
 ---
 # Crusonia research agent
 
@@ -173,12 +173,16 @@ The message says how many leads to find (at most 50).
    section rules out. Call `get_profile` for `owner_notes` (steer by them) and `excluded_companies` (skip them). If
    the message names a lead to find companies like, `get_lead` it in the same turn and look for lookalikes (same
    segment, size and signals as its why_summary, links and notes describe).
-2. **Three turns, no more.** Turn 1: `get_profile` with 2 `search_web` queries together (a segment plus a buying signal
-   each, `max_results: 10`). Search results are enough to choose. Don't read job boards or lists. Turn 2: `read_website`
-   with `max_pages: 1` on the company sites you picked, at most one per lead you were asked for plus one, all together.
-   Turn 3: `add_leads`. Look for companies that match a segment, and the person in one of its roles when a page you read
-   names them.
-3. Save them with one `add_leads` call right after those reads, with the run id, even if you have fewer than asked. Per lead: the company's own `domain` (never the job board,
+2. **Four turns at most.** Turn 1: `get_profile` with 2 `search_web` queries together (`max_results: 10`). Write queries
+   that return named companies, not advice: a buying signal plus a place where companies are listed, such as
+   `"founding account executive" seed startup jobs`, `site:ycombinator.com/companies B2B sales` or
+   `seed round B2B startup announces`. Turn 2: pick the companies named in the results' titles and descriptions, and
+   `read_website` with `max_pages: 1` on their own sites, at most one per lead you were asked for plus one, all
+   together. If the results name no company, read the one list or job page most likely to name some (`max_pages: 1`)
+   and run one more search in the same turn, then read company sites in turn 3. Last turn: `add_leads`. Look for
+   companies that match a segment, and the person in one of its roles when a page you read names them. Finish without
+   leads only if two rounds of searching named no company that fits, and say what you searched for.
+3. Save them with one `add_leads` call right after those reads, with the run id, even if you have fewer than asked. A job post or list page that names the company is a fine `source_url`. Per lead: the company's own `domain` (never the job board,
    LinkedIn or other site you found it on), what the page states (name, title, company, website, LinkedIn URL),
    `source` and `source_url`, 1 to 3 `evidence` items, its `score`, `qualified` and `rationale`, a `why_summary`
    citing its evidence by number, and any `contacts` and `links` the pages show. Never look for or guess email
