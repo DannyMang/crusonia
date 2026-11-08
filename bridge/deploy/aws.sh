@@ -136,8 +136,9 @@ cmd_up() {
   cmd_plan
   check_inputs
   [[ "$(instance_state)" == absent ]] || die "instance $INSTANCE exists; use recreate"
-  local tmp; tmp="$(mktemp -d)"; chmod 700 "$tmp"
-  trap 'rm -rf "$tmp"' EXIT
+  UP_TMP="$(mktemp -d)"; chmod 700 "$UP_TMP"
+  local tmp="$UP_TMP"
+  trap 'rm -rf "${UP_TMP:-}"' EXIT
   (umask 077; launch_script > "$tmp/launch.sh")
   ls_ create-instances --instance-names "$INSTANCE" --availability-zone "$AZ" --blueprint-id "$BLUEPRINT" \
     --bundle-id "$BUNDLE" --ip-address-type ipv4 --user-data "file://$tmp/launch.sh" \
