@@ -7,6 +7,7 @@ import { createMcpServer } from "../src/mcp/server.ts";
 import {
   APIFY_ALLOWED_TOOLS,
   APIFY_MCP_URL,
+  CRUSONIA_ASK_TOOLS,
   CRUSONIA_TOOLS,
   DEFAULT_AGENT_MODEL,
   PLAYBOOK_PATH,
@@ -70,7 +71,10 @@ describe("agent definition", () => {
   test("allows every crusonia tool and the research Apify tools, asks for the rest", () => {
     const { tools } = config();
     expect(tools.default_config).toEqual({ permission: "ask" });
-    for (const tool of CRUSONIA_TOOLS) expect(tools.configs[`crusonia.${tool}`]).toEqual({ enabled: true, permission: "allow" });
+    for (const tool of CRUSONIA_TOOLS) {
+      const permission = (CRUSONIA_ASK_TOOLS as readonly string[]).includes(tool) ? "ask" : "allow";
+      expect(tools.configs[`crusonia.${tool}`]).toEqual({ enabled: true, permission });
+    }
     for (const tool of APIFY_ALLOWED_TOOLS) expect(tools.configs[`apify.${tool}`]).toEqual({ enabled: true, permission: "allow" });
     expect(tools.configs.ask_operator).toEqual({ enabled: true, permission: "ask" });
     // Actor runs and anything unlisted fall through to the `ask` default, and the Apify URL loads no Actor-run tools.

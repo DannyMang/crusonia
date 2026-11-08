@@ -28,6 +28,9 @@ const domain = (name: string) => `${name}-${run}-itdemo.dev`;
 const cohort = `IT demo ${run}`;
 let WS = "";
 let key = "";
+// A second workspace: must never see or change the first one's data.
+let WS_B = "";
+let keyB = "";
 const env: Env = {
   PUBLIC_URL: "https://example.test",
   DATABASE_URL: url,
@@ -52,17 +55,33 @@ function provider(route: (call: Call) => Response | undefined) {
   return { fn, calls };
 }
 
-async function api(method: string, path: string, body?: unknown): Promise<{ status: number; json: any }> {
+async function api(method: string, path: string, body?: unknown, as = () => key): Promise<{ status: number; json: any }> {
   const res = await worker.fetch(
     new Request(`https://example.test${path}`, {
       method,
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${as()}`, "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
     env,
     ctx,
   );
   return { status: res.status, json: await res.json() };
+}
+
+let rpcId = 0;
+async function tool(token: string, name: string, args: Record<string, unknown> = {}): Promise<{ data?: any; error?: string }> {
+  const res = await worker.fetch(
+    new Request("https://example.test/mcp", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/call", params: { name, arguments: args } }),
+    }),
+    env,
+    ctx,
+  );
+  const rpc = (await res.json()) as { result: { isError?: boolean; content: { text: string }[] } };
+  const text = rpc.result.content[0]!.text;
+  return rpc.result.isError ? { error: text } : { data: JSON.parse(text) };
 }
 
 const CSV = [
@@ -95,6 +114,8 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     // Everything happens in a throwaway workspace, deleted afterwards.
     WS = await createTestWorkspace(sql, `demo_${run}`);
     key = await testKey(sql, WS);
+    WS_B = await createTestWorkspace(sql, `demob_${run}`);
+    keyB = await testKey(sql, WS_B);
     // A workspace other than the owner's runs on its own copy of the template agent; pretend it exists.
     await sql`update workspaces set naive_agent_id = 'agt_ws_copy', naive_credential_id = 'vcr_x', naive_synced_at = now() + interval '1 hour'
               where id = ${WS}`;
@@ -102,7 +123,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
 
   afterAll(async () => {
     if (!sql) return;
-    await deleteTestWorkspaces(sql, [WS]);
+    await deleteTestWorkspaces(sql, [WS, WS_B]);
     await sql`delete from webhook_events where event_id like ${`%itdemo_${run}%`}`;
   });
 
@@ -319,5 +340,42 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     expect(arm.counts).toMatchObject({ qualified: 1, drafted: 1, approved: 1, sent: 1, replied: 1 });
     expect(history.variants.arms.reduce((s, a) => s + a.counts.leads, 0)).toBe(2);
     expect(arm.label).toBe(adaVariant === "A" ? "Hiring angle" : "Cost angle");
+  });
+  test("tenant isolation: another workspace can't read or change these definitions, runs, imports or follow-ups", async () => {
+    const B = () => keyB;
+    // Definitions and runs: invisible and unchangeable from workspace B.
+    expect((await api("GET", "/api/workflow-definitions", undefined, B)).json.data.some((d: { id: string }) => d.id === workflowId)).toBe(false);
+    expect((await api("GET", `/api/workflow-definitions/${workflowId}`, undefined, B)).status).toBe(404);
+    expect((await api("PATCH", `/api/workflow-definitions/${workflowId}`, { enabled: false }, B)).status).toBe(404);
+    expect((await api("POST", `/api/workflow-definitions/${workflowId}/versions`, { research_questions: ["x"] }, B)).status).toBe(404);
+    expect((await api("POST", `/api/workflow-definitions/${workflowId}/run`, { test_leads: 1 }, B)).status).toBe(404);
+    expect((await api("GET", `/api/workflow-definitions/${workflowId}/runs`, undefined, B)).status).toBe(404);
+    expect((await api("GET", `/api/workflows/runs/${runId}/trace`, undefined, B)).status).toBe(404);
+    expect((await api("GET", `/api/workflow-definitions/${workflowId}`)).json.workflow.enabled).toBe(true);
+
+    // Imports: B's preview of the same file sees none of A's leads, and a commit in B creates B's own.
+    const body = { csv: CSV, mapping: { ...MAPPING, consent: undefined, consent_at: undefined }, source: `${cohort} B` };
+    const previewB = (await api("POST", "/api/import/preview", body, B)).json;
+    expect(previewB.rows[0]).toMatchObject({ status: "new" });
+    expect(previewB.rows.some((r: { lead_id?: string }) => r.lead_id === adaId)).toBe(false);
+    const committedB = (await api("POST", "/api/import/commit", body, B)).json;
+    expect(committedB.created).toBe(3);
+    expect((await sql`select workspace_id from leads where id = ${adaId}`)[0]!.workspace_id).toBe(WS);
+    expect((await sql`select count(*)::int as n from leads where workspace_id = ${WS} and cohort = ${`${cohort} B`}`)[0]!.n).toBe(0);
+
+    // Follow-ups: B can neither list nor create them on A's lead.
+    expect((await api("GET", `/api/leads/${adaId}/followups`, undefined, B)).json.data).toEqual([]);
+    const tryB = await api("POST", `/api/leads/${adaId}/followups`, { body: "Hi", send_after_days: 1 }, B);
+    expect(tryB.status).toBe(409);
+    expect((await api("GET", `/api/leads/${adaId}/followups`)).json.data.length).toBe(1);
+
+    // MCP: create_workflow lands in the caller's workspace; get_workflow can't read another workspace's definition.
+    const made = await tool(keyB, "create_workflow", { name: `IT demo ${run} by agent B`, evidence_required: ["A source"] });
+    expect(made.data.workflow).toMatchObject({ source: "claude_code" });
+    expect((await sql`select workspace_id from workflow_defs where id = ${made.data.workflow.id}`)[0]!.workspace_id).toBe(WS_B);
+    expect((await api("GET", `/api/workflow-definitions/${made.data.workflow.id}`)).status).toBe(404);
+    expect((await tool(keyB, "get_workflow", { workflow_id: workflowId })).error).toContain("No workflow");
+    expect((await tool(keyB, "get_workflow", { lead_id: adaId })).error).toContain("No lead");
+    expect((await tool(key, "get_workflow", { lead_id: adaId })).data).toMatchObject({ workflow_id: workflowId });
   });
 });
