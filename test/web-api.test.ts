@@ -120,12 +120,12 @@ describe("run steps from Naive events", () => {
   test("a tool call is one step with duration, input and output; model steps carry cost; usage is not a step", () => {
     const steps = buildSteps(events);
     expect(steps.map((s) => [s.seq, s.type, s.naive_seq])).toEqual([
-      [1, "message", 1], [2, "model", 3], [3, "tool", 4], [4, "approval", 6], [5, "status", 9],
+      [1, "message", 1], [2, "model", 3], [3, "tool", 4], [4, "tool", 6], [5, "status", 9],
     ]);
     expect(steps[0]!.summary).toBe("Instruction: Research lead lead_1 for Crusonia.");
     expect(steps[1]).toMatchObject({ summary: "m-large: 1,200 tokens", duration_ms: 900, cost_usd: 0.012 });
     expect(steps[2]).toMatchObject({ tool: "search_web", summary: "search_web: logistics VP Sales", duration_ms: 2000, input: { query: "logistics VP Sales" }, output: "{\"results\":[]}", is_error: false });
-    expect(steps[3]!.summary).toBe("Needs approval: send (x@y.z): denied");
+    expect(steps[3]).toMatchObject({ summary: "send: x@y.z (denied)", is_error: true, approval: { decision: "deny" } });
     expect(steps[4]!.summary).toBe("Finished");
   });
 
@@ -134,10 +134,10 @@ describe("run steps from Naive events", () => {
       { id: 10, kind: "research_started", data: { session_id: "ses_1" }, created_at: t(-1) },
       { id: 11, kind: "naive_tool_auto_allowed", data: { tool: "crusonia.search_web" }, created_at: t(4) },
     ]);
+    // The auto-allow bookkeeping folds into its tool step instead of being a line of its own.
     expect(steps.map((s) => `${s.seq}:${s.source}:${s.type}`)).toEqual([
-      "1:crusonia:crusonia", "2:naive:message", "3:naive:model", "4:naive:tool", "5:crusonia:crusonia", "6:naive:approval", "7:naive:status",
+      "1:crusonia:crusonia", "2:naive:message", "3:naive:model", "4:naive:tool", "5:naive:tool", "6:naive:status",
     ]);
-    expect(steps[4]!.summary).toBe("Auto-allowed crusonia.search_web (owner policy)");
   });
 
   test("a failed tool is marked; out-of-order seqs are sorted", () => {
@@ -149,18 +149,21 @@ describe("run steps from Naive events", () => {
     expect(steps[0]).toMatchObject({ summary: "read_website: https://acme.com (failed)", is_error: true });
   });
 
-  test("stored events drop noise and truncate large outputs", () => {
-    const big = "x".repeat(20_000);
+  test("the stored trace keeps every event but streaming deltas, and truncates huge fields", () => {
+    const big = "x".repeat(100_000);
     expect(storableEvent({ seq: 1, type: "message.delta", data: { content: "hi" } })).toBeNull();
-    expect(storableEvent({ seq: 2, type: "span.harness_load.start", data: {} })).toBeNull();
-    expect(storableEvent({ seq: 3, type: "span.model_request.end", data: {}, created_at: t(0) })).not.toBeNull();
-    const stored = storableEvent({ seq: 4, type: "tool.completed", data: { name: "read_website", output: big }, created_at: t(0) })!;
-    expect((stored.data.output as string).length).toBeLessThan(8100);
+    expect(storableEvent({ seq: 2, type: "span.harness_load.start", data: {} })).not.toBeNull();
+    expect(storableEvent({ seq: 3, type: "session.running", data: {} })).not.toBeNull();
+    expect(storableEvent({ seq: 4, type: "span.model_request.end", data: {}, created_at: t(0) })).not.toBeNull();
+    const stored = storableEvent({ seq: 5, type: "tool.completed", data: { name: "read_website", output: big }, created_at: t(0) })!;
+    expect((stored.data.output as string).length).toBeLessThan(64_100);
+    expect((stored.data.output as string).length).toBeGreaterThan(60_000);
     expect(stored.data.output as string).toEndWith("[truncated]");
   });
 
-  test("add_leads results count toward leads_processed (added + updated), errors and other tools do not", () => {
+  test("add_leads results count toward leads_processed (created + merged), errors and other tools do not", () => {
     const ev = (name: string, output: unknown, is_error = false): NaiveEvent => ({ seq: 1, type: "tool.completed", data: { name, output, is_error } });
+    expect(leadsFromAddLeads(ev("add_leads", JSON.stringify({ counts: { created: 1, merged: 2, known: 7, skipped: 1 } })))).toBe(3);
     const out = JSON.stringify({ results: [], counts: { added: 3, updated: 2, skipped: 4 } }, null, 2);
     expect(leadsFromAddLeads(ev("crusonia.add_leads", out))).toBe(5);
     expect(leadsFromAddLeads(ev("add_leads", [{ type: "text", text: out }]))).toBe(5);

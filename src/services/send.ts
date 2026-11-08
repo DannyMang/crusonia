@@ -75,7 +75,7 @@ export async function approveAndSend(deps: SendDeps, code: string): Promise<Send
         and not exists (select 1 from suppressions s where s.email = lower(approvals.recipient))
         and exists (select 1 from leads l where l.id = approvals.lead_id
                     and l.consent_at is not null and lower(l.email) = lower(approvals.recipient))
-        and exists (select 1 from drafts d where d.id = approvals.draft_id and d.status = 'pending_approval'
+        and exists (select 1 from drafts d where d.id = approvals.draft_id and d.status = 'pending_approval' and d.channel = 'email'
                     and d.version = (select max(version) from drafts where lead_id = approvals.lead_id))
       returning code, lead_id, draft_id, recipient
     ), d as (
