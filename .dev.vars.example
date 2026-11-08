@@ -141,7 +141,8 @@ STRIPE_WEBHOOK_SECRET=
 # Naive tool calls that run without asking the owner: comma list, `*` suffix wildcards, `none` to ask for everything.
 # Anything else becomes a 'tool' approval. Never auto-allowed while paused.
 # Apify is limited to the single-page reader and the read-only get-* tools: Actor runs reach the owner as approvals.
-# AUTO_CONFIRM_TOOLS=crusonia.*,apify.apify--rag-web-browser,apify.get-*,web_search,web_fetch
+# AUTO_CONFIRM_TOOLS=crusonia.get_lead,crusonia.save_research,...  (default: see DEFAULT_AUTO_CONFIRM_TOOLS in src/services/policy.ts;
+# list_* tools and web_fetch ask the owner)
 # Hard cap in USD on every Apify Actor run Crusonia starts (maxTotalChargeUsd; search_web, read_website). Runs are
 # metered into credits at the usage markup either way.
 # APIFY_MAX_CHARGE_USD=0.25

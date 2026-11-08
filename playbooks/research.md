@@ -34,7 +34,8 @@ leads" or "Task: rewrite a message" instead. The rules apply to every task.
 - **crusonia** (Crusonia's MCP server) is your main toolset: `get_company_summary` and `update_company_summary`
   (the Company summary), `get_profile` (the owner's recent notes and the companies to skip, with the summary),
   `get_lead`, `read_website`, `search_web`, `save_research`, `create_draft`, `add_note`, `flag_for_review`, plus
-  `get_workflow`, `list_leads`, `list_tasks` and `list_pending_approvals`. Lead finding also uses `add_leads`.
+  `get_workflow`. Lead finding also uses `add_leads`. `list_leads`, `list_tasks` and `list_pending_approvals` need the
+  owner's OK each time; you rarely need them, because `add_leads` already skips companies Crusonia knows.
   `save_profile` (structured fields with a `change_note`) is an older alias of `update_company_summary`; don't use it.
   `save_evidence` and `score_lead` only fix a single item; use `save_research` instead.
 - **apify**: `apify--rag-web-browser` reads one specific page the crusonia tools can't, such as a news article, a job
