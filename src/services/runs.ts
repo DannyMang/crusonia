@@ -525,15 +525,15 @@ export function findLeadsMessage(count: number): string {
 async function startOwnerSession(
   sql: Sql,
   naive: { client: NaiveClient; agentId: string },
-  input: { purpose: string; message: string; data: Record<string, unknown>; actor: string },
+  input: { purpose: string; message: string; data: Record<string, unknown>; actor: string; billingOwnerId?: string | null },
 ): Promise<{ session_id: string }> {
   if (await isPaused(sql)) throw new ApiError(423, "paused", "Crusonia is paused; no new work starts (PUT /api/settings/pause to resume)");
   const session = await naive.client
     .createSession({ agent_id: naive.agentId, message: input.message, metadata: { purpose: input.purpose } })
     .catch(naiveFailure);
   await sql.transaction([
-    sql`insert into naive_sessions (id, lead_id, purpose, status, input)
-        values (${session.id}, null, ${input.purpose}, 'running', ${JSON.stringify(input.data)}::jsonb)
+    sql`insert into naive_sessions (id, lead_id, purpose, status, input, billing_owner_id)
+        values (${session.id}, null, ${input.purpose}, 'running', ${JSON.stringify(input.data)}::jsonb, ${input.billingOwnerId ?? null})
         on conflict (id) do nothing`,
     sql`insert into events (lead_id, kind, data)
         values (null, ${`${input.purpose}_started`}, ${JSON.stringify({ ...input.data, session_id: session.id, actor: input.actor })}::jsonb)`,
@@ -548,20 +548,28 @@ export async function startOnboardingProposal(
   input: { url?: string; description?: string },
   actor: string,
   fetchFn?: FetchFn,
+  opts: { billingOwnerId?: string | null } = {},
 ) {
   const naive = naiveAgent(env, fetchFn);
   const data = { ...(input.url ? { url: input.url } : {}), ...(input.description ? { description: input.description.slice(0, 500) } : {}) };
-  return startOwnerSession(sql, naive, { purpose: "onboarding", message: onboardingMessage(input), data, actor });
+  return startOwnerSession(sql, naive, { purpose: "onboarding", message: onboardingMessage(input), data, actor, billingOwnerId: opts.billingOwnerId });
 }
 
 /** POST /api/leads/find: the agent searches for leads matching the saved profile, adds and researches them. */
-export async function startFindLeads(sql: Sql, env: Env, count: number, actor: string, fetchFn?: FetchFn) {
+export async function startFindLeads(
+  sql: Sql,
+  env: Env,
+  count: number,
+  actor: string,
+  fetchFn?: FetchFn,
+  opts: { billingOwnerId?: string | null } = {},
+) {
   const naive = naiveAgent(env, fetchFn);
   if (!(await getProfile(sql))) {
     throw new ApiError(409, "profile_missing", "Save a profile first (PUT /api/profile or POST /api/onboarding/propose): lead finding searches for it");
   }
   const n = Math.min(Math.max(Math.trunc(count), 1), MAX_FIND_LEADS);
-  return startOwnerSession(sql, naive, { purpose: "find_leads", message: findLeadsMessage(n), data: { count: n }, actor });
+  return startOwnerSession(sql, naive, { purpose: "find_leads", message: findLeadsMessage(n), data: { count: n }, actor, billingOwnerId: opts.billingOwnerId });
 }
 
 const REFRESH_AFTER_MS = 3000;

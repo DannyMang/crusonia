@@ -1,5 +1,6 @@
 // Naive sessions: start research per lead, react when a session goes idle (auto-confirm allowlisted tools,
 // turn everything else into owner approvals), and reconcile sessions whose webhooks we missed.
+import { settleSessionUsage } from "../billing/usage.ts";
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { ApiError, notConfigured } from "../lib/errors.ts";
@@ -34,7 +35,15 @@ export function researchMessage(leadId: string): string {
   ].join("\n");
 }
 
-export async function startResearch(sql: Sql, env: Env, input: ResearchInput, actor: string, fetchFn?: FetchFn) {
+/** `billingOwnerId` (src/billing/accounts.ts) pays for the sessions when they finish; null = not billed. */
+export async function startResearch(
+  sql: Sql,
+  env: Env,
+  input: ResearchInput,
+  actor: string,
+  fetchFn?: FetchFn,
+  opts: { billingOwnerId?: string | null } = {},
+) {
   const client = naiveFrom(env, fetchFn);
   if (!env.NAIVE_AGENT_ID) throw notConfigured("NAIVE_AGENT_ID");
   if (await isPaused(sql)) throw new ApiError(423, "paused", "Crusonia is paused; no new work starts (PUT /api/settings/pause to resume)");
@@ -80,7 +89,8 @@ export async function startResearch(sql: Sql, env: Env, input: ResearchInput, ac
         metadata: { lead_id: lead.id, purpose: "research" },
       });
       await sql.transaction([
-        sql`insert into naive_sessions (id, lead_id, purpose, status) values (${session.id}, ${lead.id}, 'research', 'running')
+        sql`insert into naive_sessions (id, lead_id, purpose, status, billing_owner_id)
+            values (${session.id}, ${lead.id}, 'research', 'running', ${opts.billingOwnerId ?? null})
             on conflict (id) do nothing`,
         sql`update leads set stage = 'researching', updated_at = now()
             where id = ${lead.id} and stage in ('new', 'no_consent', 'needs_review', 'qualified', 'disqualified')`,
@@ -199,6 +209,12 @@ export async function handleSessionIdle(
       approvals,
     })}::jsonb)`,
   ]);
+  // A finished session pays for its spend now; the minute cron retries if this fails (src/billing/usage.ts).
+  if (status === "done" || status === "error") {
+    await settleSessionUsage(sql, session.id).catch((err) =>
+      console.error(`usage debit ${session.id}:`, err instanceof Error ? err.message : err),
+    );
+  }
   return { known: true, auto_allowed: autoAllowed, approvals };
 }
 

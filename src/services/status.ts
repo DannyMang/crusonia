@@ -33,6 +33,7 @@ export async function getStatus(env: Env): Promise<Status> {
       "HUBSPOT_ACCESS_TOKEN",
     ]),
     notion: provider(env, "CRM sync: a Crusonia leads database (writes only with NOTION_SYNC_ENABLED=true)", ["NOTION_API_TOKEN", "NOTION_LEADS_DATABASE_ID"]),
+    stripe: provider(env, "billing: credit packs and monthly plans (Checkout, Customer Portal, webhook)", ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"]),
   };
 
   const database: Status["database"] = { configured: providers.database.configured, reachable: null };

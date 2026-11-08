@@ -4,6 +4,8 @@
 // base64-decoded part of `whsec_<base64>`, sent as space-separated `v1,<base64>` entries.
 // Naive (vetta.sh) signs HMAC-SHA256 over `${timestamp}.${body}` keyed by the endpoint secret as given,
 // sent as `Vetta-Signature: v1=<hex>` (comma-separated while a key rotates) plus `Vetta-Timestamp`.
+// Stripe signs HMAC-SHA256 over `${t}.${body}` keyed by the endpoint secret as given (whsec_...), sent as
+// `Stripe-Signature: t=<unix>,v1=<hex>[,v1=<hex>...]` (several v1 while a secret rolls; v0 is ignored).
 import { bytesEqual, fromBase64, hmacSha256, toBase64, toHex, utf8 } from "./crypto.ts";
 
 export const SIGNATURE_TOLERANCE_SECONDS = 5 * 60;
@@ -74,5 +76,36 @@ export async function verifyNaive(input: {
     const value = entry.slice(eq + 1).trim().toLowerCase();
     if (scheme === "v1" && bytesEqual(utf8(value), expected)) return { ok: true };
   }
+  return { ok: false, reason: "no matching v1 signature" };
+}
+
+export async function signStripe(secret: string, timestamp: string | number, body: string): Promise<string> {
+  return `t=${timestamp},v1=${toHex(await hmacSha256(utf8(secret), `${timestamp}.${body}`))}`;
+}
+
+export async function verifyStripe(input: {
+  secret: string;
+  header: string | undefined;
+  body: string;
+  now: number;
+  tolerance?: number;
+}): Promise<VerifyResult> {
+  if (!input.secret) return { ok: false, reason: "no webhook secret configured" };
+  if (!input.header) return { ok: false, reason: "missing Stripe-Signature" };
+  let timestamp: string | undefined;
+  const signatures: string[] = [];
+  for (const part of input.header.split(",")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key === "t") timestamp = value;
+    else if (key === "v1" && value) signatures.push(value.toLowerCase());
+  }
+  if (!signatures.length) return { ok: false, reason: "no v1 signature" };
+  const time = checkTimestamp(timestamp, input.now, input.tolerance ?? SIGNATURE_TOLERANCE_SECONDS);
+  if (!time.ok) return time;
+  const expected = utf8(toHex(await hmacSha256(utf8(input.secret), `${timestamp}.${input.body}`)));
+  for (const sig of signatures) if (bytesEqual(utf8(sig), expected)) return { ok: true };
   return { ok: false, reason: "no matching v1 signature" };
 }

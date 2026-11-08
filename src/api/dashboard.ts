@@ -1,6 +1,7 @@
 // Web app reads: /api/me, /api/summary (Home), /api/status (Integrations), /api/replies.
 import { Hono } from "hono";
 import { z } from "zod";
+import { billingConfig } from "../billing/overview.ts";
 import type { Env } from "../env.ts";
 import { parseQuery, sqlFor, type AppEnv, type Principal } from "../lib/context.ts";
 import { REPLY_LABELS } from "../services/classify.ts";
@@ -62,6 +63,7 @@ dashboard.get("/status", async (c) => {
     inbox_address: c.env.AGENTMAIL_API_KEY && inbox && inbox.includes("@") ? inbox : null,
     naive_agent_configured: Boolean(c.env.NAIVE_API_KEY && c.env.NAIVE_AGENT_ID),
     mcp_url: `${c.env.PUBLIC_URL.replace(/\/+$/, "")}/mcp`,
+    billing: billingConfig(c.env),
     // Per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error. Details: GET /api/integrations/crm.
     crm_sync: await crmStatusSummary(sql, c.env),
   });

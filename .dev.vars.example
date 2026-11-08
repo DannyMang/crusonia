@@ -93,6 +93,25 @@ NOTION_LEADS_DATABASE_ID=
 # NAIVE_AGENT_HARNESS=
 
 # ---------------------------------------------------------------------------
+# Billing (Stripe): see "Billing (Stripe)" in README.md. Optional: without a key, billing answers 503 and
+# nothing is blocked.
+# ---------------------------------------------------------------------------
+
+# Crusonia's own Stripe account (never one shared with another product). Test mode first: sk_test_... or a
+# restricted rk_test_... key. Stripe Dashboard > Developers > API keys. `bun run setup --stripe` refuses a live key
+# unless you pass --live.
+STRIPE_SECRET_KEY=
+# Verifies Stripe webhook signatures on /webhooks/stripe (whsec_...). `bun run setup --stripe` writes it to
+# .dev.vars.stripe.test (or .live) instead of printing it; upload with `bunx wrangler secret bulk .dev.vars.stripe.test`
+# and copy the line here for `wrangler dev`.
+STRIPE_WEBHOOK_SECRET=
+# "true" makes paid work (onboarding propose, leads/find, research) answer 402 insufficient_credits when the
+# caller's balance is <= 0. Off by default so the owner's own use never blocks; MCP_TOKEN always bypasses it.
+# BILLING_ENFORCED=false
+# Free-sample credits granted once per new billing account (about 5 leads). 0 turns it off.
+# BILLING_FREE_CREDITS=300
+
+# ---------------------------------------------------------------------------
 # Optional policy (defaults shown)
 # ---------------------------------------------------------------------------
 

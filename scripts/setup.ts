@@ -3,6 +3,11 @@
 //   bun run setup --write         also write them into .dev.vars
 //   bun run setup --naive-credential   re-add the MCP credentials to an existing Naive vault
 //   bun run setup --agent         only create or update the Naive agent (e.g. after editing playbooks/)
+//   bun run setup --stripe        only Stripe billing: products/prices from src/billing/plans.ts, the Customer
+//                                 Portal and the webhook endpoint (test key; --live for a live key,
+//                                 --rotate-webhook-secret for a new signing secret, --verify-checkout to create
+//                                 and expire one test Checkout Session). The webhook secret is written to
+//                                 .dev.vars.stripe.<mode> (gitignored), never printed.
 //   bun run setup --crm           only CRM sync: HubSpot crusonia_* properties and the Notion "Crusonia leads"
 //                                 database (writes NOTION_LEADS_DATABASE_ID with --write). Never part of a plain run:
 //                                 it changes the owner's HubSpot schema and Notion workspace.
@@ -17,6 +22,7 @@ import { NotionClient } from "../src/providers/notion.ts";
 import { setupHubSpot, setupNotion } from "./lib/crm-setup.ts";
 import { ROOT, getVar, requireVar } from "./lib/env.ts";
 import { APIFY_MCP_URL, PLAYBOOK_PATH, agentSettings, changedFields, naiveAgentConfig, parsePlaybook } from "./lib/naive-agent.ts";
+import { setupStripe } from "./lib/stripe-setup.ts";
 
 export { APIFY_MCP_URL };
 
@@ -294,6 +300,28 @@ export async function createNaiveAgent(baseUrl: string, naive: Naive) {
   return { id, version: updated.current_version, status: `updated (${Object.keys(update).join(", ")})` as const, config };
 }
 
+// ---------- Stripe (--stripe) ----------
+
+// `bun run setup --stripe`: needs STRIPE_SECRET_KEY (Crusonia's own account). Refuses a live key without --live.
+async function setupStripeBilling(baseUrl: string) {
+  const result = await setupStripe({
+    key: getVar("STRIPE_SECRET_KEY"),
+    baseUrl,
+    live: args.has("--live"),
+    rotateWebhookSecret: args.has("--rotate-webhook-secret"),
+    verifyCheckout: args.has("--verify-checkout"),
+    secretPath: (mode) => `${ROOT}.dev.vars.stripe.${mode}`,
+    log: (line) => console.log(line),
+  });
+  notes.push(...result.notes);
+  if (result.secretWritten) {
+    notes.push(
+      `Stripe webhook secret written to .dev.vars.stripe.${result.mode} (mode 600, gitignored). Upload it with ` +
+        `\`bunx wrangler secret bulk .dev.vars.stripe.${result.mode}\` (and copy the line into .dev.vars for wrangler dev).`,
+    );
+  }
+}
+
 // ---------- CRM sync (--crm) ----------
 
 async function setupCrm() {
@@ -335,14 +363,17 @@ function writeDevVars(values: Record<string, string>) {
 const baseUrl = publicUrl();
 console.log(`PUBLIC_URL: ${baseUrl}\n`);
 
-const steps: [string, (baseUrl: string) => Promise<void>][] = args.has("--crm")
-  ? [["CRM sync", setupCrm]]
-  : args.has("--agent")
-    ? [["Naive agent", setupNaiveAgent]]
-    : [
-        ["AgentMail", setupAgentMail],
-        ["Naive", setupNaive],
-      ];
+// Exactly one mode per run: --stripe, --crm, --agent, or (none) AgentMail + Naive.
+const steps: [string, (baseUrl: string) => Promise<void>][] = args.has("--stripe")
+  ? [["Stripe", setupStripeBilling]]
+  : args.has("--crm")
+    ? [["CRM sync", setupCrm]]
+    : args.has("--agent")
+      ? [["Naive agent", setupNaiveAgent]]
+      : [
+          ["AgentMail", setupAgentMail],
+          ["Naive", setupNaive],
+        ];
 let failed = false;
 for (const [name, step] of steps) {
   try {
