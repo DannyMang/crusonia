@@ -1,5 +1,5 @@
-// Bridge -> Worker: one signed POST per owner command to <WORKER_URL>/webhooks/photon. The Worker dedupes by
-// the iMessage message id, so retrying an ambiguous failure never applies a decision twice.
+// Bridge -> Worker: one signed POST per owner tapback to <WORKER_URL>/webhooks/photon. The Worker dedupes by the
+// iMessage event id, so retrying an ambiguous failure never applies a decision twice.
 import type { Command } from "./commands.ts";
 import { signedHeaders } from "./hmac.ts";
 import { describeError, log } from "./log.ts";
@@ -57,6 +57,6 @@ export async function postCommand(event: InboundEvent, opts: WorkerClientOptions
   log.error("worker unreachable for command", { problem: lastProblem, event_id: event.id, action: event.command.action });
   return {
     ok: false,
-    reply: `Crusonia didn't confirm that (${lastProblem}). Text status to check before trying again, or use the app.`,
+    reply: `Crusonia didn't confirm that tapback (${lastProblem}). Check the app before trying again.`,
   };
 }

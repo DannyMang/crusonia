@@ -3,7 +3,7 @@
 //
 //   bun src/cli.ts health
 //   bun src/cli.ts notify <id> <text...>     text the owner once (the id dedupes retries)
-//   bun src/cli.ts inbound <from> <text...>  SPECTRUM_MODE=mock bridges only: simulate an owner iMessage
+//   bun src/cli.ts tap <from> <message id> <emoji>  SPECTRUM_MODE=mock bridges only: simulate a tapback on a bubble
 import { signedHeaders } from "./hmac.ts";
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -23,9 +23,9 @@ if (cmd === "health") {
   console.log(res.status, await res.text());
 } else if (cmd === "notify" && args.length >= 2) {
   await post("/notify", { id: args[0], type: "test", text: args.slice(1).join(" ") });
-} else if (cmd === "inbound" && args.length >= 2) {
-  await post("/mock/inbound", { from: args[0], text: args.slice(1).join(" ") });
+} else if (cmd === "tap" && args.length === 3) {
+  await post("/mock/inbound", { from: args[0], reaction: { targetId: args[1], emoji: args[2] } });
 } else {
-  console.error("usage: bun src/cli.ts health | notify <id> <text...> | inbound <from> <text...>");
+  console.error("usage: bun src/cli.ts health | notify <id> <text...> | tap <from> <message id> <emoji>");
   process.exitCode = 2;
 }
