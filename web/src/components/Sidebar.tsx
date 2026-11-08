@@ -1,7 +1,8 @@
 // The dashboard sidebar, identical on every screen (Paper: "Dashboard · Home" > Sidebar). The workspace switcher
-// is gone (owner, Nov 8: no workspaces for now); the credits pill took its place.
+// is gone (owner, Nov 8: no workspaces for now); the credits pill took its place. Below 1024px it moves into a
+// drawer behind a top bar (MobileBar).
 import { useEffect, useRef, useState, type ComponentType, type SVGProps } from "react";
-import { NavLink, useNavigate } from "react-router";
+import { NavLink, useLocation, useNavigate } from "react-router";
 import { useSession } from "../auth.tsx";
 import { cx, initials, num, usd } from "../lib/format.ts";
 import { useBilling, usePause, usePendingCount, useSetPause } from "../queries.ts";
@@ -20,6 +21,7 @@ import {
   SettingsIcon,
   TerminalIcon,
   WorkflowsIcon,
+  XIcon,
 } from "./icons.tsx";
 
 type Item = { to: string; label: string; icon: ComponentType<SVGProps<SVGSVGElement>>; end?: boolean; badge?: number };
@@ -159,11 +161,9 @@ const CreditIcon = () => (
   </svg>
 );
 
-export function Sidebar() {
-  const pending = usePendingCount();
+/** ⌘K / Ctrl+K jumps to lead search. */
+function useSearchShortcut() {
   const navigate = useNavigate();
-
-  // ⌘K / Ctrl+K jumps to lead search.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -174,9 +174,14 @@ export function Sidebar() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [navigate]);
+}
 
+/** Everything in the sidebar; the desktop column and the phone drawer render the same thing. */
+function SidebarContent({ drawer }: { drawer?: boolean }) {
+  const pending = usePendingCount();
+  const navigate = useNavigate();
   return (
-    <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col self-start border-r border-r-[#16A34A29] bg-white text-xs/4">
+    <>
       <NavLink to="/app" className="flex h-14.75 shrink-0 items-center gap-2.5 px-4.5">
         <Logo />
         <span className="text-[17px]/5 font-semibold tracking-[-0.02em] text-ink">crusonia</span>
@@ -191,7 +196,7 @@ export function Sidebar() {
         >
           <SearchIcon className="text-[rgb(32_13_13/40%)]" />
           <span className="grow text-[13px]/4 font-medium text-ink">Search</span>
-          <kbd className="flex rounded-sm border border-[#200D0D1A] px-1.5 py-0.5 font-sans text-xs/3 text-[#200D0D59]">⌘K</kbd>
+          {drawer ? null : <kbd className="flex rounded-sm border border-[#200D0D1A] px-1.5 py-0.5 font-sans text-xs/3 text-faint">⌘K</kbd>}
         </button>
       </div>
 
@@ -215,6 +220,85 @@ export function Sidebar() {
         <SendsSwitch />
         <UserMenu />
       </div>
+    </>
+  );
+}
+
+/** The 240px column, from `lg` (1024px) up. Below that, MobileBar takes its place. */
+export function Sidebar() {
+  useSearchShortcut();
+  return (
+    <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col self-start border-r border-r-[#16A34A29] bg-white text-xs/4 lg:flex">
+      <SidebarContent />
     </aside>
   );
 }
+
+/**
+ * Below `lg`: a top bar with the menu button, the logo and the approvals count, and the sidebar in a drawer.
+ * The drawer is a modal <dialog>, so focus stays inside, Esc closes it and the page behind cannot scroll;
+ * it also closes on navigation and on a click outside it.
+ */
+export function MobileBar() {
+  const pending = usePendingCount();
+  const ref = useRef<HTMLDialogElement>(null);
+  const { pathname, search } = useLocation();
+  const close = () => ref.current?.close();
+  useEffect(() => close(), [pathname, search]);
+  return (
+    <>
+      <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-b-[#16A34A29] bg-white px-2 lg:hidden">
+        <button
+          type="button"
+          onClick={() => ref.current?.showModal()}
+          aria-label="Open menu"
+          aria-haspopup="dialog"
+          className="flex size-10 items-center justify-center rounded-lg text-ink hover:bg-[#200D0D08]"
+        >
+          <MenuIcon />
+        </button>
+        <NavLink to="/app" className="flex items-center gap-2">
+          <Logo size={28} />
+          <span className="text-base/5 font-semibold tracking-[-0.02em] text-ink">crusonia</span>
+        </NavLink>
+        <span className="grow" />
+        {pending ? (
+          <NavLink
+            to="/app/approvals"
+            aria-label={`${pending} waiting for approval`}
+            className="flex h-8 items-center gap-1.5 rounded-full bg-ink px-3 tabular-nums text-xs/4 font-semibold text-white"
+          >
+            <ApprovalsIcon width={14} height={14} />
+            {pending}
+          </NavLink>
+        ) : null}
+      </header>
+      <dialog
+        ref={ref}
+        aria-label="Menu"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) close();
+        }}
+        className="fixed inset-y-0 left-0 m-0 h-auto max-h-none w-72 max-w-[calc(100%-48px)] overflow-hidden border-r border-r-[#16A34A29] bg-white p-0 text-xs/4 text-ink shadow-[0_0_40px_#200D0D33] backdrop:bg-[#200D0D59] lg:hidden"
+      >
+        <div className="flex h-full flex-col">
+          <SidebarContent drawer />
+          <button
+            type="button"
+            onClick={close}
+            aria-label="Close menu"
+            className="absolute right-2 top-2.5 flex size-10 items-center justify-center rounded-lg text-ink hover:bg-[#200D0D08]"
+          >
+            <XIcon />
+          </button>
+        </div>
+      </dialog>
+    </>
+  );
+}
+
+const MenuIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
+    <path d="M3.5 6h13M3.5 10h13M3.5 14h13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);

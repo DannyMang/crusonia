@@ -3,11 +3,13 @@
 import type { ReactNode } from "react";
 import { Outlet } from "react-router";
 import { cx } from "../lib/format.ts";
-import { Sidebar } from "./Sidebar.tsx";
+import { MobileBar, Sidebar } from "./Sidebar.tsx";
 
+/** Sidebar beside the page from `lg` (1024px) up; below that a top bar with a menu drawer above it. */
 export function AppShell() {
   return (
-    <div className="flex min-h-screen bg-white text-ink">
+    <div className="flex min-h-screen flex-col bg-white text-ink lg:flex-row">
+      <MobileBar />
       <Sidebar />
       <main className="flex min-w-0 grow flex-col">
         <Outlet />
