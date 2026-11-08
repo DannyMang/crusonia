@@ -71,6 +71,10 @@ function status(): Status {
     inbox_address: "crusonia@agentmail.to",
     naive_agent_configured: !unconfigured,
     mcp_url: "https://crusonia.veri-web.workers.dev/mcp",
+    imessage:
+      scenario() === "sample"
+        ? { enabled: true, configured: true, active: true, owner_phone_set: true, owner_phone_hint: "+1 ··· 0142", bridge: { online: true } }
+        : { enabled: false, configured: false, active: false, owner_phone_set: false, bridge: null },
     crm_sync: {
       hubspot: { enabled: !unconfigured, configured: true, active: !unconfigured, queue_depth: isEmpty() ? 0 : 3, failed: 0, last_sync_at: isEmpty() ? null : new Date(Date.now() - 4 * 60_000).toISOString(), last_error: null },
       notion: { enabled: false, configured: !unconfigured, active: false, queue_depth: 0, failed: 0, last_sync_at: null, last_error: null },

@@ -88,10 +88,11 @@ export function useApprovals(filters: ApprovalFilters = {}) {
   return useQuery({ queryKey: keys.approvals(filters), queryFn: () => api.approvals(filters), refetchInterval: 30_000 });
 }
 
-/** Pending approvals count for the sidebar badge. */
+/** The Outreach badge: pending approvals plus open manual tasks (0 for tasks on deployments without them). */
 export function usePendingCount() {
   const q = useApprovals({ status: "pending" });
-  return q.data?.data.length ?? 0;
+  const tasks = useTasks("open");
+  return (q.data?.data.length ?? 0) + (tasks.data?.open_total ?? 0);
 }
 
 export function useWorkflows() {

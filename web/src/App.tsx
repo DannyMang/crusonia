@@ -12,7 +12,8 @@ type Loader = () => Promise<{ default: ComponentType }>;
 
 const pages = {
   AppShell: () => import("./components/AppShell.tsx").then((m) => ({ default: m.AppShell })),
-  Approvals: () => import("./pages/Approvals.tsx"),
+  Outreach: () => import("./pages/Outreach.tsx"),
+  ApprovalsRedirect: () => import("./pages/Outreach.tsx").then((m) => ({ default: m.ApprovalsRedirect })),
   SignIn: () => import("./pages/auth/SignIn.tsx"),
   SignUp: () => import("./pages/auth/SignUp.tsx"),
   SsoCallback: () => import("./pages/auth/SsoCallback.tsx"),
@@ -167,8 +168,13 @@ export function App() {
                   <Route path="leads/review" element={page(L.ReviewLeads)} />
                   <Route path="leads/review/:id" element={page(L.ReviewLeads)} />
                   <Route path="leads/:id" element={page(L.LeadDetail)} />
-                  <Route path="approvals" element={page(L.Approvals)} />
-                  <Route path="approvals/:code" element={page(L.Approvals)} />
+                  <Route path="outreach" element={page(L.Outreach)} />
+                  <Route path="outreach/tasks" element={page(L.Outreach)} />
+                  <Route path="outreach/tasks/:id" element={page(L.Outreach)} />
+                  <Route path="outreach/:code" element={page(L.Outreach)} />
+                  {/* Older links, iMessage texts and emails point at /app/approvals(/:code). */}
+                  <Route path="approvals" element={page(L.ApprovalsRedirect)} />
+                  <Route path="approvals/:code" element={page(L.ApprovalsRedirect)} />
                   <Route path="workflows" element={page(L.Workflows)} />
                   <Route path="workflows/runs/:id" element={page(L.WorkflowRun)} />
                   {/* Experiments were removed (owner, Nov 8); old links land on Home. */}
