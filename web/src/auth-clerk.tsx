@@ -22,7 +22,8 @@ function ClerkBridge({ children }: { children: ReactNode }) {
                   id: user.id,
                   name: user.fullName ?? user.firstName ?? null,
                   email: user.primaryEmailAddress?.emailAddress ?? null,
-                  imageUrl: user.imageUrl ?? null,
+                  // Clerk's generated placeholder is purple; without a real photo the sidebar shows initials.
+                  imageUrl: user.hasImage ? user.imageUrl : null,
                 }
               : null,
             getToken: () => getToken(),
