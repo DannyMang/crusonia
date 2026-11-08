@@ -60,7 +60,7 @@ const tones: Record<Tone, string> = {
   lime: "bg-lime text-ink",
   limeSoft: "bg-[#BDE68973] text-ink",
   highlight: "bg-highlight text-ink",
-  green: "bg-[#16A34A1F] text-[#15803D]",
+  green: "bg-[#16A34A1F] text-[#166534]",
   gray: "bg-pill text-[#200D0DB3]",
   red: "bg-[#FDECEB] text-[#B42318]",
   amber: "bg-[#FEF3C7] text-[#92400E]",

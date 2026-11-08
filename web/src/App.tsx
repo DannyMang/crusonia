@@ -36,7 +36,10 @@ const pages = {
   SettingsBilling: () => import("./pages/settings/Billing.tsx"),
   SettingsCompany: () => import("./pages/settings/CompanySummary.tsx"),
   WorkflowRun: () => import("./pages/WorkflowRun.tsx"),
-  Workflows: () => import("./pages/Workflows.tsx"),
+  Workflows: () => import("./pages/workflows/List.tsx"),
+  WorkflowBuilder: () => import("./pages/workflows/Builder.tsx"),
+  WorkflowRuns: () => import("./pages/workflows/Runs.tsx"),
+  ImportCsv: () => import("./pages/import/ImportCsv.tsx"),
 } satisfies Record<string, Loader>;
 
 const L = {} as Record<keyof typeof pages, LazyExoticComponent<ComponentType>>;
@@ -167,6 +170,7 @@ export function App() {
                   <Route path="leads/find" element={page(L.FindLeads)} />
                   <Route path="leads/review" element={page(L.ReviewLeads)} />
                   <Route path="leads/review/:id" element={page(L.ReviewLeads)} />
+                  <Route path="leads/import" element={page(L.ImportCsv)} />
                   <Route path="leads/:id" element={page(L.LeadDetail)} />
                   <Route path="outreach" element={page(L.Outreach)} />
                   <Route path="outreach/tasks" element={page(L.Outreach)} />
@@ -177,6 +181,9 @@ export function App() {
                   <Route path="approvals/:code" element={page(L.ApprovalsRedirect)} />
                   <Route path="workflows" element={page(L.Workflows)} />
                   <Route path="workflows/runs/:id" element={page(L.WorkflowRun)} />
+                  <Route path="workflows/new" element={page(L.WorkflowBuilder)} />
+                  <Route path="workflows/:id" element={page(L.WorkflowBuilder)} />
+                  <Route path="workflows/:id/runs" element={page(L.WorkflowRuns)} />
                   {/* Experiments were removed (owner, Nov 8); old links land on Home. */}
                   <Route path="experiments/*" element={<Navigate to="/app" replace />} />
                   <Route path="replies" element={page(L.Replies)} />

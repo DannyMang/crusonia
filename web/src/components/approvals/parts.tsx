@@ -29,7 +29,7 @@ export function DetailHead({
   const urgent = msLeft(a, now) < SOON_MS;
   return (
     // Below 1280px the expiry and code pills drop under a long title instead of cutting it short.
-    <div className="flex shrink-0 flex-wrap items-start justify-between gap-x-4 gap-y-2.5 border-b border-b-[#200D0D1A] px-5 pb-3.5 pt-4 xl:flex-nowrap">
+    <div className="flex shrink-0 flex-wrap items-start justify-between gap-x-4 gap-y-2.5 border-b border-b-[#200D0D1A] px-4 pb-3.5 pt-4 sm:px-5 xl:flex-nowrap">
       <div className="flex min-w-0 flex-col gap-1.25">
         <h2 className="truncate text-[15px]/5 font-semibold text-ink">
           {title}
@@ -72,7 +72,8 @@ export function DetailHead({
 export function BindingStrip({ children }: { children: ReactNode }) {
   return (
     // Below 1280px the detail pane is narrow, so the bindings wrap onto a second line instead of being cut off.
-    <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-4.5 gap-y-1 overflow-hidden whitespace-nowrap border-b border-b-[#200D0D1A] bg-[#200D0D04] px-5 py-2 text-xs/4 font-[525] text-faint xl:h-10 xl:flex-nowrap xl:py-0">
+    // Phones also let one long binding (an email address, a session id) break inside itself.
+    <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-4.5 gap-y-1 overflow-hidden border-b border-b-[#200D0D1A] bg-[#200D0D04] px-4 py-2 text-xs/4 font-[525] text-faint *:max-w-full *:break-words sm:whitespace-nowrap sm:px-5 sm:*:max-w-none xl:h-10 xl:flex-nowrap xl:py-0">
       <span className="flex shrink-0 items-center gap-1.5">
         <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden className="shrink-0">
           <rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="rgb(32 13 13 / 60%)" strokeWidth="2" />
@@ -131,14 +132,14 @@ export function ActionButton({
 export function ActionBar({ children, note, error }: { children: ReactNode; note: ReactNode; error?: unknown }) {
   const e = error ? errorCopy(error, "this decision") : null;
   return (
-    <div className="flex shrink-0 flex-col gap-2.5 border-t border-t-[#200D0D1A] px-5 pb-3.5 pt-3">
+    <div className="flex shrink-0 flex-col gap-2.5 border-t border-t-[#200D0D1A] px-4 pb-3.5 pt-3 sm:px-5">
       <div className="flex min-h-9 flex-wrap items-center gap-2">{children}</div>
       {e ? (
         <div role="alert" className="text-xs/4 font-medium text-[#B42318]">
           {e.title}: {e.body}
         </div>
       ) : null}
-      <div className="flex items-center gap-4 text-xs/4 font-medium text-muted">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs/4 font-medium text-muted sm:flex-nowrap">
         <span className="min-w-0">{note}</span>
         <span className="grow" />
         <span className="shrink-0">
@@ -195,7 +196,7 @@ export function ReasonRow({
 }) {
   return (
     <form
-      className="flex min-w-0 grow items-center gap-2"
+      className="flex min-w-0 grow flex-wrap items-center gap-2 sm:flex-nowrap"
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit();
@@ -211,7 +212,7 @@ export function ReasonRow({
         maxLength={1000}
         placeholder={placeholder}
         aria-label={placeholder}
-        className="h-9 min-w-0 grow rounded-full border border-[#200D0D26] px-4 text-sm/4.5 text-ink outline-none placeholder:text-[#200D0D73] focus:border-[#200D0D59]"
+        className="h-9 min-w-0 grow basis-full rounded-full border sm:basis-auto border-[#200D0D26] px-4 text-sm/4.5 text-ink outline-none placeholder:text-[#200D0D73] focus:border-[#200D0D59]"
       />
       <ActionButton type="submit" tone="danger" loading={loading}>
         {submitLabel}

@@ -3,6 +3,7 @@ import { approvalHandlers } from "./approvals.ts";
 import { billingHandlers } from "./billing.ts";
 import { coreLeadHandlers } from "./core-leads.ts";
 import { coreHandlers } from "./core.ts";
+import { flowHandlers } from "./flows.ts";
 import { keyHandlers } from "./keys.ts";
 import { leadHandlers } from "./leads.ts";
 import { onboardingHandlers } from "./onboarding.ts";
@@ -20,4 +21,5 @@ export const handlers = [
   ...onboardingHandlers,
   ...billingHandlers,
   ...summaryHandlers,
+  ...flowHandlers,
 ];
