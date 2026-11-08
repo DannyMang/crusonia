@@ -425,6 +425,9 @@ describe("Stripe metadata and encoding", () => {
   test("key mode from the prefix", () => {
     expect(stripeKeyMode("sk_test_abc123")).toBe("test");
     expect(stripeKeyMode("rk_live_abc123")).toBe("live");
+    expect(stripeKeyMode("sk_org_live_abc123")).toBe("live");
+    expect(stripeKeyMode("rk_scope_test_abc123")).toBe("test");
+    expect(stripeKeyMode("sk_abc123")).toBeUndefined();
     expect(stripeKeyMode("pk_test_abc123")).toBeUndefined();
     expect(stripeKeyMode(undefined)).toBeUndefined();
   });
@@ -434,6 +437,7 @@ describe("setup --stripe", () => {
   test("refuses live keys without --live, test keys with --live, and non-keys, before any request", async () => {
     expect(() => checkStripeKey("sk_live_abc123", false)).toThrow(/Refusing a live Stripe key without --live/);
     expect(() => checkStripeKey("rk_live_abc123", false)).toThrow(/Refusing a live Stripe key without --live/);
+    expect(() => checkStripeKey("sk_org_live_abc123", false)).toThrow(/Refusing a live Stripe key without --live/);
     expect(checkStripeKey("rk_live_abc123", true)).toBe("live");
     expect(checkStripeKey("sk_test_abc123", false)).toBe("test");
     expect(() => checkStripeKey("sk_test_abc123", true)).toThrow(/test key/);

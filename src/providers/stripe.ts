@@ -14,9 +14,12 @@ export const STRIPE_API_BASE = "https://api.stripe.com";
 
 export type StripeMode = "test" | "live";
 
-/** test / live from the key prefix (sk_ secret or rk_ restricted key); undefined if it is not a Stripe key. */
+/**
+ * test / live from a secret (sk_) or restricted (rk_) key: the first `test` or `live` segment, which may follow
+ * other segments (sk_live_..., sk_<scope>_live_...). Undefined if it is not such a key or names no mode.
+ */
 export function stripeKeyMode(key: string | undefined): StripeMode | undefined {
-  const m = /^(?:sk|rk)_(test|live)_[A-Za-z0-9]+$/.exec(key ?? "");
+  const m = /^(?:sk|rk)_(?:[A-Za-z0-9]+_)*?(test|live)_\S+$/.exec(key ?? "");
   return m ? (m[1] as StripeMode) : undefined;
 }
 
