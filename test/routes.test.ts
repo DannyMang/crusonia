@@ -75,3 +75,90 @@ describe("routes without a database", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("web app routes without a database", () => {
+  const auth = { Authorization: "Bearer owner-token" };
+  const json = (body: unknown) => ({ method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const code = async (res: Response) => ((await res.json()) as { error: { code: string; message: string } }).error;
+
+  test("every new endpoint needs auth", async () => {
+    for (const path of ["/api/me", "/api/summary", "/api/status", "/api/profile", "/api/workflows", "/api/replies", "/api/experiments", "/api/keys"]) {
+      expect((await call(path)).status).toBe(401);
+    }
+  });
+
+  test("/api/me with MCP_TOKEN", async () => {
+    const res = await call("/api/me", { headers: auth });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ user: { id: "owner", name: "Owner (MCP_TOKEN)" }, auth: "token" });
+  });
+
+  test("/api/status works with no keys: get_status data plus inbox_address and the MCP URL", async () => {
+    const res = await call("/api/status", { headers: auth });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ inbox_address: null, naive_agent_configured: false, mcp_url: "https://example.test/mcp" });
+    expect(Object.keys(body.providers as object)).toContain("agentmail");
+    const configured = await call("/api/status", { headers: auth }, env({ AGENTMAIL_API_KEY: "am", AGENTMAIL_INBOX_ID: "crusonia@agentmail.to" }));
+    expect(((await configured.json()) as { inbox_address: string }).inbox_address).toBe("crusonia@agentmail.to");
+  });
+
+  test("Naive-backed endpoints answer 503 not_configured naming NAIVE_AGENT_ID", async () => {
+    const naiveKeyOnly = env({ NAIVE_API_KEY: "nv" });
+    for (const [path, init] of [
+      ["/api/onboarding/propose", json({ url: "acme.com" })],
+      ["/api/onboarding/propose/ses_123", { headers: auth }],
+      ["/api/leads/find", json({ count: 10 })],
+    ] as const) {
+      const res = await call(path, init, naiveKeyOnly);
+      expect(res.status).toBe(503);
+      const error = await code(res);
+      expect(error.code).toBe("not_configured");
+      expect(error.message).toContain("NAIVE_AGENT_ID is not set");
+    }
+    const bare = await call("/api/leads/find", json({}));
+    expect((await code(bare)).message).toContain("NAIVE_API_KEY and NAIVE_AGENT_ID are not set");
+  });
+
+  test("request bodies are validated first", async () => {
+    expect((await call("/api/onboarding/propose", json({}))).status).toBe(400);
+    expect((await call("/api/leads/find", json({ count: 51 }))).status).toBe(400);
+    expect((await call("/api/keys", json({ name: "" }))).status).toBe(400);
+    expect((await call("/api/experiments", json({ hypothesis: "no name" }))).status).toBe(400);
+    expect((await call("/api/onboarding/read-website", json({}))).status).toBe(400);
+    expect((await call("/api/replies?limit=0", { headers: auth })).status).toBe(400);
+    const patch = await call("/api/experiments/exp_1", { ...json({ status: "running" }), method: "PATCH" });
+    expect(patch.status).toBe(400);
+    const profile = await call("/api/profile", { ...json({ website: "not a url at all" }), method: "PUT" });
+    expect(profile.status).toBe(400);
+  });
+
+  test("database-backed endpoints are a clean 503 without DATABASE_URL", async () => {
+    for (const path of ["/api/summary", "/api/profile", "/api/workflows", "/api/workflows/runs/ses_1", "/api/replies", "/api/experiments", "/api/keys"]) {
+      const res = await call(path, { headers: auth });
+      expect(res.status).toBe(503);
+      expect((await code(res)).code).toBe("not_configured");
+    }
+  });
+});
+
+describe("with a static-assets binding (the SPA)", () => {
+  const assets = { fetch: async (req: Request) => new Response(`spa:${new URL(req.url).pathname}`, { status: 200 }) } as unknown as Fetcher;
+  const withAssets = env({ ASSETS: assets });
+
+  test("app routes and / are served by ASSETS", async () => {
+    expect(await (await call("/", {}, withAssets)).text()).toBe("spa:/");
+    expect(await (await call("/leads/lead_1", {}, withAssets)).text()).toBe("spa:/leads/lead_1");
+  });
+
+  test("/health, /api/*, /mcp and /webhooks/* stay on the Worker", async () => {
+    expect(await (await call("/health", {}, withAssets)).json()).toMatchObject({ name: "crusonia", ok: true });
+    const unknownApi = await call("/api/nope", { headers: { Authorization: "Bearer owner-token" } }, withAssets);
+    expect(unknownApi.status).toBe(404);
+    expect(((await unknownApi.json()) as { error: { code: string } }).error.code).toBe("not_found");
+    expect((await call("/api/me", {}, withAssets)).status).toBe(401);
+    expect((await call("/mcp", { method: "POST", body: "{}" }, withAssets)).status).toBe(401);
+    expect((await call("/webhooks/nope", { method: "POST" }, withAssets)).status).toBe(404);
+    expect((await call("/webhooks/agentmail", { method: "POST", body: "{}" }, withAssets)).status).toBe(503);
+  });
+});

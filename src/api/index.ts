@@ -1,9 +1,13 @@
-// REST API under /api: every route requires auth (Clerk session JWT or the MCP_TOKEN owner bypass).
+// REST API under /api: every route requires auth (Clerk session JWT, an API key, or the MCP_TOKEN owner bypass).
 import { Hono } from "hono";
 import type { AppEnv } from "../lib/context.ts";
 import { approvals } from "./approvals.ts";
 import { requireAuth } from "./auth.ts";
+import { dashboard } from "./dashboard.ts";
+import { experiments } from "./experiments.ts";
+import { keys } from "./keys.ts";
 import { leads } from "./leads.ts";
+import { onboarding, profile } from "./onboarding.ts";
 import { settings, suppressions } from "./settings.ts";
 import { workflows } from "./workflows.ts";
 
@@ -15,6 +19,11 @@ api.route("/approvals", approvals);
 api.route("/workflows", workflows);
 api.route("/settings", settings);
 api.route("/suppressions", suppressions);
+// Web app: /me, /summary, /status, /replies.
+api.route("/", dashboard);
+api.route("/profile", profile);
+api.route("/onboarding", onboarding);
+api.route("/experiments", experiments);
+api.route("/keys", keys);
 
-// TODO(experiments): /api/experiments (hypothesis, segment, variants) and per-variant stats.
 // TODO(crm-sync): HubSpot and Notion sync endpoints.

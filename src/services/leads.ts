@@ -18,6 +18,8 @@ export const LEAD_STAGES = [
   "replied",
   "interested",
   "not_interested",
+  // Set by the owner (PATCH /api/leads/:id) when a conversation turned into a meeting.
+  "meeting_booked",
   "unsubscribed",
 ] as const;
 export type LeadStage = (typeof LEAD_STAGES)[number];

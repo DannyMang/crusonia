@@ -39,6 +39,8 @@ export type Lead = {
   review_question: string | null;
   reply_label: string | null;
   hubspot_id: string | null;
+  // Experiment the lead is enrolled in (its arm is `variant`).
+  experiment_id?: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -54,6 +56,8 @@ export type Draft = {
   provider_message_id: string | null;
   provider_thread_id: string | null;
   error: string | null;
+  // Set when the lead's experiment was running at draft time; the draft counts toward that experiment.
+  experiment_id?: string | null;
   created_at: Date;
 };
 

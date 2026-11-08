@@ -1,41 +1,58 @@
 import type { MiddlewareHandler } from "hono";
+import { getSql } from "./db.ts";
 import type { Env } from "./env.ts";
+import { secretEquals } from "./lib/crypto.ts";
+import { isApiKey, verifyApiKey, type ApiKeyLookup } from "./services/api-keys.ts";
 
-// TODO(workspaces): replace the single shared MCP_TOKEN with per-user API keys issued from Clerk
-// workspaces (look the key up, resolve its workspace, and scope every query to it).
+// Bearer tokens accepted by /mcp and /api: the shared MCP_TOKEN (owner) or a per-user API key
+// (`crs_live_...`, see src/services/api-keys.ts), looked up by its SHA-256 hash.
+// TODO(workspaces): resolve the key's workspace and scope every query to it.
 
-const encoder = new TextEncoder();
+export type BearerIdentity = { kind: "owner_token" } | { kind: "api_key"; keyId: string; name: string };
 
-/** Constant-time string comparison: hash both sides to equal-length digests, then timingSafeEqual. */
-export async function safeEqual(a: string, b: string): Promise<boolean> {
-  const [da, db] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(a)),
-    crypto.subtle.digest("SHA-256", encoder.encode(b)),
-  ]);
-  return crypto.subtle.timingSafeEqual(da, db);
+/** True when the server can check API keys (they live in the database). */
+export const apiKeysAvailable = (env: Env, lookup?: ApiKeyLookup) => Boolean(lookup || env.DATABASE_URL);
+
+/**
+ * MCP_TOKEN (constant-time compare) or an active API key. Null when the token is neither. `lookup` replaces
+ * the database lookup (tests).
+ */
+export async function resolveBearer(env: Env, token: string, lookup?: ApiKeyLookup): Promise<BearerIdentity | null> {
+  if (env.MCP_TOKEN && (await secretEquals(token, env.MCP_TOKEN))) return { kind: "owner_token" };
+  if (!isApiKey(token) || !apiKeysAvailable(env, lookup)) return null;
+  const find = lookup ?? ((t: string) => verifyApiKey(getSql(env.DATABASE_URL), t));
+  const key = await find(token);
+  return key ? { kind: "api_key", keyId: key.id, name: key.name } : null;
 }
 
 /**
- * Requires `Authorization: Bearer <MCP_TOKEN>`. Answers 401 with `WWW-Authenticate: Bearer` otherwise,
- * and 503 if the server has no MCP_TOKEN configured (fails closed).
+ * Requires `Authorization: Bearer <MCP_TOKEN or API key>`. Answers 401 with `WWW-Authenticate: Bearer`
+ * otherwise, and 503 if the server can check neither (no MCP_TOKEN and no database): fails closed.
  */
-export const requireBearer: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  const expected = c.env.MCP_TOKEN;
-  if (!expected) {
-    return c.json(
-      { ok: false, error: "not_configured", message: "MCP_TOKEN is not set on the server, so the MCP endpoint is disabled." },
-      503,
-    );
-  }
-  const header = c.req.header("Authorization") ?? "";
-  const match = /^Bearer[ ]+(\S+)\s*$/i.exec(header);
-  if (!match) {
-    c.header("WWW-Authenticate", 'Bearer realm="crusonia"');
-    return c.json({ ok: false, error: "unauthorized", message: "Send Authorization: Bearer <MCP_TOKEN>." }, 401);
-  }
-  if (!(await safeEqual(match[1]!, expected))) {
-    c.header("WWW-Authenticate", 'Bearer realm="crusonia", error="invalid_token"');
-    return c.json({ ok: false, error: "unauthorized", message: "Invalid token." }, 401);
-  }
-  await next();
-};
+export function bearerAuth(lookup?: ApiKeyLookup): MiddlewareHandler<{ Bindings: Env }> {
+  return async (c, next) => {
+    if (!c.env.MCP_TOKEN && !apiKeysAvailable(c.env, lookup)) {
+      return c.json(
+        {
+          ok: false,
+          error: "not_configured",
+          message: "Neither MCP_TOKEN nor DATABASE_URL (API keys) is set on the server, so the MCP endpoint is disabled.",
+        },
+        503,
+      );
+    }
+    const header = c.req.header("Authorization") ?? "";
+    const match = /^Bearer[ ]+(\S+)\s*$/i.exec(header);
+    if (!match) {
+      c.header("WWW-Authenticate", 'Bearer realm="crusonia"');
+      return c.json({ ok: false, error: "unauthorized", message: "Send Authorization: Bearer <Crusonia API key or MCP_TOKEN>." }, 401);
+    }
+    if (!(await resolveBearer(c.env, match[1]!, lookup))) {
+      c.header("WWW-Authenticate", 'Bearer realm="crusonia", error="invalid_token"');
+      return c.json({ ok: false, error: "unauthorized", message: "Invalid or revoked token." }, 401);
+    }
+    await next();
+  };
+}
+
+export const requireBearer = bearerAuth();
