@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent } from "react";
+import { Component, lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent, type ReactNode } from "react";
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
 import { AuthProvider, FullPageSpinner, RedirectIfSignedIn, RequireAuth } from "./auth.tsx";
 import Landing from "./landing/Landing.tsx";
@@ -69,6 +69,31 @@ const screen = (C: LazyExoticComponent<ComponentType>) => (
   </Suspense>
 );
 
+/**
+ * A page's code that does not arrive (offline, or a tab opened before a deploy replaced the chunks; main.tsx
+ * reloads once for that) ends here instead of a blank screen.
+ */
+class LoadBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="grid min-h-screen place-items-center bg-white px-6 text-ink">
+        <div role="alert" className="flex max-w-sm flex-col items-center gap-2 text-center">
+          <h1 className="text-[15px]/5 font-semibold tracking-[-0.01em]">This page did not load</h1>
+          <p className="text-[13px]/5 font-medium text-muted">Check your connection, then reload.</p>
+          <button type="button" onClick={() => window.location.reload()} className="mt-2 inline-flex h-7.5 items-center rounded-full bg-lime px-3.5 text-[13px]/4 font-medium text-ink transition-colors hover:bg-[#b3de7a]">
+            Reload
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
 const Protected = () => {
   usePreloadPages();
   return (
@@ -82,45 +107,47 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AuthProvider>
-          <Routes>
-            {/* Public landing page (web/src/landing/); it sends signed-in visitors to /app. */}
-            <Route index element={<Landing />} />
+        <LoadBoundary>
+          <AuthProvider>
+            <Routes>
+              {/* Public landing page (web/src/landing/); it sends signed-in visitors to /app. */}
+              <Route index element={<Landing />} />
 
-            <Route path="sign-in/*" element={<RedirectIfSignedIn>{screen(L.SignIn)}</RedirectIfSignedIn>} />
-            <Route path="sign-up/*" element={<RedirectIfSignedIn fallback="/onboarding/1">{screen(L.SignUp)}</RedirectIfSignedIn>} />
-            <Route path="sso-callback" element={screen(L.SsoCallback)} />
+              <Route path="sign-in/*" element={<RedirectIfSignedIn>{screen(L.SignIn)}</RedirectIfSignedIn>} />
+              <Route path="sign-up/*" element={<RedirectIfSignedIn fallback="/onboarding/1">{screen(L.SignUp)}</RedirectIfSignedIn>} />
+              <Route path="sso-callback" element={screen(L.SsoCallback)} />
 
-            <Route element={<Protected />}>
-              <Route path="onboarding" element={screen(L.OnboardingLayout)}>
-                <Route index element={<Navigate to="1" replace />} />
-                <Route path="1" element={page(L.Step1Company)} />
-                <Route path="2" element={page(L.Step2Reading)} />
-                <Route path="3" element={page(L.Step3Customer)} />
-                <Route path="4" element={page(L.Step4Leads)} />
+              <Route element={<Protected />}>
+                <Route path="onboarding" element={screen(L.OnboardingLayout)}>
+                  <Route index element={<Navigate to="1" replace />} />
+                  <Route path="1" element={page(L.Step1Company)} />
+                  <Route path="2" element={page(L.Step2Reading)} />
+                  <Route path="3" element={page(L.Step3Customer)} />
+                  <Route path="4" element={page(L.Step4Leads)} />
+                </Route>
+
+                <Route path="app" element={screen(L.AppShell)}>
+                  <Route index element={page(L.Home)} />
+                  <Route path="leads" element={page(L.Leads)} />
+                  <Route path="leads/:id" element={page(L.LeadDetail)} />
+                  <Route path="approvals" element={page(L.Approvals)} />
+                  <Route path="approvals/:code" element={page(L.Approvals)} />
+                  <Route path="workflows" element={page(L.Workflows)} />
+                  <Route path="workflows/runs/:id" element={page(L.WorkflowRun)} />
+                  <Route path="experiments" element={page(L.Experiments)} />
+                  <Route path="experiments/:id" element={page(L.Experiments)} />
+                  <Route path="replies" element={page(L.Replies)} />
+                  <Route path="integrations" element={page(L.Integrations)} />
+                  <Route path="connect" element={page(L.Connect)} />
+                  <Route path="settings" element={page(L.Settings)} />
+                  <Route path="*" element={page(L.NotFound)} />
+                </Route>
               </Route>
 
-              <Route path="app" element={screen(L.AppShell)}>
-                <Route index element={page(L.Home)} />
-                <Route path="leads" element={page(L.Leads)} />
-                <Route path="leads/:id" element={page(L.LeadDetail)} />
-                <Route path="approvals" element={page(L.Approvals)} />
-                <Route path="approvals/:code" element={page(L.Approvals)} />
-                <Route path="workflows" element={page(L.Workflows)} />
-                <Route path="workflows/runs/:id" element={page(L.WorkflowRun)} />
-                <Route path="experiments" element={page(L.Experiments)} />
-                <Route path="experiments/:id" element={page(L.Experiments)} />
-                <Route path="replies" element={page(L.Replies)} />
-                <Route path="integrations" element={page(L.Integrations)} />
-                <Route path="connect" element={page(L.Connect)} />
-                <Route path="settings" element={page(L.Settings)} />
-                <Route path="*" element={page(L.NotFound)} />
-              </Route>
-            </Route>
-
-            <Route path="*" element={screen(L.NotFound)} />
-          </Routes>
-        </AuthProvider>
+              <Route path="*" element={screen(L.NotFound)} />
+            </Routes>
+          </AuthProvider>
+        </LoadBoundary>
       </BrowserRouter>
     </QueryClientProvider>
   );
