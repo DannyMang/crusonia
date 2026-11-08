@@ -66,7 +66,12 @@ env_lines() { # exactly the five settings the bridge needs, plus non-secret conf
 }
 
 launch_script() { # first boot, as root. Never echoes the env file.
+  # Lightsail runs launch scripts with /bin/sh (its examples have no shebang), so the outer layer is POSIX sh: it writes
+  # the real (bash) bootstrap to /run, which is RAM-backed, runs it, and deletes it.
   cat <<EOF
+#!/bin/sh
+umask 077
+cat > /run/crusonia-bootstrap.sh <<'CRUSONIA_BOOTSTRAP'
 #!/bin/bash
 set -euo pipefail
 exec >>/var/log/crusonia-bootstrap.log 2>&1
@@ -117,6 +122,11 @@ if [ "${SEND_TEST_MESSAGE:-0}" = "1" ] && [ ! -f /opt/crusonia-bridge/.test-mess
   fi
 fi
 echo "bootstrap done \$(date -u +%FT%TZ)"
+CRUSONIA_BOOTSTRAP
+/bin/bash /run/crusonia-bootstrap.sh
+status=\$?
+rm -f /run/crusonia-bootstrap.sh
+exit \$status
 EOF
 }
 
