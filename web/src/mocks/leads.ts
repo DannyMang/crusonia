@@ -13,7 +13,7 @@ const seeds: Seed[] = [
   ["lead_lumen", "Lumen Health", "lumenhealth.com", "Grace Lin", "Dir. Sales Ops", "researching", 78, "csv", 2 * MIN, { rationale: "Replacing their outbound tool · RevOps job post Nov 2" }],
   ["lead_juniper", "Juniper Freight", "juniperfreight.com", "Ana Ruiz", "VP Sales", "qualified", 74, "apify", 8 * MIN, { rationale: "Hiring 2 BDRs in Denver · new hub opened Oct 30" }],
   ["lead_orbit", "Orbit Ledger", "orbitledger.com", null, null, "researching", 71, "agent", 20 * 1000, { rationale: "New CFO joined from Ramp · LinkedIn post Nov 6" }],
-  ["lead_northwind", "Northwind Robotics", "northwindrobotics.com", "Tom Becker", "CRO", "interested", 88, "hubspot", 1 * DAY, { reply_label: "meeting", rationale: "4 SDR openings in Boston · posted Oct 24" }],
+  ["lead_northwind", "Northwind Robotics", "northwindrobotics.com", "Tom Becker", "CRO", "meeting_booked", 88, "hubspot", 1 * DAY, { reply_label: "interested", rationale: "4 SDR openings in Boston · posted Oct 24" }],
   ["lead_kiln", "Kiln Studio", "kilnstudio.co", "Hana Sato", "Head of Partnerships", "interested", 79, "apify", 3 * HOUR, { reply_label: "interested", rationale: "Relaunched site and pricing · changelog Oct 30" }],
   ["lead_parcel", "Parcel & Pine", "parcelandpine.com", "Leo Martins", "COO", "sent", 75, "csv", 2 * DAY, { rationale: "Expanding to EU fulfillment · press release Oct 29" }],
   ["lead_cobalt", "Cobalt Fern", "cobaltfern.com", "Priya Raman", "VP Marketing", "not_interested", 73, "hubspot", 3 * DAY, { reply_label: "not_interested", rationale: "Rebuilding the SDR team · follow up Jan 12" }],
@@ -149,11 +149,36 @@ export const leadHandlers = [
     );
     return ok({ data, next_cursor: null });
   }),
-  http.post("/api/leads/find", () => fail(503, "not_configured", "NAIVE_AGENT_ID is not set")),
+  // Backend: 202 {session_id}; 409 profile_missing without a saved profile; 503 not_configured without the Naive agent.
+  http.post("/api/leads/find", () => fail(503, "not_configured", "The Naive agent is not configured: NAIVE_AGENT_ID is not set")),
+  // Same shape as the backend's importLeads: counts, skip_reasons, matched columns and per-row results.
   http.post("/api/leads/import", async ({ request }) => {
     const b = await body<{ csv?: string; dry_run?: boolean }>(request);
-    const rows = (b.csv ?? "").trim().split(/\r?\n/).slice(1).filter(Boolean);
-    return ok({ dry_run: Boolean(b.dry_run), created: rows.length, updated: 0, skipped: 0, rows: rows.map((_, i) => ({ row: i + 2, status: "created", key: `row${i}` })) });
+    const [header = "", ...lines] = (b.csv ?? "").trim().split(/\r?\n/);
+    const headers = header.split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+    const emailCol = headers.findIndex((h) => /e-?mail/i.test(h));
+    const domainCol = headers.findIndex((h) => /^(domain|website)$/i.test(h));
+    if (!lines.length) return fail(400, "invalid_csv", "The CSV needs a header row and at least one data row");
+    if (emailCol < 0 && domainCol < 0) return fail(400, "invalid_csv", 'No email, domain or website column found; pass `mapping`, e.g. {"email": "Work Email"}');
+    const known = new Set(sampleLeads.map((l) => l.email));
+    const seen = new Set<string>();
+    const rows = lines.filter(Boolean).map((line, i) => {
+      const cells = line.split(",").map((c) => c.trim());
+      const email = emailCol >= 0 ? cells[emailCol]?.toLowerCase() ?? "" : "";
+      const row = i + 2;
+      if (email && !email.includes("@")) return { row, status: "skipped" as const, reason: "invalid_email" };
+      if (!email && !(domainCol >= 0 && cells[domainCol])) return { row, status: "skipped" as const, reason: "missing_email_and_domain" };
+      if (email && seen.has(email)) return { row, status: "skipped" as const, reason: "duplicate_in_file" };
+      seen.add(email);
+      if (!isEmpty() && known.has(email)) return { row, status: "updated" as const, lead_id: "lead_fieldnote", matched_by: "email" as const, fields: ["title"] };
+      return { row, status: "created" as const };
+    });
+    const count = (s: string) => rows.filter((r) => r.status === s).length;
+    const skip_reasons: Record<string, number> = {};
+    for (const r of rows) if (r.status === "skipped") skip_reasons[r.reason] = (skip_reasons[r.reason] ?? 0) + 1;
+    const fields = ["email", "name", "title", "company", "domain", "website", "consent", "consent_at"];
+    const columns = Object.fromEntries(headers.filter((h) => fields.includes(h.toLowerCase())).map((h) => [h.toLowerCase(), h]));
+    return ok({ dry_run: Boolean(b.dry_run), created: count("created"), updated: count("updated"), skipped: count("skipped"), skip_reasons, columns, rows, rows_truncated: false });
   }),
   http.post("/api/leads", async ({ request }) => {
     const b = await body<Partial<Lead>>(request);

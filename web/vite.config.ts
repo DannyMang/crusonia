@@ -31,5 +31,6 @@ export default defineConfig({
     strictPort: true,
     proxy: Object.fromEntries(["/api", "/mcp", "/webhooks", "/health"].map((p) => [p, { target: worker, changeOrigin: true }])),
   },
-  build: { outDir: "dist", sourcemap: true },
+  // No source maps in dist: everything in it is uploaded as a public static asset.
+  build: { outDir: "dist", sourcemap: false },
 });

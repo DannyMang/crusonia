@@ -45,6 +45,7 @@ export const LEAD_STAGES = [
   "interested",
   "not_interested",
   "unsubscribed",
+  "meeting_booked",
 ] as const;
 export type LeadStage = (typeof LEAD_STAGES)[number];
 
@@ -200,20 +201,16 @@ export type ApprovalListItem = Approval & {
 
 export type ApprovalFilters = { status?: ApprovalStatus; kind?: ApprovalKind; lead_id?: string; limit?: number };
 
-// ---------- new endpoints (contract; mocked with MSW until the backend PR lands) ----------
+// ---------- web app endpoints (backend PR #7; mocked with MSW in `bun run dev:mock`) ----------
 
 export type Me = {
-  /** `clerk` for a signed-in user, `owner_token` for the MCP_TOKEN owner bypass. */
-  kind?: "clerk" | "owner_token";
-  user_id?: string | null;
-  email?: string | null;
-  name?: string | null;
-  image_url?: string | null;
-  workspace?: { name?: string | null } | null;
-  onboarded?: boolean;
-  [key: string]: unknown;
+  user: { id: string; email?: string; name?: string };
+  /** `clerk` for a signed-in user; `token` for MCP_TOKEN or an API key. */
+  auth: "clerk" | "token";
+  key?: { id: string; name: string };
 };
 
+/** Where leads are now; each lead is in at most one bucket (unsubscribed leads in none). */
 export type Pipeline = {
   found: number;
   researched: number;
@@ -224,39 +221,71 @@ export type Pipeline = {
   meetings: number;
 };
 
-export type WorkflowStatus = "running" | "idle" | "done" | "error" | "paused" | (string & {});
+export type RunStatus = "running" | "paused" | "idle" | "done" | "error";
 
+/** One agent session. `id` is the Naive session id (route /app/workflows/runs/:id). */
+export type Run = {
+  id: string;
+  workflow_id: string;
+  name: string;
+  purpose: string;
+  status: RunStatus;
+  stop_reason: string | null;
+  lead_id: string | null;
+  input: Record<string, unknown>;
+  started_at: string;
+  updated_at: string;
+  last_event_at: string;
+  leads_processed: number;
+  cost_usd: number | null;
+};
+
+/** A workflow = all runs with one purpose (`research`, `find_leads`, `onboarding`). `id` is the purpose. */
 export type Workflow = {
   id: string;
   name: string;
   purpose: string;
-  status: WorkflowStatus;
+  status: RunStatus;
   started_at: string;
+  first_started_at: string;
+  last_event_at: string | null;
   leads_processed: number;
   cost_usd: number | null;
-  last_event_at: string | null;
+  run_count: number;
+  active_runs: number;
+  /** Most recent runs, newest first (10 by default). */
+  runs: Run[];
 };
 
+export type ReplyLabelValue = "interested" | "not_interested" | "unsubscribe" | "out_of_office" | "other";
+
 export type Reply = {
-  id: string | number;
+  id: string;
   lead_id: string | null;
+  lead: { id: string; name: string | null; email: string | null; company: string | null; stage: string } | null;
   from: string | null;
   subject: string | null;
-  /** Untrusted inbound text: render as plain text. */
-  preview: string | null;
-  label: "interested" | "not_interested" | "unsubscribe" | "out_of_office" | "other" | "meeting" | (string & {}) | null;
+  /** Untrusted inbound text (first 200 chars): render as plain text. */
+  preview: string;
+  label: ReplyLabelValue | (string & {}) | null;
+  thread_id: string | null;
   received_at: string;
-  // Optional extras some backends include.
-  lead_name?: string | null;
-  company?: string | null;
 };
+
+export type SummaryApproval = ApprovalListItem & { lead_name: string | null; company: string | null; subject: string | null };
 
 export type Summary = {
   pipeline: Pipeline;
-  pending_approvals: ApprovalListItem[];
+  pipeline_by_stage: Record<string, number>;
+  total_leads: number;
+  /** The 5 newest pending approvals; `pending_approvals_total` counts all of them. */
+  pending_approvals: SummaryApproval[];
+  pending_approvals_total: number;
+  /** Workflows with at least one active run. */
   active_workflows: Workflow[];
   recent_replies: Reply[];
-  spend: { week_usd: number; budget_usd: number } | null;
+  /** `week_usd` is null until Naive reports usage; `budget_usd` is null without WEEKLY_BUDGET_USD. */
+  spend: { week_usd: number | null; budget_usd: number | null };
   paused: boolean;
 };
 
@@ -274,80 +303,148 @@ export type Status = {
     profile_saved?: boolean;
     paused?: boolean;
   };
-  inbox_address?: string | null;
-  next_steps?: string[];
+  next_steps: string[];
+  /** The AgentMail inbox address, or null when AgentMail is not configured. */
+  inbox_address: string | null;
+  naive_agent_configured: boolean;
+  mcp_url: string;
 };
 
-export type Segment = { name: string; company_size: string; industry: string; roles: string[] };
-export type Signal = { name: string; description: string };
+export type Segment = { name: string; company_size: string | null; industry: string | null; roles: string[] };
+export type Signal = { name: string; description: string | null };
 export type ProfileSource = { field: string; url: string };
 
 export type Profile = {
-  company: string;
-  website: string;
-  sells: string;
-  icp_description: string;
+  company: string | null;
+  website: string | null;
+  sells: string | null;
+  icp_description: string | null;
   segments: Segment[];
   signals: Signal[];
   sources: ProfileSource[];
-  updated_at?: string;
+  notes: string | null;
+  updated_at: string | null;
 };
 
-export type WebsitePage = { url: string; title: string; text: string };
+/** PUT /api/profile body: the whole profile (omitted arrays become empty; empty strings clear a field). */
+export type ProfileInput = {
+  company?: string | null;
+  website?: string | null;
+  sells?: string | null;
+  icp_description?: string | null;
+  segments?: { name: string; company_size?: string | null; industry?: string | null; roles?: string[] }[];
+  signals?: { name: string; description?: string | null }[];
+  sources?: ProfileSource[];
+  notes?: string | null;
+};
 
-export type ProposeStatus = { status: "running" | "idle" | "done" | "error" | (string & {}); profile?: Profile | null; error?: string | null };
+export type WebsitePage = { url: string; title: string; text: string; description?: string | null; truncated?: boolean };
+export type ReadWebsiteResult = { pages: WebsitePage[]; mode?: string; note?: string };
+
+export type ProposeStatus = {
+  session_id: string;
+  status: "running" | "done" | "error";
+  profile?: Profile;
+  error?: string;
+  stop_reason?: string | null;
+  /** The agent is parked on the owner: answer in /app/approvals and polling continues. */
+  waiting_on: "approval" | "answer" | null;
+  pending_approvals: { code: string; kind: string; summary: string; expires_at: string }[];
+  note?: string;
+};
 
 export type RunStep = {
+  /** 1..n in display order. */
   seq: number;
   type: string;
-  tool: string | null;
+  tool?: string;
   summary: string;
-  started_at: string;
-  duration_ms: number | null;
-  cost_usd: number | null;
-  input: unknown;
-  output: unknown;
+  started_at?: string;
+  duration_ms?: number;
+  cost_usd?: number;
+  /** From the agent: untrusted, display as text. */
+  input?: unknown;
+  output?: unknown;
+  is_error?: boolean;
+  source: "naive" | "crusonia";
+  /** Naive's own event seq, for steps built from Naive events. */
+  naive_seq?: number;
 };
+
+export type RunLead = {
+  id: string;
+  email: string | null;
+  name: string | null;
+  title: string | null;
+  company: string | null;
+  domain: string | null;
+  stage: string;
+  score: number | null;
+  qualified: boolean | null;
+  has_consent: boolean;
+};
+
+export type RunApproval = Pick<
+  Approval,
+  "code" | "kind" | "status" | "summary" | "lead_id" | "draft_id" | "naive_session_id" | "tool_call_id" | "payload" | "expires_at" | "decided_at" | "decided_via" | "created_at"
+> & { draft: { id: string; version: number; subject: string; status: string } | null };
 
 export type WorkflowRun = {
-  run: Workflow & { lead_id?: string | null; stop_reason?: string | null; budget_usd?: number | null };
+  run: Run;
   steps: RunStep[];
-  lead: Lead | null;
-  approvals: Approval[];
+  lead: RunLead | null;
+  approvals: RunApproval[];
+  /** Whether the step cache was refreshed from Naive on this read, and why not. */
+  sync?: { ok: boolean; fetched?: number; error?: string; skipped?: string };
 };
 
-export type VariantStats = { sent: number; replies: number; positive: number; cost_usd: number };
+export type ArmStats = { sent: number; replies: number; positive: number; cost_usd: number | null };
+export type Variant = { name?: string | null; description?: string | null };
 
+/** A/B experiment over the stable lead variants A and B. */
 export type Experiment = {
   id: string;
   name: string;
-  hypothesis: string;
-  segment?: string | null;
-  signal?: string | null;
-  workflow_id?: string | null;
-  status: "draft" | "running" | "stopped" | "finished" | (string & {});
-  stop_rule?: string | null;
-  target_per_arm?: number | null;
-  variants: { A: { label: string; description?: string | null }; B: { label: string; description?: string | null } } | Record<string, { label: string; description?: string | null }>;
-  stats: Record<string, VariantStats>;
-  daily: { date: string; [variant: string]: number | string }[];
-  winner?: string | null;
-  started_at?: string | null;
-  ended_at?: string | null;
+  hypothesis: string | null;
+  segment: string | null;
+  metric: string;
+  stop_rule_sends_per_arm: number | null;
+  stop_rule_days: number | null;
+  status: "running" | "stopped";
+  variants: { A: Variant; B: Variant };
+  enrolled: { A: number; B: number };
+  stats: { A: ArmStats; B: ArmStats };
+  stop_rule_met: boolean;
+  stop_rule_reason: string | null;
   created_at: string;
+  stopped_at: string | null;
 };
+
+/** Per UTC day (not cumulative), from the start to today or the stop, last 120 days at most. */
+export type DailyPoint = { date: string; A_replies: number; B_replies: number; A_sent: number; B_sent: number };
+export type ExperimentDetail = { experiment: Experiment; daily: DailyPoint[] };
 
 export type CreateExperimentInput = {
   name: string;
-  hypothesis: string;
+  hypothesis?: string;
   segment?: string;
-  signal?: string;
-  stop_rule?: string;
-  variants: Record<string, { label: string; description?: string }>;
+  metric?: string;
+  stop_rule_sends_per_arm?: number;
+  stop_rule_days?: number;
+  variants?: { A?: Variant; B?: Variant };
+  lead_ids?: string[];
 };
 
-export type ApiKey = { id: string; name: string; prefix: string; created_at: string; last_used_at: string | null };
-export type CreatedApiKey = ApiKey & { key: string };
+export type ApiKey = {
+  id: string;
+  name: string;
+  /** `crs_live_` + 8 characters. */
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  status: "active" | "revoked";
+};
 
 // ---------- client ----------
 
@@ -433,8 +530,10 @@ export function createApi(getToken: TokenGetter, base = "") {
 
     // profile + onboarding
     profile: () => unwrap<Profile | null>(get("/api/profile"), "profile"),
-    saveProfile: (profile: Profile) => unwrap<Profile>(put("/api/profile", profile), "profile"),
-    readWebsite: (url: string) => post<{ pages: WebsitePage[] }>("/api/onboarding/read-website", { url }),
+    saveProfile: (profile: ProfileInput) => unwrap<Profile>(put("/api/profile", profile), "profile"),
+    /** Synchronous crawl: Apify when configured (a few cents), plain fetch otherwise. */
+    readWebsite: (url: string, maxPages?: number) => post<ReadWebsiteResult>("/api/onboarding/read-website", { url, ...(maxPages ? { max_pages: maxPages } : {}) }),
+    /** Starts a paid Naive session (202). 503 not_configured without the agent; 423 while paused. */
     propose: (input: { url?: string; description?: string }) => post<{ session_id: string }>("/api/onboarding/propose", input),
     proposeStatus: (sessionId: string) => get<ProposeStatus>(`/api/onboarding/propose/${id(sessionId)}`),
 
@@ -448,7 +547,8 @@ export function createApi(getToken: TokenGetter, base = "") {
     deleteLead: (leadId: string) => del(`/api/leads/${id(leadId)}`),
     createDraft: (leadId: string, draft: { subject: string; body: string }) =>
       post<{ draft: Draft; approval?: Approval }>(`/api/leads/${id(leadId)}/drafts`, draft),
-    findLeads: (count: number) => post<{ session_id: string }>("/api/leads/find", { count }),
+    /** Starts a paid Naive session (202). 409 profile_missing without a saved profile; 503 without the agent. */
+    findLeads: (count = 25) => post<{ session_id: string }>("/api/leads/find", { count }),
 
     // approvals
     approvals: (filters: ApprovalFilters = {}) => get<{ data: ApprovalListItem[] }>("/api/approvals", filters),
@@ -462,22 +562,25 @@ export function createApi(getToken: TokenGetter, base = "") {
       post<{ approval: Approval }>(`/api/approvals/${id(code)}/answer`, body),
 
     // workflows
-    workflows: () => list<Workflow>("/api/workflows"),
+    workflows: (runs?: number) => list<Workflow>(`/api/workflows${runs !== undefined ? `?runs=${runs}` : ""}`),
     workflowRun: (sessionId: string) => get<WorkflowRun>(`/api/workflows/runs/${id(sessionId)}`),
-    replies: () => list<Reply>("/api/replies"),
+    replies: (q: { limit?: number; cursor?: string; label?: string; lead_id?: string } = {}) => get<Page<Reply>>("/api/replies", q),
 
     // experiments
     experiments: () => list<Experiment>("/api/experiments"),
-    experiment: (experimentId: string) => unwrap<Experiment>(get(`/api/experiments/${id(experimentId)}`), "experiment"),
-    createExperiment: (input: CreateExperimentInput) => post<Experiment>("/api/experiments", input),
-    patchExperiment: (experimentId: string, body: Partial<Pick<Experiment, "status" | "name" | "hypothesis" | "stop_rule">>) =>
-      patch<Experiment>(`/api/experiments/${id(experimentId)}`, body),
+    experiment: (experimentId: string) => get<ExperimentDetail>(`/api/experiments/${id(experimentId)}`),
+    createExperiment: (input: CreateExperimentInput) =>
+      post<{ experiment: Experiment; enrollment: { enrolled: number; skipped: string[] } }>("/api/experiments", input),
+    /** Only stopping is supported; a stopped experiment keeps its stats. */
+    stopExperiment: (experimentId: string) => patch<{ experiment: Experiment }>(`/api/experiments/${id(experimentId)}`, { status: "stopped" }),
+    enrollLeads: (experimentId: string, leadIds: string[]) =>
+      post<{ enrolled: number; skipped: string[] }>(`/api/experiments/${id(experimentId)}/leads`, { lead_ids: leadIds }),
 
     // API keys (for MCP clients)
     keys: () => list<ApiKey>("/api/keys"),
-    /** Returns the full key exactly once. */
-    createKey: (name: string) => post<CreatedApiKey>("/api/keys", { name }),
-    revokeKey: (keyId: string) => del(`/api/keys/${id(keyId)}`),
+    /** Returns the full key exactly once (`key`); only its hash is stored. */
+    createKey: (name: string) => post<{ api_key: ApiKey; key: string }>("/api/keys", { name }),
+    revokeKey: (keyId: string) => del<{ api_key: ApiKey }>(`/api/keys/${id(keyId)}`),
   };
 }
 

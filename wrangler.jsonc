@@ -14,10 +14,12 @@
     "crons": ["* * * * *"]
   },
   // The dashboard SPA (web/, `bun run build:web`) is served as static assets. These paths run the Worker
-  // first (API, MCP, webhooks, health); any other path without a file falls back to index.html so the
-  // client-side router can handle /app/*, /onboarding/*, /sign-in.
+  // first (API, MCP, webhooks, health; see the comment in src/index.ts); any other path without a file falls
+  // back to index.html so the client-side router can handle /app/*, /onboarding/*, /sign-in.
   "assets": {
     "directory": "./web/dist",
+    // src/index.ts hands "/" and unknown non-API paths to the SPA through this binding.
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/webhooks/*", "/health"]
   },

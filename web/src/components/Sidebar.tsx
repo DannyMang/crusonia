@@ -41,7 +41,7 @@ function NavItem({ to, label, icon: Icon, end, badge }: Item) {
           {badge ? (
             <span
               className={cx(
-                "flex h-5 min-w-5.5 items-center justify-center rounded-full px-1.75 font-mono text-[11px]/3 font-semibold",
+                "flex h-5 min-w-5.5 items-center justify-center rounded-full px-1.75 tabular-nums text-[11px]/3 font-semibold",
                 isActive ? "bg-white text-ink" : "bg-ink text-white",
               )}
             >
@@ -116,7 +116,7 @@ function UserMenu() {
         )}
         <span className="flex min-w-0 grow flex-col gap-px">
           <span className="truncate text-[13px]/4 font-medium text-ink">{user?.name ?? "Signed in"}</span>
-          <span className="truncate font-mono text-[11px]/3.5 text-[#200D0D99]">{user?.email ?? ""}</span>
+          <span className="truncate tabular-nums text-[11px]/3.5 text-[#200D0D99]">{user?.email ?? ""}</span>
         </span>
         <ChevronUpDown className="text-[rgb(32_13_13/40%)]" />
       </button>
@@ -157,7 +157,6 @@ export function Sidebar() {
           <span className="min-w-0 grow truncate text-[13px]/4 font-medium text-ink">
             {company} <span className="text-[#200D0D99]">· Crusonia</span>
           </span>
-          <ChevronUpDown className="text-[rgb(32_13_13/40%)]" />
         </div>
         <button
           type="button"

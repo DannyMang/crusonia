@@ -100,9 +100,9 @@ export function useWorkflowRun(id: string | undefined, live = false) {
   return useQuery({ queryKey: keys.run(id ?? ""), queryFn: () => api.workflowRun(id!), enabled: Boolean(id), refetchInterval: live ? 5_000 : false });
 }
 
-export function useReplies() {
+export function useReplies(q: { label?: string; limit?: number } = {}) {
   const api = useApi();
-  return useQuery({ queryKey: keys.replies, queryFn: () => api.replies() });
+  return useQuery({ queryKey: [...keys.replies, q], queryFn: () => api.replies({ limit: 100, ...q }) });
 }
 
 export function useExperiments() {

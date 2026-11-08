@@ -1,10 +1,12 @@
 @import "tailwindcss";
 
 /* veri style. Paper exports use raw hex values (text-[#200D0D] ...), which work as-is; prefer these tokens
-   in new code: text-ink, bg-lime, bg-highlight, bg-panel, border-panel-line, bg-pill, text-green, font-mono. */
+   in new code: text-ink, bg-lime, bg-highlight, bg-panel, border-panel-line, bg-pill, text-green.
+   Owner rule: Inter for ALL text (IDs, emails, numbers, commands included). No monospace font anywhere, so the
+   mono token is Inter too (it also covers <code>, <kbd>, <pre>); use `tabular-nums` where digits must align. */
 @theme {
   --font-sans: "Inter", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: "Inter", system-ui, sans-serif;
 
   --color-ink: #200d0d;
   --color-lime: #bde689;

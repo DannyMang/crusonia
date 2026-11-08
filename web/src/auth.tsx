@@ -113,8 +113,8 @@ function MissingConfig() {
       <div className="max-w-md text-[15px]/6">
         <div className="font-semibold">Sign-in is not configured</div>
         <p className="mt-2 text-muted">
-          Build the app with <code className="font-mono text-[13px]">VITE_CLERK_PUBLISHABLE_KEY</code> set, or run{" "}
-          <code className="font-mono text-[13px]">bun run dev:mock</code> to try it with sample data.
+          Build the app with <code className="tabular-nums text-[13px]">VITE_CLERK_PUBLISHABLE_KEY</code> set, or run{" "}
+          <code className="tabular-nums text-[13px]">bun run dev:mock</code> to try it with sample data.
         </p>
       </div>
     </div>

@@ -7,8 +7,8 @@ import { CheckIcon, CopyIcon, Spinner } from "./icons.tsx";
 
 // ---------- buttons ----------
 
-type Variant = "primary" | "outline" | "soft" | "ghost" | "danger";
-type Size = "sm" | "md" | "lg";
+type Variant = "primary" | "outline" | "soft" | "ghost" | "danger" | "ink";
+type Size = "sm" | "header" | "md" | "lg";
 
 const variants: Record<Variant, string> = {
   // lime pill: Approve, Add leads, Continue
@@ -20,10 +20,14 @@ const variants: Record<Variant, string> = {
   ghost: "text-ink hover:bg-[#200D0D0A] disabled:opacity-60",
   // Reject, Revoke
   danger: "bg-white text-[#B42318] border border-[#B4231833] hover:bg-[#FDECEB] disabled:opacity-60",
+  // confirm step of a two-click action ("Send now?")
+  ink: "bg-ink text-white hover:bg-[#3A2424] disabled:opacity-60",
 };
 
 const sizes: Record<Size, string> = {
   sm: "h-7.5 px-3.5 rounded-full text-[13px]/4 font-medium gap-1.5",
+  // page-header actions (lead detail, workflow run)
+  header: "h-8 px-4 rounded-full text-sm/4.5 font-medium gap-2",
   md: "h-9 px-4 rounded-full text-sm/4.5 font-medium gap-2",
   lg: "h-12 px-5 rounded-[10px] text-[15px]/4.5 font-semibold gap-2.5",
 };
@@ -63,13 +67,13 @@ const tones: Record<Tone, string> = {
   ink: "bg-ink text-white",
 };
 
-/** Small status label (h-5, 11px semibold), e.g. "needs you", "Interested", "Unsubscribed". */
+/** Small status label (h-5, 11px semibold), e.g. "needs you", "Interested", "Unsubscribed". `mono` = tabular digits. */
 export function Pill({ tone = "lime", className, children, mono }: { tone?: Tone; className?: string; children: ReactNode; mono?: boolean }) {
   return (
     <span
       className={cx(
         "inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-[11px]/3.5 font-semibold",
-        mono && "font-mono",
+        mono && "tabular-nums",
         tones[tone],
         className,
       )}
@@ -112,17 +116,25 @@ const STAGE: Record<string, { label: string; tone: Tone; live?: boolean }> = {
   interested: { label: "Interested", tone: "lime" },
   not_interested: { label: "Not now", tone: "outline" },
   unsubscribed: { label: "Unsubscribed", tone: "red" },
+  meeting_booked: { label: "Meeting booked", tone: "green" },
 };
 
 export const stageLabel = (stage: string) => STAGE[stage]?.label ?? stage.replace(/_/g, " ");
 
+const badgeSizes = {
+  sm: "h-5.5 px-2.25 text-xs/4", // table rows
+  md: "h-5.5 px-2.5 text-[13px]/4",
+  lg: "h-6.5 px-3 text-[13px]/4", // page headers
+};
+
 /** Lead stage badge (Leads table, lead detail header). */
-export function StageBadge({ stage, className }: { stage: string; className?: string }) {
+export function StageBadge({ stage, className, size = "md" }: { stage: string; className?: string; size?: keyof typeof badgeSizes }) {
   const s = STAGE[stage] ?? { label: stageLabel(stage), tone: "outline" as Tone };
   return (
     <span
       className={cx(
-        "inline-flex h-5.5 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[13px]/4 font-medium",
+        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full font-medium",
+        badgeSizes[size],
         s.tone === "outline" ? "border border-[#200D0D24] bg-white text-[#200D0DB3]" : tones[s.tone],
         className,
       )}
@@ -185,7 +197,10 @@ export function EmptyState({
 /** Explains an API error in plain words. `not_configured` (503) reads as "coming online", not as a failure. */
 export function errorCopy(err: unknown, what = "this"): { title: string; body: string; calm: boolean } {
   if (isApiError(err)) {
+    if (err.code === "schema_out_of_date")
+      return { title: `${capitalize(what)} is coming online`, body: "This needs a database update that has not run on this deployment yet.", calm: true };
     if (err.notConfigured) return { title: `${capitalize(what)} is coming online`, body: notConfiguredHint(err.message), calm: true };
+    if (err.code === "profile_missing") return { title: "Set up your ideal customer first", body: "Finding leads searches for the profile you save in onboarding.", calm: true };
     if (err.missingRoute) return { title: `${capitalize(what)} is coming online`, body: "This part of Crusonia ships with the next backend update.", calm: true };
     if (err.status === 401) return { title: "Your session ended", body: "Sign in again to continue.", calm: false };
     if (err.status === 403) return { title: "No access yet", body: "This account is not on the workspace's allow list. Ask the owner to add it.", calm: false };
@@ -199,7 +214,7 @@ export function errorCopy(err: unknown, what = "this"): { title: string; body: s
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function notConfiguredHint(message: string) {
-  if (/NAIVE/i.test(message)) return "Needs the Naive agent, which is still being set up. Nothing is lost in the meantime.";
+  if (/NAIVE|Naive agent/i.test(message)) return "Needs the Naive agent, which is still being set up. Nothing is lost in the meantime.";
   if (/APIFY/i.test(message)) return "Needs the Apify connection, which is still being set up.";
   if (/AGENTMAIL/i.test(message)) return "Needs the AgentMail inbox, which is still being set up.";
   if (/DATABASE/i.test(message) || /schema/i.test(message)) return "The database is being set up. Try again in a minute.";
@@ -262,7 +277,7 @@ export function CopyButton({ text, label = "Copy", className, iconOnly }: { text
   );
 }
 
-/** JetBrains Mono span for IDs, emails, numbers. */
+/** IDs, emails and numbers: Inter with tabular figures (no monospace font anywhere, by owner rule). */
 export function Mono({ className, children }: { className?: string; children: ReactNode }) {
-  return <span className={cx("font-mono", className)}>{children}</span>;
+  return <span className={cx("tabular-nums", className)}>{children}</span>;
 }

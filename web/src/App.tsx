@@ -36,8 +36,7 @@ export function App() {
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            {/* The public landing page will live at "/" later; for now it opens the app. */}
-            <Route index element={<Navigate to="/app" replace />} />
+            {/* "/" is reserved for the public landing page (web/src/landing/), which sends signed-in visitors to /app. */}
 
             <Route path="sign-in/*" element={<RedirectIfSignedIn><SignIn /></RedirectIfSignedIn>} />
             <Route path="sign-up/*" element={<RedirectIfSignedIn><SignUp /></RedirectIfSignedIn>} />

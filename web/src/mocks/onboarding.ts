@@ -1,6 +1,10 @@
-// /api/profile and /api/onboarding/* mocks ("Onboarding · 1-4"). Proposals finish after a few polls.
-import { http } from "msw";
-import type { Profile } from "../api.ts";
+// /api/profile and /api/onboarding/* mocks ("Onboarding · 1-4"), in the backend's real shapes:
+// GET/PUT /api/profile -> { profile }, propose -> 202 { session_id }, propose/:id -> ProposeStatus.
+// - sample: the crawl takes ~1.5s; the proposal fills in over a few polls (partial profile while running).
+// - empty: no saved profile, the crawl finds no pages and the agent proposes nothing.
+// - unconfigured: read-website and propose answer 503 not_configured.
+import { delay, http } from "msw";
+import type { Profile, ProfileInput, ProposeStatus } from "../api.ts";
 import { body, fail, isEmpty, ok, scenario } from "./util.ts";
 
 export const sampleProfile: Profile = {
@@ -22,6 +26,7 @@ export const sampleProfile: Profile = {
   sources: [
     { field: "sells", url: "https://fieldnote.io/" },
     { field: "sells", url: "https://fieldnote.io/pricing" },
+    { field: "icp_description", url: "https://fieldnote.io/" },
     { field: "icp_description", url: "https://fieldnote.io/customers" },
     { field: "segments.0", url: "https://fieldnote.io/customers" },
     { field: "segments.1", url: "https://fieldnote.io/customers" },
@@ -30,23 +35,57 @@ export const sampleProfile: Profile = {
     { field: "signals.1", url: "https://fieldnote.io/customers" },
     { field: "signals.2", url: "https://fieldnote.io/" },
   ],
+  notes: null,
+  updated_at: new Date(Date.now() - 2 * 24 * 3600_000).toISOString(),
 };
+
+/** What the agent has filled in after `n` polls: what you sell, then who buys, then everything. */
+function partialProfile(n: number): Profile | undefined {
+  if (n < 2) return undefined;
+  const p = sampleProfile;
+  const sells = p.sources.filter((s) => s.field === "sells");
+  if (n === 2) return { ...p, icp_description: "", segments: [], signals: [], sources: sells };
+  return { ...p, segments: [], signals: [], sources: p.sources.filter((s) => s.field === "sells" || s.field === "icp_description") };
+}
 
 let saved: Profile | null = null;
 const polls = new Map<string, number>();
 
+const status = (session_id: string, rest: Partial<ProposeStatus> & Pick<ProposeStatus, "status">): ProposeStatus => ({
+  session_id,
+  stop_reason: null,
+  waiting_on: null,
+  pending_approvals: [],
+  ...rest,
+});
+
 export const onboardingHandlers = [
-  http.get("/api/profile", () => ok(saved ?? (isEmpty() ? null : sampleProfile))),
+  http.get("/api/profile", () => ok({ profile: saved ?? (isEmpty() ? null : sampleProfile) })),
   http.put("/api/profile", async ({ request }) => {
-    saved = await body<Profile>(request);
-    return ok(saved);
+    const input = await body<ProfileInput & { updated_at?: unknown }>(request);
+    if ("updated_at" in input) return fail(400, "invalid_request", "updated_at: Unrecognized key");
+    const orNull = (v: string | null | undefined) => (v ? v : null);
+    saved = {
+      company: orNull(input.company),
+      website: input.website ? (input.website.includes("://") ? input.website : `https://${input.website}`) : null,
+      sells: orNull(input.sells),
+      icp_description: orNull(input.icp_description),
+      segments: (input.segments ?? []).map((x) => ({ name: x.name, company_size: x.company_size ?? null, industry: x.industry ?? null, roles: x.roles ?? [] })),
+      signals: (input.signals ?? []).map((x) => ({ name: x.name, description: x.description ?? null })),
+      sources: input.sources ?? [],
+      notes: orNull(input.notes),
+      updated_at: new Date().toISOString(),
+    };
+    return ok({ profile: saved });
   }),
   http.post("/api/onboarding/read-website", async ({ request }) => {
     if (scenario() === "unconfigured") return fail(503, "not_configured", "APIFY_TOKEN is not set");
     const { url } = await body<{ url?: string }>(request);
-    const host = (url ?? "fieldnote.io").replace(/^https?:\/\//, "").replace(/\/$/, "");
+    await delay(1500);
+    if (isEmpty()) return ok({ pages: [] });
+    const host = (url ?? "fieldnote.io").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
     const pages = [
-      ["", "Product and headline"],
+      ["/", "Product and headline"],
       ["/pricing", "3 plans, from $29 a seat"],
       ["/customers", "38 logos, 6 case studies"],
       ["/about", "Team of 14, seed-funded"],
@@ -54,7 +93,7 @@ export const onboardingHandlers = [
       ["/careers", "Hiring a founding AE"],
       ["/changelog", "Weekly releases"],
     ].map(([path, title]) => ({ url: `https://${host}${path}`, title: title!, text: `${title}. Sample page text for ${host}${path}.` }));
-    return ok({ pages });
+    return ok({ pages, mode: "apify" });
   }),
   http.post("/api/onboarding/propose", () => {
     if (scenario() === "unconfigured") return fail(503, "not_configured", "NAIVE_AGENT_ID is not set");
@@ -63,8 +102,11 @@ export const onboardingHandlers = [
     return ok({ session_id: id }, 202);
   }),
   http.get("/api/onboarding/propose/:id", ({ params }) => {
+    if (scenario() === "unconfigured") return fail(503, "not_configured", "NAIVE_AGENT_ID is not set");
     const n = (polls.get(String(params.id)) ?? 0) + 1;
     polls.set(String(params.id), n);
-    return n < 4 ? ok({ status: "running" }) : ok({ status: "done", profile: sampleProfile });
+    const id = String(params.id);
+    if (isEmpty()) return ok(n < 3 ? status(id, { status: "running" }) : status(id, { status: "done", stop_reason: "end_turn" }));
+    return ok(n < 5 ? status(id, { status: "running", profile: partialProfile(n) }) : status(id, { status: "done", profile: sampleProfile, stop_reason: "end_turn" }));
   }),
 ];
