@@ -1,7 +1,7 @@
 // Autopilot decisions (pure): what is due, what stops a run, which leads a find step hands on, when the Operator runs,
 // and how the feed reads. The database behaviour is in test/autopilot.integration.test.ts.
 import { describe, expect, test } from "bun:test";
-import { feedItem, shortWhy, type FeedRow } from "../src/services/activity.ts";
+import { dropInlineScores, feedItem, shortWhy, type FeedRow } from "../src/services/activity.ts";
 import { autopilotAvailable, autopilotSteps, gateRun, hasFindStep, isDue, operatorDue, pickForResearch, type RunGate } from "../src/services/autopilot.ts";
 import { everyHoursOf } from "../src/services/workflow-defs.ts";
 import type { Env } from "../src/env.ts";
@@ -152,6 +152,18 @@ describe("the feed", () => {
     expect(text(row("draft_created", { channel: "email", approval_code: "B5S7" }))).toBe("Waiting for your 👍 on the email to Weave");
     expect(text(row("lead_needs_review", { question: "Which one?" }))).toBe("Waiting for your answer on Weave");
     expect(text(row("operator_cycle", { did: "Looked for 5 more like Weave", why: "You liked it" }))).toBe("Looked for 5 more like Weave");
+  });
+
+  test("a found lead's summary doesn't repeat its name", () => {
+    expect(text(row("lead_added", { via: "mcp" }, { why: "Weave sells payroll software [1]." }))).toBe("Found Weave · sells payroll software");
+  });
+
+  test("the score a find run gives with the lead gets no row; research's score does", () => {
+    const at = (s: number) => new Date(Date.parse("2026-11-08T10:00:00Z") + s * 1000).toISOString();
+    const rows = [row("lead_scored", { score: 85 }, { id: "3", created_at: at(240) }), row("lead_scored", { score: 88 }, { id: "2", created_at: at(0) }), row("lead_added", { via: "mcp" }, { id: "1", created_at: at(0) })];
+    expect(dropInlineScores(rows).map((r) => r.id)).toEqual(["3", "1"]);
+    // A lead found long before the feed's window keeps its score.
+    expect(dropInlineScores([row("lead_scored", { score: 85 })])).toHaveLength(1);
   });
 
   test("the Operator's reason comes with its row, and what waits for the owner is marked", () => {

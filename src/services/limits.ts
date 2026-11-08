@@ -38,7 +38,8 @@ export async function spendStatus(sql: Sql, env: Env, ws: string): Promise<Spend
       (select coalesce(sum(coalesce(consumed_micro_usd, 0)), 0)::text from naive_sessions
          where workspace_id = ${ws} and created_at > now() - interval '1 day') as spent,
       (select count(*)::int from naive_sessions where workspace_id = ${ws} and created_at > now() - interval '1 hour') as started,
-      (select count(*)::int from naive_sessions where workspace_id = ${ws} and status in ('running', 'idle')) as active,
+      -- A session out of budget stays 'idle' forever, but it isn't running: it must not use up the limit.
+      (select count(*)::int from naive_sessions where workspace_id = ${ws} and status in ('running', 'idle') and coalesce(stop_reason, '') <> 'budget_paused') as active,
       (select daily_cap_micro_usd::text from workspaces where id = ${ws}) as cap`;
   return {
     spent_micro_usd: Number(row?.spent ?? 0),
