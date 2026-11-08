@@ -61,7 +61,7 @@ describe("research playbook", () => {
 
   test("lead finding is short, saves right after reading, and doesn't give up on the first search", () => {
     const body = parsePlaybook(playbookText).body;
-    for (const phrase of ["Four turns at most", "return named companies", "two rounds of searching", "right after those reads"]) expect(body).toContain(phrase);
+    for (const phrase of ["Five turns at most", "return named companies", "two rounds of searching", "right after those reads", "use the domain you confirmed"]) expect(body).toContain(phrase);
   });
 
   test("malformed playbooks are refused", () => {
