@@ -35,6 +35,7 @@ import { addNote, addNoteInputSchema, excludedCompanies, recentOwnerNotes } from
 import { getProfile, profileInputSchema, saveProfile } from "../services/profile.ts";
 import { getStatus } from "../services/status.ts";
 import { getWorkflowForAgent } from "../services/qualification.ts";
+import { createDefinition, createVersion, definitionInputSchema } from "../services/workflow-defs.ts";
 import { listTasks, listTasksSchema } from "../services/tasks.ts";
 import { requireWebCall } from "../services/limits.ts";
 import { readWebsite, readWebsiteInputSchema } from "../services/web.ts";
@@ -58,6 +59,16 @@ type Deps = { sql?: () => Sql };
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const WEB = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
 const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
+
+const getWorkflowInputSchema = z.object({
+  lead_id: z.string().min(1).max(64).optional().describe("The lead whose research workflow you want."),
+  workflow_id: z.string().min(1).max(64).optional().describe("A workflow definition id (wf_...)."),
+  version: z.number().int().min(1).optional().describe("With workflow_id: a specific version (default: the latest)."),
+});
+
+const createWorkflowInputSchema = definitionInputSchema.extend({
+  workflow_id: z.string().min(1).max(64).optional().describe("Set to add a new version to this existing workflow instead of creating one."),
+});
 
 async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
   try {
@@ -312,12 +323,30 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
   server.registerTool(
     "get_workflow",
     {
-      title: "Get the qualification workflow",
+      title: "Get a qualification workflow",
       description:
-        "Returns the owner's qualification workflow (research questions, evidence requirements with ids and whether each is required, completion criteria; null if none is set) and the ICP it scores against, from the Company summary. Research messages usually include it already.",
+        "Returns a qualification workflow (research questions, evidence requirements with ids and whether each is required, completion criteria; null if none is set) and the ICP it scores against, from the Company summary. With lead_id: the workflow version that lead's research follows (the run it is in, else the default), its A/B variant and the variant's message angle. With workflow_id (and optionally version): that definition, its steps and variants. With no arguments: the default workflow and the list of workflow definitions. Research messages usually include the lead's workflow already.",
+      inputSchema: getWorkflowInputSchema,
       annotations: READ,
     },
-    () => run(() => getWorkflowForAgent(db(), ws)),
+    (args) => run(() => getWorkflowForAgent(db(), ws, args)),
+  );
+
+  server.registerTool(
+    "create_workflow",
+    {
+      title: "Create a qualification workflow",
+      description:
+        "Creates a qualification workflow definition (version 1), or with workflow_id a new immutable version of an existing one (earlier versions and the runs that used them stay as they were). Fields: name; icp ({source: 'company_summary'} by default); research_questions (what research answers for each lead); evidence_required (facts each lead needs a sourced evidence item for, e.g. 'A dated hiring signal with a source URL'; a lead missing one is paused for review, never scored); done_when (completion criteria); steps (the builder's graph: trigger, find, research, condition, draft, tasks, approval, notify, sync_crm, send, end, each {id, kind, title, next: [ids]}; a sensible default when omitted); variants (A/B arms with an optional message angle). Nothing runs: the owner starts runs in Crusonia. Created by an agent, it is tagged source 'claude_code'.",
+      inputSchema: createWorkflowInputSchema,
+      annotations: WRITE,
+    },
+    (args) =>
+      run(async () => {
+        const { workflow_id, ...input } = args;
+        if (workflow_id) return createVersion(db(), ws, workflow_id, input, { actor: "agent:mcp" });
+        return createDefinition(db(), ws, { ...input, source: input.source === "template" ? "template" : undefined }, { actor: "agent:mcp", source: "claude_code" });
+      }),
   );
 
   server.registerTool(

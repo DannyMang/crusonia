@@ -44,6 +44,7 @@ import {
   planNotes,
   planUpdate,
   propertiesHash,
+  syncCohorts,
   syncScope,
   type CrmTarget,
   type EvidenceRow,
@@ -104,7 +105,8 @@ function syncLeadQuery(sql: Sql, leadId: string) {
            (select max(m.created_at) from messages m where m.lead_id = l.id and m.direction = 'out') as last_outreach_at,
            greatest(l.updated_at, (select max(m.created_at) from messages m where m.lead_id = l.id)) as last_activity_at,
            (select count(*)::int from evidence e where e.lead_id = l.id) as evidence_count,
-           (select e.claim from evidence e where e.lead_id = l.id order by e.id limit 1) as signal
+           (select e.claim from evidence e where e.lead_id = l.id order by e.id limit 1) as signal,
+           l.cohort
     from leads l where l.workspace_id = ${OWNER_WORKSPACE_ID} and l.id = ${leadId}`;
 }
 
@@ -137,6 +139,8 @@ export type HubSpotContext = {
   /** Objects this run found the token cannot write ("companies"); later leads skip them without a call. */
   blocked?: Set<string>;
   maxNotes?: number;
+  /** HUBSPOT_SYNC_COHORTS: only leads in these cohorts are written (even forced ones); null = every cohort. */
+  cohorts?: string[] | null;
 };
 
 export type HubSpotProgress = {
@@ -332,6 +336,7 @@ export async function syncLeadToHubSpot(sql: Sql, client: HubSpotClient, item: Q
   const snap = await loadHubSpotSnapshot(sql, item.lead_id!);
   if (!snap) return { skipped: true };
   if (!item.payload.force && !inScope(snap.lead, "hubspot", ctx.scope)) return { skipped: true };
+  if (ctx.cohorts && !ctx.cohorts.includes(snap.lead.cohort ?? "")) return { skipped: true };
   const p = newProgress(snap.lead);
   try {
     await pushLeadToHubSpot(client, snap, ctx, p);
@@ -619,7 +624,7 @@ export async function runCrmSync(sql: Sql, env: Env, fetchFn?: FetchFn, opts: Ru
           if (!ctx) {
             const { available, warnings } = await hubspotAvailability(client);
             r.warnings.push(...warnings);
-            ctx = { available, blocked: new Set(), scope: cfg.hubspot.scope };
+            ctx = { available, blocked: new Set(), scope: cfg.hubspot.scope, cohorts: syncCohorts(env.HUBSPOT_SYNC_COHORTS) };
           }
           return syncLeadToHubSpot(sql, client, item, ctx);
         },

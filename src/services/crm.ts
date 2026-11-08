@@ -250,7 +250,8 @@ export type ImportInput = {
   dry_run?: boolean;
 };
 
-export async function importLeads(sql: Sql, ws: string, input: ImportInput, actor: string) {
+/** `allowConsent: false` (an API key): consent columns, mapped or guessed, are never read (src/api/guards.ts). */
+export async function importLeads(sql: Sql, ws: string, input: ImportInput, actor: string, opts: { allowConsent?: boolean } = {}) {
   let rows: string[][];
   let map;
   try {
@@ -261,6 +262,11 @@ export async function importLeads(sql: Sql, ws: string, input: ImportInput, acto
   } catch (err) {
     if (err instanceof CsvError) throw new ApiError(400, "invalid_csv", err.message);
     throw err;
+  }
+  if (opts.allowConsent === false) {
+    delete map.consent;
+    delete map.consent_at;
+    delete map.consent_text;
   }
   if (map.email === undefined && map.website === undefined && map.domain === undefined) {
     throw new ApiError(400, "invalid_csv", 'No email, domain or website column found; pass `mapping`, e.g. {"email": "Work Email"}', {

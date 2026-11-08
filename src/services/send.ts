@@ -24,7 +24,9 @@ export type SendDeps = { sql: Sql; ws: string; env: Env; fetch?: FetchFn; actor:
 
 export type SendResult =
   | { status: "sent"; draft_id: string; message_id: string; thread_id: string }
-  | { status: "sending"; draft_id: string; note: string };
+  | { status: "sending"; draft_id: string; note: string }
+  // A follow-up approved before it is due: the minute cron sends it at send_at (src/services/followups.ts).
+  | { status: "scheduled"; draft_id: string; send_at: string };
 
 function agentMail(env: Env, fetchFn?: FetchFn) {
   if (!env.AGENTMAIL_API_KEY) throw notConfigured("AGENTMAIL_API_KEY");
@@ -90,7 +92,9 @@ export async function approveAndSend(deps: SendDeps, code: string): Promise<Send
                     and d.version = (select max(version) from drafts where lead_id = approvals.lead_id))
       returning code, workspace_id, lead_id, draft_id, recipient
     ), d as (
-      update drafts set status = 'sending', sending_at = now(), error = null
+      -- A follow-up that isn't due yet is only scheduled; the cron sends it when due (src/services/followups.ts).
+      update drafts set status = case when scheduled_for > now() then 'scheduled' else 'sending' end,
+                        sending_at = case when scheduled_for > now() then null else now() end, error = null
       where id = (select draft_id from a)
       returning *
     ), ev as (
@@ -99,7 +103,30 @@ export async function approveAndSend(deps: SendDeps, code: string): Promise<Send
     )
     select d.*, a.recipient from d, a`;
   if (!claimed[0]) throw new ApiError(409, "approval_not_pending", "Approval was consumed or invalidated concurrently");
-  const draft = claimed[0] as DraftRow & { recipient: string };
+  const draft = claimed[0] as DraftRow & { recipient: string; scheduled_for?: Date | null };
+  if (draft.status === "scheduled") {
+    const sendAt = new Date(draft.scheduled_for!).toISOString();
+    await sql`insert into events (workspace_id, lead_id, kind, data) values (${draft.workspace_id}, ${draft.lead_id}, 'followup_scheduled', ${JSON.stringify({
+      draft_id: draft.id,
+      version: draft.version,
+      send_at: sendAt,
+      actor,
+    })}::jsonb)`;
+    return { status: "scheduled", draft_id: draft.id, send_at: sendAt };
+  }
+  return deliverClaimed(sql, env, client, draft);
+}
+
+/**
+ * Sends a draft already claimed as 'sending' (its approval consumed) and records the result. Ambiguous provider
+ * failures leave it 'sending' for reconcileSending; definite ones mark it send_failed.
+ */
+export async function deliverClaimed(
+  sql: Sql,
+  env: Env,
+  client: AgentMailClient,
+  draft: DraftRow & { recipient: string },
+): Promise<Extract<SendResult, { status: "sent" | "sending" }>> {
 
   let sent: SentMessage;
   try {

@@ -9,6 +9,7 @@ import { sendApprovalTtlMinutes } from "../services/approval-ttl.ts";
 import { createLead, deleteLead, getLeadFull, importLeads, LEAD_STAGES, patchLead, searchLeads } from "../services/crm.ts";
 import { IMPORT_FIELDS } from "../services/csv.ts";
 import { createDraft } from "../services/drafts.ts";
+import { createFollowUp, followupInputSchema, listFollowUps } from "../services/followups.ts";
 import { getFindRun, MAX_FIND_LEADS, naiveAgent, startFindLeads } from "../services/runs.ts";
 
 export const leads = new Hono<AppEnv>();
@@ -98,6 +99,17 @@ function parseMappingParam(raw: string | undefined) {
   return parsed.data;
 }
 
+// Consent allows email, so only a person grants it (src/api/guards.ts): an API key may import contacts, but a mapped
+// consent column is refused (403 human_required) and guessed consent columns are ignored.
+const CONSENT_FIELDS = ["consent", "consent_at", "consent_text"] as const;
+function consentRule(c: { get: (k: "principal") => { kind: string } }, mapping: Partial<Record<string, string>> | undefined) {
+  const agent = c.get("principal").kind === "api_key";
+  if (agent && CONSENT_FIELDS.some((f) => mapping?.[f])) {
+    throw new ApiError(403, "human_required", "Importing consent needs a signed-in person (the Crusonia app), not an API key");
+  }
+  return { allowConsent: !agent };
+}
+
 // JSON {csv, mapping?, source?, dry_run?}, or a raw text/csv body with ?source=&dry_run=&mapping=<json>.
 leads.post(
   "/import",
@@ -109,9 +121,10 @@ leads.post(
     if ((c.req.header("content-type") ?? "").toLowerCase().startsWith("text/csv")) {
       const q = parseQuery(c, ImportQuery);
       const input = { csv: await c.req.text(), mapping: parseMappingParam(q.mapping), source: q.source, dry_run: q.dry_run === "true" || q.dry_run === "1" };
-      return c.json(await importLeads(sql, ws, input, actor));
+      return c.json(await importLeads(sql, ws, input, actor, consentRule(c, input.mapping)));
     }
-    return c.json(await importLeads(sql, ws, await parseJson(c, ImportBody), actor));
+    const body = await parseJson(c, ImportBody);
+    return c.json(await importLeads(sql, ws, body, actor, consentRule(c, body.mapping)));
   },
 );
 
@@ -154,5 +167,18 @@ leads.post("/:id/drafts", async (c) => {
     { lead_id: c.req.param("id"), subject: body.subject, body: body.body },
     { ttlMinutes: sendApprovalTtlMinutes(c.env), via: "api", actor: actorOf(c.get("principal")) },
   );
+  return c.json(result, 201);
+});
+
+// Follow-ups on a sent email (src/services/followups.ts): each is a new draft version with its own send approval,
+// sent at its time unless the lead replies first.
+leads.get("/:id/followups", async (c) => c.json({ data: await listFollowUps(sqlFor(c.env), wsOf(c), c.req.param("id")) }));
+
+leads.post("/:id/followups", async (c) => {
+  const body = await parseJson(c, followupInputSchema);
+  const result = await createFollowUp(sqlFor(c.env), wsOf(c), c.req.param("id"), body, {
+    ttlMinutes: sendApprovalTtlMinutes(c.env),
+    actor: actorOf(c.get("principal")),
+  });
   return c.json(result, 201);
 });
