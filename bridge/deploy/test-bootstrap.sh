@@ -51,7 +51,7 @@ platform=()
 [[ -n "${PLATFORM:-}" ]] && platform=(--platform "$PLATFORM")
 docker run --rm --privileged --cgroupns=private --name crusonia-bootstrap-test ${platform[@]+"${platform[@]}"} -v "$work:/test:ro" -v /var/lib/docker ubuntu:24.04 bash -c '
   install -m 755 /test/systemctl /usr/local/bin/systemctl
-  bash /test/bootstrap.sh; status=$?
+  env -u HOME -u USER bash /test/bootstrap.sh; status=$?  # cloud-init runs launch scripts without HOME
   echo "--- bootstrap exit: $status"
   echo "--- env file: $(stat -c "%a %U:%G" /opt/crusonia-bridge/bridge.env 2>/dev/null)"
   echo "--- container: $(docker inspect -f "{{.State.Status}} restarts={{.RestartCount}} readonly={{.HostConfig.ReadonlyRootfs}}" crusonia-bridge 2>/dev/null)"
