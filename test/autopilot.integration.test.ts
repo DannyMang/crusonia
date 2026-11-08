@@ -18,6 +18,7 @@ import { writeCompanySummary } from "../src/services/company-summary.ts";
 import { addLeads } from "../src/services/leads.ts";
 import { spendStatus } from "../src/services/limits.ts";
 import { addNote } from "../src/services/notes.ts";
+import { runWorkflow } from "../src/services/workflow-runs.ts";
 import { handleSessionIdle } from "../src/services/workflows.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
@@ -340,6 +341,22 @@ suite("autopilot (database, mocked Naive)", () => {
     expect(r).toMatchObject({ trigger: "csv_import", phase: "researching" });
     await runAutopilot(sql, env, n.fn);
     expect(n.sessions.filter((s) => s.metadata.purpose === "research")).toHaveLength(1);
+  }, 60_000);
+
+  test("a run nobody started by hand starts at most 5 sessions, whatever it was asked for; a person's isn't limited this way", async () => {
+    const ws = await workspace("cap");
+    const env = { ...baseEnv(ws), MAX_ACTIVE_SESSIONS: "100" };
+    const n = naive();
+    await summary(ws);
+    const id = await ensureAutopilotWorkflow(sql, env, ws);
+    const out = await addLeads(sql, ws, Array.from({ length: 12 }, (_, i) => ({ company: `C${i}`, domain: `c${i}-${run}.dev`, source: "it", source_url: `https://c${i}-${run}.dev/` })), { cohort: "big" });
+    const ids = out.results.map((r) => r.id!);
+    const auto = await runWorkflow(sql, env, ws, id, { lead_ids: ids, trigger: "operator" }, "agent:x", { fetch: n.fn });
+    expect(auto.started).toHaveLength(5);
+    await sql`update naive_sessions set status = 'done' where workspace_id = ${ws}`;
+    await sql`update workflow_runs set phase = 'done' where workspace_id = ${ws}`;
+    const person = await runWorkflow(sql, env, ws, id, { lead_ids: ids }, "clerk:u1", { fetch: n.fn });
+    expect(person.started).toHaveLength(12);
   }, 60_000);
 
   test("a reply starts a workflow with a reply trigger, once", async () => {

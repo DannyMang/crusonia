@@ -142,6 +142,17 @@ function questionPrompt(r: Pick<NoticeRow, "payload">): string {
   return typeof prompt === "string" ? prompt : "";
 }
 
+const NOTICE_BODY_CHARS = 700;
+const NOTICE_SUBJECT_CHARS = 150;
+
+/**
+ * Whether a text shows the whole draft. A 👍 approves exactly what was on the bubble, so a draft cut short can only be
+ * approved in the app (👎 still works: rejecting needs no reading). Pure.
+ */
+export function noticeShowsWholeDraft(draft: { subject?: string | null; body?: string | null }): boolean {
+  return !block(draft.body ?? "", NOTICE_BODY_CHARS).cut && oneLine(draft.subject, NOTICE_SUBJECT_CHARS) === oneLine(draft.subject, 10_000);
+}
+
 /**
  * The text sent when an approval opens. The first line always names the request (the approval code) and, for drafts, the
  * exact version: a 👍 on this bubble approves that version only. A new version of a draft the owner was already texted
@@ -152,15 +163,16 @@ export function formatApprovalNotice(r: NoticeRow): string {
   if (r.kind === "send") {
     const to = leadLabel(r);
     const email = oneLine(r.recipient, 120);
-    const body = block(r.draft_body ?? "", 700);
+    const body = block(r.draft_body ?? "", NOTICE_BODY_CHARS);
+    const whole = noticeShowsWholeDraft({ subject: r.draft_subject, body: r.draft_body });
     return [
       ...(r.replaces_version ? [`That draft changed; here's the new one (v${r.replaces_version} is closed).`] : []),
       `Request ${r.code} · draft v${r.draft_version ?? 1} to ${to}${email && !to.includes(email) ? ` <${email}>` : ""}:`,
-      `"${oneLine(r.draft_subject, 150)}"`,
+      `"${oneLine(r.draft_subject, NOTICE_SUBJECT_CHARS)}"`,
       "",
-      body.text + (body.cut ? "\n(cut short; the full draft is in the app)" : ""),
+      body.text + (whole ? "" : "\n(cut short; the full draft is in the app)"),
       "",
-      "Tap 👍 to send, 👎 to reject.",
+      whole ? "Tap 👍 to send, 👎 to reject." : "Open Crusonia to approve. Tap 👎 to reject.",
     ].join("\n");
   }
   const lead = r.lead_name || r.lead_company || r.lead_email ? ` (lead: ${leadLabel(r)})` : "";
@@ -180,7 +192,8 @@ export function formatApprovalNotice(r: NoticeRow): string {
 export function formatExpiryWarning(r: NoticeRow, now: Date = new Date()): string {
   const left = timeLeft(r.expires_at, now);
   if (r.kind === "send") {
-    return `Reminder: request ${r.code} expires in ${left} (draft to ${leadLabel(r)}: "${oneLine(r.draft_subject, 80)}"). Tap 👍 to send, 👎 to reject.`;
+    const act = noticeShowsWholeDraft({ subject: r.draft_subject, body: r.draft_body }) ? "Tap 👍 to send, 👎 to reject." : "Open Crusonia to approve. Tap 👎 to reject.";
+    return `Reminder: request ${r.code} expires in ${left} (draft to ${leadLabel(r)}: "${oneLine(r.draft_subject, 80)}"). ${act}`;
   }
   if (r.kind === "tool") {
     const name = oneLine(typeof r.payload?.name === "string" ? r.payload.name : "a tool", 80);
@@ -458,14 +471,14 @@ function friendlyError(err: unknown, code: string | undefined): CommandResult | 
   return { ok: false, error: e.code, code, reply: oneLine(text[e.code] ?? `Couldn't do that for ${c || "you"}: ${e.message}.`, 600) };
 }
 
-type ApprovalContext = { lead_name: string | null; lead_company: string | null; lead_email: string | null; recipient: string | null; draft_subject: string | null };
+type ApprovalContext = { lead_name: string | null; lead_company: string | null; lead_email: string | null; recipient: string | null; draft_subject: string | null; draft_body: string | null };
 
 async function contextOf(sql: Sql, code: string): Promise<ApprovalContext> {
   const rows = await sql`
-    select a.recipient, l.name as lead_name, l.company as lead_company, l.email as lead_email, d.subject as draft_subject
+    select a.recipient, l.name as lead_name, l.company as lead_company, l.email as lead_email, d.subject as draft_subject, d.body as draft_body
     from approvals a left join leads l on l.id = a.lead_id left join drafts d on d.id = a.draft_id
     where a.workspace_id = ${WS} and a.code = ${code}`;
-  return (rows[0] ?? { lead_name: null, lead_company: null, lead_email: null, recipient: null, draft_subject: null }) as ApprovalContext;
+  return (rows[0] ?? { lead_name: null, lead_company: null, lead_email: null, recipient: null, draft_subject: null, draft_body: null }) as ApprovalContext;
 }
 
 export async function handleOwnerCommand(ctx: { sql: Sql; env: Env; fetch?: FetchFn }, cmd: OwnerCommand): Promise<CommandResult> {
@@ -477,6 +490,9 @@ export async function handleOwnerCommand(ctx: { sql: Sql; env: Env; fetch?: Fetc
     const approval = await getApproval(sql, WS, approvalCode);
     if (approval.kind === "send") {
       const c = await contextOf(sql, approval.code);
+      if (!noticeShowsWholeDraft({ subject: c.draft_subject, body: c.draft_body })) {
+        return { ok: false, error: "draft_cut_off", code: approval.code, reply: `Request ${approval.code} was too long to show in full, so a 👍 can't send it. Open Crusonia to approve.` };
+      }
       const result = await approveAndSend({ sql, ws: WS, env, fetch: ctx.fetch, actor: IMESSAGE_ACTOR, via: "imessage" }, approval.code);
       const to = leadLabel(c);
       if (result.status === "scheduled") {

@@ -18,6 +18,7 @@ import { getDefinition, loadVersion, variantArms } from "./workflow-defs.ts";
 import { MAX_RESEARCH_BATCH, startResearch, type ResearchOpts } from "./workflows.ts";
 
 export const MAX_TEST_LEADS = 10;
+export const MAX_AGENT_RUN_SESSIONS = 5;
 
 /** `trigger`: what started it (a person when omitted). */
 export type RunInput = { version?: number; test_leads?: number; cohort?: string; lead_ids?: string[]; trigger?: "schedule" | "csv_import" | "reply" | "operator" };
@@ -46,7 +47,9 @@ export async function runWorkflow(
     throw new ApiError(409, "spend_cap_reached", `This workflow spent $${workflow.spend.usd} of its $${workflow.spend.cap_usd} ${workflow.spend.period === "week" ? "weekly" : "per-run"} cap`);
   }
 
-  const limit = Math.min(input.test_leads ?? MAX_RESEARCH_BATCH, input.test_leads ? MAX_TEST_LEADS : MAX_RESEARCH_BATCH);
+  // A run nobody started by hand (a schedule, a trigger, an agent's call) stays small, whatever it was asked for.
+  const most = input.trigger ? MAX_AGENT_RUN_SESSIONS : input.test_leads ? MAX_TEST_LEADS : MAX_RESEARCH_BATCH;
+  const limit = Math.min(input.test_leads ?? MAX_RESEARCH_BATCH, most);
   const candidates = (
     input.lead_ids?.length
       ? await sql`select id, stage, variant, cohort, excluded_at from leads

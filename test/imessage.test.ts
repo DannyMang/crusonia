@@ -7,6 +7,7 @@ import worker from "../src/index.ts";
 import { signBridge, verifyBridge } from "../src/lib/signatures.ts";
 import {
   formatApprovalNotice,
+  noticeShowsWholeDraft,
   formatExpiryWarning,
   formatSummary,
   imessageConfig,
@@ -84,6 +85,17 @@ describe("notice wording: thumbs only", () => {
     }
   });
 
+  test("only a draft shown in full can be approved with a thumb", () => {
+    expect(noticeShowsWholeDraft({ subject: "Hi", body: "x".repeat(700) })).toBe(true);
+    expect(noticeShowsWholeDraft({ subject: "Hi", body: "x".repeat(701) })).toBe(false);
+    expect(noticeShowsWholeDraft({ subject: "s".repeat(151), body: "short" })).toBe(false);
+    const long = { ...base, draft_body: "x".repeat(2000) };
+    expect(formatExpiryWarning(long)).toContain("Open Crusonia to approve");
+    expect(formatExpiryWarning(long)).not.toContain("👍");
+    expect(formatExpiryWarning(base)).toContain("Tap 👍 to send");
+    expect(formatApprovalNotice(base)).toContain("Tap 👍 to send");
+  });
+
   test("a new version of a draft the owner saw says it changed; long bodies are cut and say where the rest is", () => {
     const text = formatApprovalNotice({ ...base, code: "TG36", draft_version: 2, replaces_version: 1, draft_body: "x".repeat(2000) });
     expect(text.split("\n").slice(0, 2)).toEqual([
@@ -92,6 +104,9 @@ describe("notice wording: thumbs only", () => {
     ]);
     expect(text).toContain("(cut short; the full draft is in the app)");
     expect(text.length).toBeLessThan(1200);
+    // It can't be approved from what it shows.
+    expect(text).toContain("Open Crusonia to approve. Tap 👎 to reject.");
+    expect(text).not.toContain("👍");
     expect(formatApprovalNotice({ ...base, draft_version: 2, replaces_version: null })).not.toContain("changed");
   });
 
