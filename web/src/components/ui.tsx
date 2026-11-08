@@ -197,12 +197,15 @@ export function EmptyState({
 
 /** Explains an API error in plain words. `not_configured` (503) reads as "coming online", not as a failure. */
 export function errorCopy(err: unknown, what = "this", userId?: string | null): { title: string; body: string; calm: boolean } {
+  // "Tasks are coming online", "Your overview is coming online"; "status" and "finding leads" stay singular.
+  const plural = /[^isu]s$/i.test(what) && !/^\w+ing\b/i.test(what);
+  const coming = `${capitalize(what)} ${plural ? "are" : "is"} coming online`;
   if (isApiError(err)) {
     if (err.code === "schema_out_of_date")
-      return { title: `${capitalize(what)} is coming online`, body: "This needs a database update that has not run on this deployment yet.", calm: true };
-    if (err.notConfigured) return { title: `${capitalize(what)} is coming online`, body: notConfiguredHint(err.message), calm: true };
+      return { title: coming, body: "This needs a database update that has not run on this deployment yet.", calm: true };
+    if (err.notConfigured) return { title: coming, body: notConfiguredHint(err.message), calm: true };
     if (err.code === "profile_missing") return { title: "Set up your ideal customer first", body: "Finding leads searches for the profile you save in onboarding.", calm: true };
-    if (err.missingRoute) return { title: `${capitalize(what)} is coming online`, body: "This part of Crusonia ships with the next backend update.", calm: true };
+    if (err.missingRoute) return { title: coming, body: "This part of Crusonia ships with the next backend update.", calm: true };
     if (err.status === 401) return { title: "Your session ended", body: "Sign in again to continue.", calm: false };
     if (err.code === "signups_closed")
       return { title: "Sign-ups are closed", body: "This Crusonia instance is not taking new accounts right now. Ask the owner for access.", calm: false };
