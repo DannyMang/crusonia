@@ -33,8 +33,10 @@ export interface Env {
   // config (optional; defaults in code)
   // Tools the Naive agent may run without asking the owner: comma list, `*` suffix wildcards.
   AUTO_CONFIRM_TOOLS?: string;
-  // Minutes before a pending approval expires (default 30).
-  APPROVAL_TTL_MINUTES?: string;
+  // Approval lifetimes (src/services/approval-ttl.ts). Hours before a send approval (email draft) expires,
+  // default 168 (7 days); minutes before an agent tool or question approval expires, default 60.
+  SEND_APPROVAL_TTL_HOURS?: string;
+  TOOL_APPROVAL_TTL_MINUTES?: string;
 
   // secrets: later (Photon / iMessage)
   SPECTRUM_PROJECT_ID?: string;

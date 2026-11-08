@@ -5,9 +5,6 @@ import type { Approval, Draft, Sql } from "../db.ts";
 import { newId, shortCode } from "../ids.ts";
 import { ServiceError } from "./errors.ts";
 
-/** How long a send approval stays open before the cron marks it expired. */
-export const APPROVAL_TTL_HOURS = 48;
-
 // Creating a draft moves the lead to awaiting_approval only from these stages; leads further along
 // (sent, replied, ...) keep their stage so a follow-up draft doesn't hide where the conversation is.
 const PRE_SEND_STAGES = ["new", "researching", "qualified", "needs_review", "awaiting_approval"];
@@ -26,15 +23,16 @@ export type CreatedDraft = { draft: Draft; approval: Approval; superseded_approv
 /**
  * Stores a new immutable draft version for the lead and opens a pending `send` approval for it, bound to
  * the lead's current email (`recipient`) and this exact version. Older open drafts become `superseded`
- * and their pending approvals `expired`. `opts.ttlMinutes` overrides the default lifetime (the REST API
- * passes APPROVAL_TTL_MINUTES); `opts.via` labels the event ('mcp' by default, 'api' for REST).
+ * and their pending approvals `expired`. `opts.ttlMinutes` is the approval's lifetime: callers pass
+ * sendApprovalTtlMinutes(env) (SEND_APPROVAL_TTL_HOURS, 7 days by default). `opts.via` labels the event
+ * ('mcp' by default, 'api' for REST).
  */
 export async function createDraft(
   sql: Sql,
   input: DraftInput,
-  opts: { ttlMinutes?: number; via?: string; actor?: string } = {},
+  opts: { ttlMinutes: number; via?: string; actor?: string },
 ): Promise<CreatedDraft> {
-  const ttlMinutes = opts.ttlMinutes ?? APPROVAL_TTL_HOURS * 60;
+  const { ttlMinutes } = opts;
   const via = opts.via ?? "mcp";
   const leads = await sql`
     select l.id, l.email, l.name, l.stage, l.consent_at,

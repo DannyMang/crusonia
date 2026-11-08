@@ -72,12 +72,19 @@ NAIVE_VAULT_ID=
 AGENTMAIL_INBOX_ID=
 # Verifies AgentMail (Svix) webhook signatures on /webhooks/agentmail (whsec_...).
 AGENTMAIL_WEBHOOK_SECRET=
-# Naive agent that runs research sessions (POST /api/workflows/research). Agent creation in setup.ts is still a
-# TODO: until then, create the agent in the Naive dashboard and paste its id (agt_...).
+# Naive agent that runs research sessions (POST /api/workflows/research). setup.ts creates it (system prompt:
+# playbooks/research.md) and updates it in place on re-runs; `bun run setup --agent` re-applies only the agent.
 NAIVE_AGENT_ID=
 
 # Optional, setup only: AgentMail username for the inbox (default "crusonia" -> crusonia@agentmail.to).
 # AGENTMAIL_USERNAME=
+# Optional, setup only: the Naive agent's model and spend limits (micro-USD: 1000000 = $1). Defaults shown.
+# The harness (Naive's default when unset) is fixed when the agent is created.
+# NAIVE_AGENT_MODEL=vetta/auto
+# NAIVE_AGENT_BUDGET_PERIOD=day
+# NAIVE_AGENT_BUDGET_CAP_MICRO_USD=5000000
+# NAIVE_AGENT_MAX_TASK_MICRO_USD=1000000
+# NAIVE_AGENT_HARNESS=
 
 # ---------------------------------------------------------------------------
 # Optional policy (defaults shown)
@@ -86,8 +93,11 @@ NAIVE_AGENT_ID=
 # Naive tool calls that run without asking the owner: comma list, `*` suffix wildcards, `none` to ask for everything.
 # Anything else becomes a 'tool' approval. Never auto-allowed while paused.
 # AUTO_CONFIRM_TOOLS=crusonia.*,apify.*,web_search,web_fetch
-# Minutes before an approval requested through the REST API (and agent tool/question approvals) expires.
-# APPROVAL_TTL_MINUTES=30
+# Hours before a send approval (an email draft, from the MCP create_draft tool or the REST API) expires: 7 days.
+# SEND_APPROVAL_TTL_HOURS=168
+# Minutes before an agent tool or ask_operator question approval expires. The Naive session waits meanwhile; an
+# expired tool call is denied to the agent.
+# TOOL_APPROVAL_TTL_MINUTES=60
 
 # ---------------------------------------------------------------------------
 # Later: Photon iMessage approvals (Photon Stable)

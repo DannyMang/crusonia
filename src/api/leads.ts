@@ -2,8 +2,9 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { actorOf, approvalTtlMinutes, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
+import { actorOf, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
 import { ApiError, errorBody, invalidRequest } from "../lib/errors.ts";
+import { sendApprovalTtlMinutes } from "../services/approval-ttl.ts";
 import { createLead, deleteLead, getLeadFull, importLeads, LEAD_STAGES, patchLead, searchLeads } from "../services/crm.ts";
 import { IMPORT_FIELDS } from "../services/csv.ts";
 import { createDraft } from "../services/drafts.ts";
@@ -128,7 +129,7 @@ leads.post("/:id/drafts", async (c) => {
   const result = await createDraft(
     sqlFor(c.env),
     { lead_id: c.req.param("id"), subject: body.subject, body: body.body },
-    { ttlMinutes: approvalTtlMinutes(c.env), via: "api", actor: actorOf(c.get("principal")) },
+    { ttlMinutes: sendApprovalTtlMinutes(c.env), via: "api", actor: actorOf(c.get("principal")) },
   );
   return c.json(result, 201);
 });

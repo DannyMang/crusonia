@@ -1,7 +1,7 @@
 // /api/approvals: list, inspect, approve (send / allow), reject (deny), edit (new draft version), answer.
 import { Hono } from "hono";
 import { z } from "zod";
-import { actorOf, approvalTtlMinutes, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
+import { actorOf, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
 import { ApiError } from "../lib/errors.ts";
 import {
   answerQuestion,
@@ -13,6 +13,7 @@ import {
   resolveTool,
   type Deps,
 } from "../services/approvals.ts";
+import { sendApprovalTtlMinutes } from "../services/approval-ttl.ts";
 import { approveAndSend } from "../services/send.ts";
 
 export const approvals = new Hono<AppEnv>();
@@ -21,7 +22,7 @@ const deps = (c: { env: AppEnv["Bindings"]; get: (k: "principal") => AppEnv["Var
   sql: sqlFor(c.env),
   env: c.env,
   actor: actorOf(c.get("principal")),
-  ttlMinutes: approvalTtlMinutes(c.env),
+  sendTtlMinutes: sendApprovalTtlMinutes(c.env),
 });
 
 const ListQuery = z.object({

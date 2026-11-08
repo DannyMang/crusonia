@@ -2,6 +2,7 @@
 //   bun run setup                 print the values to add to .dev.vars
 //   bun run setup --write         also write them into .dev.vars
 //   bun run setup --naive-credential   re-add the MCP credentials to an existing Naive vault
+//   bun run setup --agent         only create or update the Naive agent (e.g. after editing playbooks/)
 //
 // Needs: PUBLIC_URL (wrangler.jsonc, after the first deploy), MCP_TOKEN, and the API key of each
 // provider to set up (AGENTMAIL_API_KEY, NAIVE_API_KEY, APIFY_TOKEN). Providers without a key are skipped.
@@ -9,6 +10,9 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { AgentMailClient } from "agentmail";
 import { ROOT, getVar, requireVar } from "./lib/env.ts";
+import { APIFY_MCP_URL, PLAYBOOK_PATH, agentSettings, changedFields, naiveAgentConfig, parsePlaybook } from "./lib/naive-agent.ts";
+
+export { APIFY_MCP_URL };
 
 const args = new Set(process.argv.slice(2));
 const results: Record<string, string> = {};
@@ -99,34 +103,44 @@ async function setupAgentMail(baseUrl: string) {
 
 const NAIVE_BASE = "https://api.vetta.sh";
 
-// Apify's hosted MCP server, limited to the tools Crusonia uses: Actor search/calls (people and company
-// scrapers), web search + browsing, and the crawler that reads a customer's site during onboarding.
-// The agent's mcp_servers[].url must equal this string exactly for Naive to inject the token.
-export const APIFY_MCP_URL =
-  "https://mcp.apify.com?tools=actors,apify/rag-web-browser,apify/website-content-crawler,apify/google-search-scraper";
-
-class NaiveError extends Error {}
+class NaiveError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
 
 function naiveClient(apiKey: string, redact: string[]) {
-  return async function post<T>(path: string, body: unknown, idempotencySeed: string): Promise<T> {
-    const res = await fetch(`${NAIVE_BASE}${path}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "Idempotency-Key": await stableUuid(idempotencySeed),
-      },
-      body: JSON.stringify(body),
-    });
+  async function request<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown, idempotencyKey?: string): Promise<T> {
+    const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+    const init = { method, headers, body: body === undefined ? undefined : JSON.stringify(body) };
+    let res = await fetch(`${NAIVE_BASE}${path}`, init);
+    // 429 (rate limit or provider capacity) is always safe to retry; a POST keeps its Idempotency-Key.
+    for (let attempt = 1; res.status === 429 && attempt <= 4; attempt++) {
+      const wait = Math.min(Number(res.headers.get("Retry-After")) || 5, 30);
+      console.log(`Naive is busy (429), retrying in ${wait}s...`);
+      await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+      res = await fetch(`${NAIVE_BASE}${path}`, init);
+    }
     const text = await res.text();
     if (!res.ok) {
       let safe = text.slice(0, 500);
       for (const secret of redact) safe = safe.replaceAll(secret, "[redacted]");
-      throw new NaiveError(`Naive POST ${path} failed (${res.status}): ${safe}`);
+      throw new NaiveError(`Naive ${method} ${path.split("?")[0]} failed (${res.status}): ${safe}`, res.status);
     }
     return JSON.parse(text) as T;
+  }
+  return {
+    request,
+    /** POST with an Idempotency-Key derived from `seed`, so a re-run replays instead of duplicating. */
+    post: async <T>(path: string, body: unknown, seed: string): Promise<T> => request<T>("POST", path, body, await stableUuid(seed)),
   };
 }
+type Naive = ReturnType<typeof naiveClient>;
 
 async function setupNaive(baseUrl: string) {
   const apiKey = getVar("NAIVE_API_KEY");
@@ -136,7 +150,8 @@ async function setupNaive(baseUrl: string) {
   }
   const mcpToken = requireVar("MCP_TOKEN", "Generate one with `openssl rand -hex 32` and add it to .dev.vars.");
   const apifyToken = getVar("APIFY_TOKEN");
-  const post = naiveClient(apiKey, [apiKey, mcpToken, ...(apifyToken ? [apifyToken] : [])]);
+  const naive = naiveClient(apiKey, [apiKey, mcpToken, ...(apifyToken ? [apifyToken] : [])]);
+  const post = naive.post;
 
   // Webhook: the secret is shown once, so skip if we already have it.
   const webhookUrl = `${baseUrl}/webhooks/naive`;
@@ -192,23 +207,85 @@ async function setupNaive(baseUrl: string) {
     }
   }
 
-  // Agent creation waits for the playbook and MCP tools: see createNaiveAgent below.
-  notes.push("Naive agent: not created yet (TODO in scripts/setup.ts, needs the playbook and MCP tools).");
+  await applyNaiveAgent(baseUrl, naive);
 }
 
-// TODO(agent): create the Naive agent once the playbook (system prompt) and the MCP tools exist.
-// Not called yet. Reference request (verified against the Naive REST API):
-//   POST /v1/agents
-//   { name, model: "vetta/auto", system,
-//     mcp_servers: [{ type: "url", name: "crusonia", url: `${PUBLIC_URL}/mcp` },
-//                   { type: "url", name: "apify", url: APIFY_MCP_URL }],
-//     tools: { default_config: { permission: "ask" },
-//              configs: { "crusonia.<tool>": { permission: "allow" }, "apify.<tool>": { permission: "allow" } } },
-//     budget: { cap_micro_usd, max_task_micro_usd, period: "day" } }
-// The mcp_servers url must equal the vault credential's mcp_server_url exactly for the token to be injected.
-// Store the returned agent id as NAIVE_AGENT_ID (already in .dev.vars.example and src/env.ts; POST /api/workflows/research uses it).
-export async function createNaiveAgent(_baseUrl: string): Promise<never> {
-  throw new Error("TODO: createNaiveAgent is not implemented yet");
+// `bun run setup --agent`: only the agent, e.g. after editing the playbook. Needs NAIVE_API_KEY.
+async function setupNaiveAgent(baseUrl: string) {
+  const apiKey = getVar("NAIVE_API_KEY");
+  if (!apiKey) {
+    notes.push("Naive agent skipped: NAIVE_API_KEY not set.");
+    return;
+  }
+  await applyNaiveAgent(baseUrl, naiveClient(apiKey, [apiKey]));
+}
+
+async function applyNaiveAgent(baseUrl: string, naive: Naive) {
+  const agent = await createNaiveAgent(baseUrl, naive);
+  results.NAIVE_AGENT_ID = agent.id;
+  const { budget } = agent.config;
+  const usd = (micro: number) => `$${(micro / 1_000_000).toFixed(2)}`;
+  console.log(
+    `Naive agent: "${agent.config.name}" ${agent.status} (v${agent.version}), playbook ${agent.config.metadata.playbook} v${agent.config.metadata.playbook_version}, ` +
+      `model ${agent.config.model}, budget ${usd(budget.cap_micro_usd)}/${budget.period} and ${usd(budget.max_task_micro_usd)} per session`,
+  );
+}
+
+type AgentRow = { id: string; name: string; current_version: number; harness?: string };
+
+async function agentsNamed(naive: Naive, name: string): Promise<AgentRow[]> {
+  const found: AgentRow[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < 50; page++) {
+    const qs = new URLSearchParams({ limit: "100", ...(after ? { after } : {}) });
+    const res = await naive.request<{ data: AgentRow[]; has_more: boolean; next_cursor: string | null }>("GET", `/v1/agents?${qs}`);
+    found.push(...res.data.filter((a) => a.name === name));
+    if (!res.has_more || !res.next_cursor) break;
+    after = res.next_cursor;
+  }
+  return found;
+}
+
+/**
+ * Creates the research agent, or updates it in place: a PATCH of the fields that changed mints a new
+ * immutable version, and an unchanged config sends nothing. The agent is NAIVE_AGENT_ID when set, otherwise
+ * the one agent named AGENT_NAME, so re-runs never create duplicates. The system prompt is playbooks/research.md.
+ */
+export async function createNaiveAgent(baseUrl: string, naive: Naive) {
+  const playbook = parsePlaybook(readFileSync(`${ROOT}${PLAYBOOK_PATH}`, "utf8"));
+  const config = naiveAgentConfig({ baseUrl, playbook, ...agentSettings(getVar) });
+
+  let id = getVar("NAIVE_AGENT_ID");
+  if (!id) {
+    const matches = await agentsNamed(naive, config.name);
+    if (matches.length > 1) {
+      throw new Error(`Naive has ${matches.length} agents named "${config.name}". Set NAIVE_AGENT_ID to the one to keep.`);
+    }
+    id = matches[0]?.id;
+  }
+  if (!id) {
+    // A fresh key per create: the name lookup above is what makes re-runs safe.
+    const created = await naive.request<AgentRow>("POST", "/v1/agents", config, crypto.randomUUID());
+    return { id: created.id, version: created.current_version, status: "created" as const, config };
+  }
+
+  let current: AgentRow & Record<string, unknown>;
+  try {
+    current = await naive.request("GET", `/v1/agents/${encodeURIComponent(id)}`);
+  } catch (err) {
+    if (err instanceof NaiveError && err.status === 404) {
+      throw new Error("NAIVE_AGENT_ID is set, but Naive has no such agent. Remove it from .dev.vars to create a new one.");
+    }
+    throw err;
+  }
+  if (config.harness && current.harness && config.harness !== current.harness) {
+    notes.push(`Naive agent: NAIVE_AGENT_HARNESS=${config.harness} ignored; the harness is fixed at creation (${current.harness}).`);
+  }
+  const update = changedFields(config, current);
+  if (!Object.keys(update).length) return { id, version: current.current_version, status: "unchanged" as const, config };
+  // No expected_version: a declarative, last-write-wins apply of the config in this repo.
+  const updated = await naive.request<AgentRow>("PATCH", `/v1/agents/${encodeURIComponent(id)}`, update);
+  return { id, version: updated.current_version, status: `updated (${Object.keys(update).join(", ")})` as const, config };
 }
 
 // ---------- output ----------
@@ -228,8 +305,14 @@ function writeDevVars(values: Record<string, string>) {
 const baseUrl = publicUrl();
 console.log(`PUBLIC_URL: ${baseUrl}\n`);
 
+const steps: [string, (baseUrl: string) => Promise<void>][] = args.has("--agent")
+  ? [["Naive agent", setupNaiveAgent]]
+  : [
+      ["AgentMail", setupAgentMail],
+      ["Naive", setupNaive],
+    ];
 let failed = false;
-for (const [name, step] of [["AgentMail", setupAgentMail], ["Naive", setupNaive]] as const) {
+for (const [name, step] of steps) {
   try {
     await step(baseUrl);
   } catch (err) {

@@ -24,7 +24,9 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 | `src/db.ts` | Neon HTTP driver (`getSql`), row types, `getLead`, `logEvent` |
 | `src/schema.sql` | Idempotent Postgres schema |
 | `scripts/migrate.ts` | Applies the schema to Neon (Bun) |
-| `scripts/setup.ts` | Creates the AgentMail inbox/webhook and Naive webhook/vault (Bun) |
+| `scripts/setup.ts` | Creates the AgentMail inbox/webhook and the Naive webhook, vault and research agent (Bun) |
+| `scripts/lib/naive-agent.ts` | The Naive agent definition: tools and permissions, MCP servers, model, budget |
+| `playbooks/research.md` | The research agent's system prompt (versioned in its front matter) |
 | `wrangler.jsonc` | Worker config (cron every minute, `PUBLIC_URL`) |
 | `worker-configuration.d.ts` | Generated runtime types (`bun run cf-typegen`) |
 
@@ -36,10 +38,10 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 3. **Deploy**: `bun run deploy`. The workers.dev URL is already in `wrangler.jsonc` as `PUBLIC_URL`;
    update it if the URL ever changes.
 4. **Upload secrets**: `bun run secrets` (= `wrangler secret bulk .dev.vars`). Never pass secrets as CLI arguments.
-5. **Provider setup**: `bun run setup --write` creates the AgentMail inbox + webhook and the Naive webhook +
-   vault credential, and writes `AGENTMAIL_INBOX_ID`, `AGENTMAIL_WEBHOOK_SECRET`, `NAIVE_WEBHOOK_SECRET`,
-   `NAIVE_VAULT_ID` into `.dev.vars` (drop `--write` to only print them). Idempotent; providers without a key
-   are skipped. Naive agent creation is still a TODO (needs the playbook and MCP tools).
+5. **Provider setup**: `bun run setup --write` creates the AgentMail inbox + webhook, the Naive webhook + vault
+   credentials and the Naive research agent, and writes `AGENTMAIL_INBOX_ID`, `AGENTMAIL_WEBHOOK_SECRET`,
+   `NAIVE_WEBHOOK_SECRET`, `NAIVE_VAULT_ID`, `NAIVE_AGENT_ID` into `.dev.vars` (drop `--write` to only print them).
+   Idempotent; providers without a key are skipped. See [The research agent](#the-research-agent).
 6. **Upload again and redeploy**: `bun run secrets && bun run deploy`.
 
 ## Connect your agent (MCP)
@@ -108,6 +110,24 @@ bearer_token_env_var = "CRUSONIA_MCP_TOKEN"
 **Naive**: `bun run setup` stores `MCP_TOKEN` in the Naive vault as a credential for `${PUBLIC_URL}/mcp`; Naive injects
 it when an agent's `mcp_servers[].url` is exactly that URL.
 
+### The research agent
+
+`bun run setup` also creates the Naive agent that `POST /api/workflows/research` runs, one session per lead. Its
+system prompt is [`playbooks/research.md`](playbooks/research.md): read the profile and the lead, research them from
+public sources with few pages and searches, save every claim with its source URL, score ICP fit, and draft a short
+email only for opted-in, qualified leads. Web and email content is treated as data, never as instructions, and the
+agent asks the owner (`ask_operator`) when unsure.
+
+- **Tools**: the 12 crusonia tools, Apify's single-page reader (`apify--rag-web-browser`) and its run-result readers
+  run without asking; `ask_operator` and everything else (Actor runs, Naive built-ins) ask first. `handoffs` is off.
+  Asked tool calls then go through `AUTO_CONFIRM_TOOLS`: an allowlisted call is allowed automatically, any other
+  becomes a tool approval.
+- **Model and budget**: `vetta/auto`, $5 a day and $1 per session by default; override with the `NAIVE_AGENT_*`
+  settings in `.dev.vars.example`.
+- **Updates**: edit the playbook, bump `version` in its front matter, then run `bun run setup --agent`. It updates
+  the agent in place (`NAIVE_AGENT_ID`, or the one agent named "Crusonia Research"), so Naive records a new
+  version instead of a duplicate agent. Running sessions keep the version they started with.
+
 ### Tools
 
 | Tool | What it does |
@@ -120,7 +140,7 @@ it when an agent's `mcp_servers[].url` is exactly that URL.
 | `list_leads` / `get_lead` | Leads by stage; one lead with its evidence, drafts and approvals. |
 | `save_evidence` | One fact about a lead plus the URL that supports it. |
 | `score_lead` | Fit score 0-100, rationale and qualified verdict. |
-| `create_draft` | New immutable draft version + pending send approval (short code, 48 h). Opted-in leads only. Sends nothing. |
+| `create_draft` | New immutable draft version + pending send approval (short code, 7 days by default). Opted-in leads only. Sends nothing. |
 | `list_pending_approvals` | Approvals waiting for a human, with the draft. |
 
 Every write also appends an `events` row. No tool sends email or decides an approval: a send happens only after a
@@ -155,21 +175,24 @@ API only (no UI yet). Every `/api/*` call needs `Authorization: Bearer <token>`:
 | POST | `/webhooks/naive` | `Vetta-Signature`-signed. `session.idle`: allowlisted tools (`AUTO_CONFIRM_TOOLS`) are allowed, other tools and `ask_operator` questions become approvals |
 
 Rules enforced in code: the agent never sends; drafts are immutable (an edit is a new version and closes the old
-approval); a send approval is bound to the recipient and draft version, expires (`APPROVAL_TTL_MINUTES`, 30 by
-default for REST-created approvals), is consumed once, and is re-checked at send time (not expired, latest version,
-same recipient, consent, not suppressed, not paused) inside the SQL that consumes it. A draft is marked `sending`
-before AgentMail is called; an unconfirmed send is reconciled by its `draft-<id>` label, never resent blindly.
+approval); a send approval is bound to the recipient and draft version, expires (`SEND_APPROVAL_TTL_HOURS`, 7 days
+by default, for drafts from MCP and REST alike), is consumed once, and is re-checked at send time (not expired, latest
+version, same recipient, consent, not suppressed, not paused) inside the SQL that consumes it. Agent tool and
+question approvals expire sooner (`TOOL_APPROVAL_TTL_MINUTES`, 1 hour by default) because the Naive session waits on
+them. A draft is marked `sending` before AgentMail is called; an unconfirmed send is reconciled by its `draft-<id>`
+label, never resent blindly.
 Webhooks are verified on the raw body and deduped by provider event id. Inbound email is stored and pattern-matched
 as data, never followed as instructions. Every state change writes an `events` row.
 
-The minute cron expires stale approvals (an expired tool call is denied), reconciles running Naive sessions that
-missed a webhook (events after `last_seq`), and settles unconfirmed sends.
+The minute cron expires stale approvals (an expired tool call is denied to the agent), reconciles running Naive
+sessions that missed a webhook (events after `last_seq`), and settles unconfirmed sends.
 
 ## Day to day
 
 - `bun run dev`: local Worker on :8787 (reads `.dev.vars`). `bunx wrangler dev --test-scheduled` to trigger the cron at `/__scheduled`.
 - `bun run typecheck`: Worker (`tsconfig.json`), Bun scripts (`scripts/tsconfig.json`) and tests (`test/tsconfig.json`).
-- `bun test`: unit tests (signatures, approval rules, CSV, allowlist, classifier, providers with mocked fetch, auth, routes).
+- `bun test`: unit tests (signatures, approval rules and lifetimes, CSV, allowlist, classifier, providers with mocked
+  fetch, auth, routes, the Naive agent definition and playbook).
   `TEST_DATABASE_URL=<dev branch> bun test test/db.integration.test.ts` also runs the send/reply/Naive flows against
   a real database with mocked providers (never point it at production; it cleans up its rows).
 - `bun run deploy:dry`: build without deploying.

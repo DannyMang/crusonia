@@ -30,7 +30,8 @@ export type ApprovalRow = {
   created_at: Date;
 };
 
-export type Deps = { sql: Sql; env: Env; fetch?: FetchFn; actor: string; ttlMinutes: number };
+/** `sendTtlMinutes`: lifetime of the send approval an edit opens (SEND_APPROVAL_TTL_HOURS). */
+export type Deps = { sql: Sql; env: Env; fetch?: FetchFn; actor: string; sendTtlMinutes: number };
 
 export const APPROVAL_STATUSES = ["pending", "approved", "rejected", "answered", "expired"] as const;
 
@@ -124,7 +125,7 @@ export async function editApproval(deps: Deps, code: string, edit: { subject?: s
   return createDraft(
     sql,
     { lead_id: approval.lead_id!, subject: edit.subject ?? draft.subject, body: edit.body ?? draft.body },
-    { ttlMinutes: deps.ttlMinutes, via: "api", actor: deps.actor },
+    { ttlMinutes: deps.sendTtlMinutes, via: "api", actor: deps.actor },
   );
 }
 
@@ -212,7 +213,10 @@ export async function answerQuestion(deps: Deps, approval: ApprovalRow, answers:
   return { approval: claimed[0] as ApprovalRow };
 }
 
-/** Creates a 'tool' or 'question' approval for a parked Naive action. Idempotent per (session, tool_call_id). */
+/**
+ * Creates a 'tool' or 'question' approval for a parked Naive action. Idempotent per (session, tool_call_id).
+ * `ttlMinutes` is TOOL_APPROVAL_TTL_MINUTES: the session is blocked until it is decided or expires.
+ */
 export async function createAgentApproval(
   sql: Sql,
   input: { sessionId: string; leadId: string | null; action: PendingAction; ttlMinutes: number },
