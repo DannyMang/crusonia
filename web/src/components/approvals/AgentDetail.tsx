@@ -62,7 +62,7 @@ export function ToolDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
         {a.naive_session_id ? <Bound label="Session">{a.naive_session_id}</Bound> : null}
         {a.tool_call_id ? <Bound label="Call">{a.tool_call_id}</Bound> : null}
       </BindingStrip>
-      <div className="flex min-h-0 grow flex-col gap-3 overflow-y-auto px-5 py-3.5">
+      <div className="flex min-h-0 grow flex-col gap-3 overflow-y-auto px-4 py-3.5 sm:px-5">
         <div className="flex shrink-0 flex-col rounded-[10px] border border-[#200D0D1A]">
           <div className="flex items-baseline gap-2.5 border-b border-b-[#200D0D14] px-3.5 py-2.5">
             <div className="w-13 shrink-0 text-xs/4 font-medium text-muted">Tool</div>
@@ -81,7 +81,7 @@ export function ToolDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
             This call is outside your auto-confirm policy, so the agent paused until you decide. Allowing runs it; denying tells the agent to continue
             without it.
           </p>
-          <fieldset className="flex items-center gap-2 pt-1">
+          <fieldset className="flex flex-wrap items-center gap-2 pt-1">
             <legend className="sr-only">Allow for</legend>
             <span className="text-xs/4 font-medium text-muted">Allow for</span>
             {(
@@ -170,7 +170,7 @@ export function QuestionDetail({ a, now, onDecided }: { a: ApprovalListItem; now
         <Bound label="Fields">{fields.length}</Bound>
       </BindingStrip>
       <form
-        className="flex min-h-0 grow flex-col gap-3 overflow-y-auto px-5 py-3.5"
+        className="flex min-h-0 grow flex-col gap-3 overflow-y-auto px-4 py-3.5 sm:px-5"
         onSubmit={(e) => {
           e.preventDefault();
           submit();

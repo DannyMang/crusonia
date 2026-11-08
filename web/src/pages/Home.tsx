@@ -9,7 +9,7 @@ import { Page } from "../components/AppShell.tsx";
 import { ChevronRight, XIcon } from "../components/icons.tsx";
 import { Button, ButtonLink, Card, EmptyState, LiveChip, Pill, QueryError, ReplyLabel, Skeleton, tabListKeys } from "../components/ui.tsx";
 import { cx, duration, greeting, hostOf, num, plural, shortDate, timeAgo, usd, weekdayDate } from "../lib/format.ts";
-import { keys, useApprovals, useLeads, usePause, useProfile, useSummary } from "../queries.ts";
+import { keys, useApprovals, useLeads, usePause, useSummary } from "../queries.ts";
 
 const label = "text-[13px]/4 font-medium text-muted";
 const sectionTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
@@ -26,7 +26,7 @@ export default function Home() {
     summary.data ?? (missing && fallbackApprovals.data && fallbackLeads.data ? fallbackSummary(fallbackLeads.data.data, fallbackApprovals.data.data, pause.data?.paused ?? false) : undefined);
 
   return (
-    <Page className="gap-7 px-12 pb-14 pt-10">
+    <Page className="gap-7 px-4 pb-14 pt-6 sm:px-12 sm:pt-10">
       <Header data={data} />
       {summary.isError && !missing ? <QueryError error={summary.error} what="your overview" onRetry={() => void summary.refetch()} /> : null}
       {data?.paused ? (
@@ -51,22 +51,20 @@ export default function Home() {
   );
 }
 
-/** Same buckets as the backend's summary: where each lead is now (unsubscribed leads in none). */
+/** The backend's cumulative funnel, approximated from stages: a lead counts in its step and every earlier one. */
 function fallbackSummary(leads: Lead[], approvals: ApprovalListItem[], paused: boolean): Summary {
   const byStage: Record<string, number> = {};
   for (const l of leads) byStage[l.stage] = (byStage[l.stage] ?? 0) + 1;
   const n = (...stages: string[]) => stages.reduce((sum, st) => sum + (byStage[st] ?? 0), 0);
   const open = new Set(approvals.filter((a) => a.kind === "send").map((a) => a.lead_id));
   const awaiting = leads.filter((l) => l.stage === "awaiting_approval" && open.has(l.id)).length;
-  const pipeline: Pipeline = {
-    found: n("new", "no_consent", "researching"),
-    researched: n("qualified", "disqualified", "needs_review"),
-    drafted: n("awaiting_approval") - awaiting,
-    awaiting_approval: awaiting,
-    sent: n("sent"),
-    replied: n("replied", "interested", "not_interested"),
-    meetings: n("meeting_booked"),
-  };
+  const meetings = n("meeting_booked");
+  const replied = meetings + n("replied", "interested", "not_interested");
+  const sent = replied + n("sent");
+  const drafted = sent + n("awaiting_approval");
+  const qualified = drafted + n("qualified");
+  const researched = qualified + n("disqualified", "needs_review");
+  const pipeline: Pipeline = { found: leads.length, researched, qualified, drafted, awaiting_approval: awaiting, sent, replied, meetings };
   return {
     pipeline,
     pipeline_by_stage: byStage,
@@ -108,7 +106,7 @@ function Header({ data }: { data: Summary | undefined }) {
   // Only send approvals are drafts; tool calls and agent questions are counted separately.
   const drafts = Math.min(waiting, data?.pending_sends_total ?? data?.pending_approvals.filter((a) => a.kind === "send").length ?? 0);
   return (
-    <div className="flex items-start justify-between gap-6">
+    <div className="flex flex-col items-start gap-4 sm:flex-row sm:justify-between sm:gap-6">
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl/7.5 font-semibold tracking-[-0.02em] text-ink">
           {greeting()}
@@ -176,7 +174,7 @@ function AgentPill() {
 
 function Arrow() {
   return (
-    <div className="flex w-4 shrink-0 items-center justify-center">
+    <div className="hidden w-4 shrink-0 items-center justify-center sm:flex">
       <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden>
         <path d="M9 6l6 6-6 6" fill="none" stroke="rgb(32 13 13 / 30%)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -184,7 +182,7 @@ function Arrow() {
   );
 }
 
-function Stat({ title, value, note, accent }: { title: string; value: string | undefined; note: string; accent?: boolean }) {
+function Stat({ title, value, note, accent }: { title: string; value: string | undefined; note?: string; accent?: boolean }) {
   return (
     <div className="flex grow basis-0 flex-col gap-1 px-3 py-1.5">
       <div className={label}>{title}</div>
@@ -193,66 +191,39 @@ function Stat({ title, value, note, accent }: { title: string; value: string | u
       ) : (
         <div className={cx("tabular-nums text-[22px]/7 font-semibold tracking-[-0.02em]", accent ? "text-green-dark" : "text-ink")}>{value}</div>
       )}
-      <div className="text-xs/4 font-medium text-muted">{note}</div>
+      {note ? <div className="text-xs/4 font-medium text-muted">{note}</div> : null}
     </div>
   );
 }
 
-function PipelineStrip({ data, partial }: { data: Summary | undefined; partial: boolean }) {
-  const profile = useProfile();
+function PipelineStrip({ data }: { data: Summary | undefined; partial: boolean }) {
   const p = data?.pipeline;
-  const icp = profile.data?.segments?.[0]?.name ?? profile.data?.icp_description ?? null;
-  const approvals = data?.pending_approvals ?? [];
-  // Only the 5 newest approvals come with the summary, so "oldest" is exact only when that is all of them.
-  const oldest =
-    approvals.length && approvals.length === data?.pending_approvals_total
-      ? Math.max(...approvals.map((a) => Date.now() - new Date(a.created_at).getTime()))
-      : null;
   const v = (n: number | undefined) => (p ? num(n ?? 0) : undefined);
-  const workflows = data?.active_workflows.length;
-  const context = [
-    partial ? "counted from your newest leads" : "where your leads are now",
-    workflows !== undefined && !partial ? plural(workflows, "active workflow") : null,
-    icp ? `ICP “${icp.length > 48 ? `${icp.slice(0, 47)}…` : icp}”` : null,
-  ].filter(Boolean);
+  // The cumulative funnel: how many leads got at least this far. Qualified shows once the summary sends it.
+  const steps: [string, number | undefined][] = [
+    ["Found", p?.found],
+    ["Researched", p?.researched],
+    ...(p && p.qualified === undefined ? [] : ([["Qualified", p?.qualified]] as [string, number | undefined][])),
+    ["Drafted", p?.drafted],
+    ["Sent", p?.sent],
+    ["Replied", p?.replied],
+  ];
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-baseline justify-between">
-        <div className="flex items-baseline gap-3">
-          <h2 className={sectionTitle}>Pipeline</h2>
-          <div className={label}>{context.join(" · ")}</div>
-        </div>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className={sectionTitle}>Pipeline</h2>
         <Link to="/app/leads" className="text-[13px]/4 font-medium text-ink underline decoration-[#200D0D4D] decoration-1 underline-offset-[3px] hover:decoration-ink">
           Open leads
         </Link>
       </div>
-      <div className="flex border-y border-y-[#200D0D1A] py-3.5">
-        <Stat title="Found" value={v(p?.found)} note="new or in research" />
-        <Arrow />
-        <Stat title="Researched" value={v(p?.researched)} note="scored, sourced" />
-        <Arrow />
-        <Stat title="Drafted" value={v(p?.drafted)} note="draft needs a redo" />
-        <Arrow />
-        <div className="flex grow-[1.25] basis-0 flex-col gap-1 rounded-[10px] border border-panel-line bg-panel px-3 py-1.5">
-          <div className="text-[13px]/4 font-semibold text-ink">Awaiting approval</div>
-          <div className="flex items-center gap-2">
-            {p ? (
-              <div className="text-[22px]/7 font-semibold tracking-[-0.02em] text-ink tabular-nums">{num(p.awaiting_approval)}</div>
-            ) : (
-              <Skeleton className="my-1 h-5 w-8" />
-            )}
-            {p && p.awaiting_approval > 0 ? <Pill tone="lime">needs you</Pill> : null}
-          </div>
-          <div className="text-xs/4 font-medium text-muted">
-            {oldest !== null ? `oldest waiting ${duration(oldest)}` : data?.pending_approvals_total ? plural(data.pending_approvals_total, "open approval") : "nothing waiting"}
-          </div>
-        </div>
-        <Arrow />
-        <Stat title="Sent" value={v(p?.sent)} note="no reply yet" />
-        <Arrow />
-        <Stat title="Replied" value={v(p?.replied)} note="reply received" />
-        <Arrow />
-        <Stat title="Meetings" value={v(p?.meetings)} note={p?.meetings ? "booked" : "none yet"} accent={Boolean(p?.meetings)} />
+      {/* Phones: three stats a row, no arrows. */}
+      <div className="grid grid-cols-3 gap-y-3 border-y border-y-[#200D0D1A] py-3.5 sm:flex">
+        {steps.map(([title, n], i) => (
+          <Fragment key={title}>
+            {i ? <Arrow /> : null}
+            <Stat title={title} value={v(n)} />
+          </Fragment>
+        ))}
       </div>
     </section>
   );
@@ -297,12 +268,13 @@ function WaitingRow({ a }: { a: SummaryApproval }) {
   const domain = email?.split("@")[1] ?? "";
   const workflow = typeof a.payload?.workflow === "string" ? a.payload.workflow : null;
   return (
-    <div className="flex items-center gap-3.5 border-t border-t-[#200D0D14] px-4.5 py-3.5">
-      <div className="flex w-34 shrink-0 flex-col gap-0.5">
+    // Phones: company and code on top, the subject under them, then the buttons.
+    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2.5 border-t border-t-[#200D0D14] px-4 py-3.5 sm:flex-nowrap sm:px-4.5">
+      <div className="flex min-w-0 grow basis-0 flex-col gap-0.5 sm:w-34 sm:shrink-0 sm:grow-0 sm:basis-auto">
         <div className="truncate text-sm/4.5 font-medium text-ink">{company}</div>
         <div className="truncate text-[11px]/3.5 text-muted">{hostOf(domain)}</div>
       </div>
-      <div className="flex min-w-0 grow basis-0 flex-col gap-0.75">
+      <div className="order-1 flex min-w-0 grow basis-full flex-col gap-0.75 sm:order-none sm:basis-0">
         <div className="truncate text-[13px]/4 font-medium text-ink">{a.subject ? `“${a.subject}”` : a.summary}</div>
         <div className="truncate text-xs/4 font-medium text-muted">
           {[a.company ? a.lead_name : null, workflow ?? (a.draft ? `draft v${a.draft.version}` : a.kind)].filter(Boolean).join(" · ")}
@@ -312,8 +284,8 @@ function WaitingRow({ a }: { a: SummaryApproval }) {
         <div className="whitespace-pre text-[13px]/4 font-semibold text-ink tabular-nums">{a.code}</div>
         <div className="whitespace-pre text-[11px]/3.5 font-medium text-muted">waiting {duration(Date.now() - new Date(a.created_at).getTime())}</div>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <ButtonLink to={`/app/approvals/${a.code}`} variant="outline" size="sm">
+      <div className="order-2 flex shrink-0 items-center gap-1.5 sm:order-none">
+        <ButtonLink to={`/app/outreach/${a.code}`} variant="outline" size="sm">
           Review
         </ButtonLink>
         <ApproveButton approval={a} />
@@ -327,13 +299,13 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
   const rest = Math.max(0, total - shown.length);
   return (
     <Card className="flex w-full flex-col overflow-clip">
-      <div className="flex items-center justify-between gap-4 px-4.5 pb-3.5 pt-4">
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex items-start justify-between gap-4 px-4 pb-3.5 pt-4 sm:items-center sm:px-4.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
           <h2 className={cx(sectionTitle, "shrink-0 whitespace-nowrap")}>Waiting for you</h2>
           {total ? <Pill tone="lime" mono>{total}</Pill> : null}
           <div className={cx(label, "min-w-0")}>drafts held until you approve · nothing sends on its own</div>
         </div>
-        <Link to="/app/approvals" className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[13px]/4 font-medium text-ink hover:underline">
+        <Link to="/app/outreach" className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[13px]/4 font-medium text-ink hover:underline">
           All approvals
           <ChevronRight className="text-green" />
         </Link>
@@ -357,11 +329,11 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
         </div>
       )}
       {shown.length ? (
-        <div className="flex items-center justify-between border-t border-t-[#200D0D14] bg-[#200D0D06] px-4.5 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-t-[#200D0D14] bg-[#200D0D06] px-4 py-3 sm:px-4.5">
           <div className="text-xs/4 font-medium text-muted">
             {rest ? (
-              <Link to="/app/approvals" className="hover:text-ink hover:underline">
-                {rest} more in Approvals
+              <Link to="/app/outreach" className="hover:text-ink hover:underline">
+                {rest} more in Outreach
               </Link>
             ) : (
               "That's everything"
@@ -384,8 +356,8 @@ function WorkflowCard({ w }: { w: Workflow }) {
   const latest = w.runs[0];
   const to = latest ? `/app/workflows/runs/${encodeURIComponent(latest.id)}` : "/app/workflows";
   return (
-    <Card className="flex flex-col gap-3 px-4.75 pb-4 pt-4.25">
-      <div className="flex items-center justify-between gap-3">
+    <Card className="flex flex-col gap-3 px-4 pb-4 pt-4.25 sm:px-4.75">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <Link to={to} className="flex min-w-0 items-baseline gap-2.5 hover:underline">
           <span className="truncate text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink">{w.name}</span>
           <span className="shrink-0 text-xs/4 text-faint">{w.purpose}</span>
@@ -431,7 +403,7 @@ function WorkflowCard({ w }: { w: Workflow }) {
 
 function WfStat({ title, value, first }: { title: string; value: string; first?: boolean }) {
   return (
-    <div className={cx("flex w-37.5 min-w-0 flex-col gap-1", !first && "border-l border-l-[#200D0D1A] pl-4.75")}>
+    <div className={cx("flex min-w-0 grow basis-0 flex-col gap-1 sm:w-37.5 sm:grow-0 sm:basis-auto", !first && "border-l border-l-[#200D0D1A] pl-3 sm:pl-4.75")}>
       <div className="text-[13px]/4 font-medium text-faint">{title}</div>
       <div className="tabular-nums text-sm/4.5 font-semibold text-ink">{value}</div>
     </div>
@@ -446,7 +418,7 @@ function ActiveWorkflows({ workflows, loading, partial }: { workflows: Workflow[
   const navigate = useNavigate();
   return (
     <section className="flex flex-col gap-3.5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className={sectionTitle}>Active workflows</h2>
         <div
           className="flex items-center gap-1 rounded-full border border-[#200D0D1A] bg-[#200D0D0A] p-1"

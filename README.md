@@ -53,6 +53,23 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 8. **CRM sync (optional)**: off until you turn it on; see [CRM sync](#crm-sync).
 9. **iMessage approvals (optional)**: off until you turn it on; see [iMessage approvals](#imessage-approvals-photon).
 
+### Staging
+
+A second Worker, `crusonia-staging` (`env.staging` in `wrangler.jsonc`, its own `PUBLIC_URL`), for demos and
+testing against real providers without touching production. Its secrets live in `.dev.vars.staging` (gitignored):
+point `DATABASE_URL` at a Neon dev branch, use a Stripe test key and a separate `MCP_TOKEN`.
+
+1. `bun scripts/migrate.ts --env staging` (reads `DATABASE_URL` from `.dev.vars.staging`).
+2. `bun run deploy:staging`, then `bun run secrets:staging`.
+3. `bun run setup --env staging --write`: its own AgentMail webhook (on the same inbox), Naive webhook, vault and
+   agent ("Crusonia Research (staging)", so setup never repoints the production agent), written to
+   `.dev.vars.staging`. `bun run setup --env staging --stripe` writes `.dev.vars.staging.stripe.test`. Upload both
+   (`bun run secrets:staging`, `bunx wrangler secret bulk .dev.vars.staging.stripe.test --env staging`).
+
+Naive delivers every webhook to every registered endpoint, so each Worker sees the other's sessions. Both ignore
+sessions they did not start (logged as `naive_unknown_session`). A shared AgentMail inbox means production also
+stores staging's inbound replies, as unmatched messages.
+
 ## Connect your agent (MCP)
 
 Endpoint: `https://crusonia.veri-web.workers.dev/mcp` (MCP Streamable HTTP; locally `http://localhost:8787/mcp` with
