@@ -455,9 +455,21 @@ export function buildSteps(events: StoredEvent[], audit: AuditEvent[] = [], appr
   for (const step of naive) if (step.type === "tool" && step.is_error && !step.summary.includes("(denied")) step.summary = `${step._base ?? step.summary} (failed)`;
 
   // Pauses that only the owner's auto-confirm policy resolved are not something a person did or waited on.
-  const dropped = new Set(
-    idleWaits.filter((w) => w.calls.length > 0 && w.calls.every((c) => c.approval?.via === "policy")).map((w) => w.step),
+  // Naive can park a call under one id and run it under another, so the parked step stays "pending" with the real run
+  // after it. It isn't waiting on anyone: fold it into the run.
+  const rerun = new Set(
+    naive.filter(
+      (s, i) =>
+        s.approval !== undefined &&
+        s.output === undefined &&
+        !decidedByOwner.has(s._callId ?? "") &&
+        naive.slice(i + 1).some((later) => later.type === "tool" && later._base === s._base && later.output !== undefined),
+    ),
   );
+  const dropped = new Set<Work>([
+    ...rerun,
+    ...idleWaits.filter((w) => w.calls.length > 0 && w.calls.every((c) => c.approval?.via === "policy" || rerun.has(c))).map((w) => w.step),
+  ]);
 
   const ours: Work[] = [...audit]
     .sort((a, b) => Number(a.id) - Number(b.id))
