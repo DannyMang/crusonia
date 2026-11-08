@@ -1,22 +1,105 @@
-// /api/profile (the onboarding result) and /api/onboarding/* (read a website, have the agent propose a profile).
+// /api/company-summary (the workspace's Company summary: one markdown document, versioned), /api/profile (the
+// older structured view of it), and /api/onboarding/* (read a website, have the agent write the summary).
 import { Hono } from "hono";
 import { z } from "zod";
-import { billingOwnerOf, requireCredits } from "../billing/accounts.ts";
+import { requireCredits } from "../billing/accounts.ts";
 import { apifyMeter } from "../billing/usage.ts";
-import { actorOf, parseJson, sqlFor, type AppEnv } from "../lib/context.ts";
+import { actorOf, authorOf, parseJson, parseQuery, sqlFor, wsOf, type AppEnv } from "../lib/context.ts";
+import { ApiError } from "../lib/errors.ts";
+import {
+  getCompanySummary,
+  getSummaryVersion,
+  listSummaryVersions,
+  MAX_NOTE_CHARS,
+  MAX_SUMMARY_CHARS,
+  revertCompanySummary,
+  SUMMARY_TEMPLATE,
+  writeCompanySummary,
+  type SummaryView,
+} from "../services/company-summary.ts";
+import { requireWebCall } from "../services/limits.ts";
 import { getProfile, profileUpdateSchema, saveProfile } from "../services/profile.ts";
 import { getOnboardingProposal, naiveAgent, startOnboardingProposal } from "../services/runs.ts";
 import { readWebsite } from "../services/web.ts";
 
+// ---------- /api/company-summary ----------
+
+export const companySummary = new Hono<AppEnv>();
+
+const present = (s: SummaryView) => ({
+  markdown: s.markdown,
+  version: s.version,
+  updated_at: s.updated_at,
+  updated_by: s.updated_by,
+  change_note: s.change_note,
+});
+
+// -> {markdown, version, updated_at, updated_by, change_note}; version 0 and markdown null before the first save,
+// with the suggested starting `template`.
+companySummary.get("/", async (c) => {
+  const s = await getCompanySummary(sqlFor(c.env), wsOf(c));
+  return c.json({ ...present(s), ...(s.version === 0 ? { template: SUMMARY_TEMPLATE } : {}), max_chars: MAX_SUMMARY_CHARS });
+});
+
+const PutBody = z
+  .object({
+    markdown: z.string().max(MAX_SUMMARY_CHARS + 2000),
+    note: z.string().trim().max(MAX_NOTE_CHARS).nullish(),
+    // Optional optimistic concurrency: 409 version_conflict if someone saved since this version.
+    base_version: z.number().int().min(0).nullish(),
+  })
+  .strict();
+
+// A new version with the whole document. An unchanged document saves nothing (`unchanged: true`).
+companySummary.put("/", async (c) => {
+  const body = await parseJson(c, PutBody);
+  const s = await writeCompanySummary(sqlFor(c.env), wsOf(c), {
+    markdown: body.markdown,
+    note: body.note,
+    author: authorOf(c.get("principal")),
+    baseVersion: body.base_version ?? null,
+  });
+  return c.json({ ...present(s), unchanged: s.unchanged ?? false });
+});
+
+const VersionsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  before: z.coerce.number().int().min(1).optional(),
+});
+
+// Newest first, without bodies: {data: [{version, author, change_note, created_at, chars}]}.
+companySummary.get("/versions", async (c) => {
+  const q = parseQuery(c, VersionsQuery);
+  return c.json({ data: await listSummaryVersions(sqlFor(c.env), wsOf(c), q) });
+});
+
+companySummary.get("/versions/:version", async (c) => {
+  const version = Number(c.req.param("version"));
+  if (!Number.isSafeInteger(version) || version < 1) throw new ApiError(400, "invalid_request", "version must be a positive integer");
+  return c.json(present(await getSummaryVersion(sqlFor(c.env), wsOf(c), version)));
+});
+
+// A new version copied from {version}.
+companySummary.post("/revert", async (c) => {
+  const body = await parseJson(c, z.object({ version: z.number().int().min(1) }).strict());
+  const s = await revertCompanySummary(sqlFor(c.env), wsOf(c), body.version, authorOf(c.get("principal")));
+  return c.json({ ...present(s), unchanged: s.unchanged ?? false });
+});
+
+// ---------- /api/profile (compatibility) ----------
+
 export const profile = new Hono<AppEnv>();
 
-profile.get("/", async (c) => c.json({ profile: await getProfile(sqlFor(c.env)) }));
+// The structured fields read from the Company summary (null before the first save).
+profile.get("/", async (c) => c.json({ profile: await getProfile(sqlFor(c.env), wsOf(c)) }));
 
-// Replaces the whole profile (send every field; omitted arrays become empty).
+// Writes the profile's parts into the Company summary as a new version; its other sections are kept.
 profile.put("/", async (c) => {
   const body = await parseJson(c, profileUpdateSchema);
-  return c.json({ profile: await saveProfile(sqlFor(c.env), body, "api", actorOf(c.get("principal"))) });
+  return c.json({ profile: await saveProfile(sqlFor(c.env), wsOf(c), body, authorOf(c.get("principal"))) });
 });
+
+// ---------- /api/onboarding ----------
 
 export const onboarding = new Hono<AppEnv>();
 
@@ -31,7 +114,8 @@ const ReadWebsiteBody = z.object({
 // plain fetch (free). Crusonia's own site is answered from its landing copy.
 onboarding.post("/read-website", async (c) => {
   const body = await parseJson(c, ReadWebsiteBody);
-  const meter = c.env.APIFY_TOKEN && c.env.DATABASE_URL ? apifyMeter(sqlFor(c.env), { billingOwnerId: billingOwnerOf(c.get("principal")), via: "api" }) : undefined;
+  if (c.env.APIFY_TOKEN && c.env.DATABASE_URL) await requireWebCall(sqlFor(c.env), c.env, wsOf(c), "read_website");
+  const meter = c.env.APIFY_TOKEN && c.env.DATABASE_URL ? apifyMeter(sqlFor(c.env), { workspaceId: wsOf(c), via: "api" }) : undefined;
   const result = await readWebsite(c.env, { url: body.url, max_pages: body.max_pages, render_js: body.render_js }, { meter });
   return c.json({
     pages: result.pages.map((p) => ({ url: p.url, title: p.title, text: p.text, description: p.description, truncated: p.truncated })),
@@ -48,20 +132,18 @@ const ProposeBody = z
   })
   .refine((b) => Boolean(b.url || b.description), { message: "Pass url, description, or both" });
 
-// Starts a Naive session (async): the agent reads the site / description and saves a proposed profile.
+// Starts a Naive session (async): the agent reads the site / description and writes the Company summary.
 // Poll GET /api/onboarding/propose/:session_id.
 onboarding.post("/propose", async (c) => {
   const body = await parseJson(c, ProposeBody);
   naiveAgent(c.env); // 503 not_configured before touching the database
   const principal = c.get("principal");
-  await requireCredits(c.env, principal); // 402 insufficient_credits when BILLING_ENFORCED and the balance is <= 0
-  const result = await startOnboardingProposal(sqlFor(c.env), c.env, body, actorOf(principal), undefined, {
-    billingOwnerId: billingOwnerOf(principal),
-  });
+  await requireCredits(c.env, principal, wsOf(c)); // 402 insufficient_credits when the workspace's balance is <= 0
+  const result = await startOnboardingProposal(sqlFor(c.env), c.env, wsOf(c), body, actorOf(principal));
   return c.json(result, 202);
 });
 
 onboarding.get("/propose/:session_id", async (c) => {
   naiveAgent(c.env);
-  return c.json(await getOnboardingProposal(sqlFor(c.env), c.env, c.req.param("session_id")));
+  return c.json(await getOnboardingProposal(sqlFor(c.env), c.env, wsOf(c), c.req.param("session_id")));
 });

@@ -4,6 +4,8 @@
 // AgentMail and Naive are mocked at fetch (the Neon driver's own requests pass through). Skipped unless
 // TEST_DATABASE_URL is set:  TEST_DATABASE_URL=<dev branch url> bun test test/imessage.integration.test.ts
 // The dev branch is shared: polls lease every recent pending approval, so assertions only look at this run's codes.
+// iMessage texts the owner's phone, so it works on the owner workspace only (another workspace's approvals are
+// neither announced nor decided by text: tested at the end).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { getSql, type Sql } from "../src/db.ts";
 import type { Env } from "../src/env.ts";
@@ -12,6 +14,10 @@ import { signBridge } from "../src/lib/signatures.ts";
 import { createAgentApproval } from "../src/services/approvals.ts";
 import { createLead } from "../src/services/crm.ts";
 import { createDraft } from "../src/services/drafts.ts";
+import { createTestWorkspace, deleteTestWorkspaces } from "./helpers/workspace.ts";
+
+const WS = "ws_owner";
+let originalPaused = false;
 
 const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
@@ -87,18 +93,19 @@ async function pollFor(want: string[]): Promise<Map<string, Notice & { bubble: s
 }
 
 async function newLead(name: string) {
-  return createLead(sql, { email: email(name), name: `${name} Tester`, company: "Fieldnote", source: "it_test", consent: { text: "integration test opt-in" } }, "test");
+  return createLead(sql, WS, { email: email(name), name: `${name} Tester`, company: "Fieldnote", source: "it_test", consent: { text: "integration test opt-in" } }, "test");
 }
 async function newSendApproval(name: string, subject = "Quick question") {
   const lead = await newLead(name);
-  const { approval, draft } = await createDraft(sql, { lead_id: lead.id, subject, body: `Hi ${name}, worth a chat?` }, { ttlMinutes: 60 * 24, via: "api", actor: "test" });
+  const { approval, draft } = await createDraft(sql, WS, { lead_id: lead.id, subject, body: `Hi ${name}, worth a chat?` }, { ttlMinutes: 60 * 24, via: "api", actor: "test" });
   return { lead, code: approval.code as string, draftId: draft.id as string };
 }
 async function newAgentApproval(name: string, kind: "tool" | "question") {
   const lead = await newLead(name);
   const sessionId = `ses_it_${run}_${name}`;
-  await sql`insert into naive_sessions (id, lead_id, purpose, status) values (${sessionId}, ${lead.id}, 'research', 'idle')`;
+  await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'idle')`;
   const code = await createAgentApproval(sql, {
+    workspaceId: WS,
     sessionId,
     leadId: lead.id,
     ttlMinutes: 60,
@@ -112,8 +119,9 @@ async function newAgentApproval(name: string, kind: "tool" | "question") {
 const approvalRow = async (code: string) => (await sql`select status, decided_via, answer from approvals where code = ${code}`)[0]!;
 
 suite("iMessage approvals (dev database, mocked providers)", () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     sql = getSql(url);
+    originalPaused = (await sql`select paused from workspaces where id = ${WS}`)[0]?.paused === true;
     installFetchMock();
   });
 
@@ -126,7 +134,7 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
       sql`delete from leads where id = any(${ids}::text[])`, // cascades drafts, approvals, imessage_outbox
       sql`delete from naive_sessions where id like ${`ses_it_${run}%`}`,
       sql`delete from webhook_events where event_id like ${`photon:it-${run}%`}`,
-      sql`update settings set value = 'false' where key = 'paused'`,
+      sql`update workspaces set paused = ${originalPaused} where id = ${WS}`,
     ]);
   });
 
@@ -284,7 +292,7 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     expect((await say({ action: "approve", code })).reply).toBe(`Sending is paused. Text resume first, then A ${code}.`);
     expect(calls.length).toBe(sent);
     expect((await say({ action: "resume" })).reply).toStartWith("Resumed.");
-    expect((await sql`select value from settings where key = 'paused'`)[0]!.value).toBe(false);
+    expect((await sql`select paused from workspaces where id = ${WS}`)[0]!.paused).toBe(false);
     const [ev] = await sql`select data from events where kind = 'imessage_command' and data->>'message_id' = ${`it-${run}-${seq}`}`;
     expect(ev!.data).toMatchObject({ action: "resume", ok: true });
   });
@@ -300,6 +308,23 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     const seen = await pollFor([`warn:${code}`]);
     expect(seen.get(`warn:${code}`)!.text).toStartWith(`Reminder: ${code} expires in`);
     expect((await pollFor([])).has(`warn:${code}`)).toBe(false);
+  });
+
+  test("another workspace's approvals are never texted, and a text cannot decide them", async () => {
+    const other = await createTestWorkspace(sql, `imsg_${run}`);
+    try {
+      const lead = await createLead(sql, other, { email: email("elsewhere"), name: "Else", source: "it_test", consent: { text: "opted in" } }, "test");
+      const { approval } = await createDraft(sql, other, { lead_id: lead.id, subject: "Not yours", body: "Body" }, { ttlMinutes: 60, via: "api", actor: "test" });
+      const seen = await pollFor([]);
+      expect(seen.has(`approval:${approval.code}`)).toBe(false);
+      expect((await sql`select count(*)::int as n from imessage_outbox where approval_code = ${approval.code}`)[0]!.n).toBe(0);
+      const reply = await say({ action: "approve", code: approval.code });
+      expect(reply.ok).toBe(false);
+      expect((await approvalRow(approval.code)).status).toBe("pending");
+      expect(calls.some((c) => String(c.url).endsWith("/messages/send") && c.body?.subject === "Not yours")).toBe(false);
+    } finally {
+      await deleteTestWorkspaces(sql, [other]);
+    }
   });
 
   test("/api/status shows the bridge as online from its last poll", async () => {

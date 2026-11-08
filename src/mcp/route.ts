@@ -2,16 +2,17 @@
 // fresh server + transport, which is what Workers want: no state survives between requests anyway.
 import { StreamableHTTPTransport } from "@hono/mcp";
 import { Hono } from "hono";
-import { requireBearer } from "../auth.ts";
-import type { Env } from "../env.ts";
+import { requireBearer, type McpEnv } from "../auth.ts";
 import { createMcpServer } from "./server.ts";
 
-export const mcp = new Hono<{ Bindings: Env }>();
+// The bearer decides the workspace (MCP_TOKEN = the owner workspace, an API key = its own); a Naive agent's
+// per-workspace URL (/mcp?ws=<id>) must name the same workspace.
+export const mcp = new Hono<McpEnv>();
 
 mcp.use("*", requireBearer);
 
 mcp.post("/", async (c) => {
-  const server = createMcpServer(c.env);
+  const server = createMcpServer(c.env, { workspace: c.get("workspace"), bearer: c.get("bearer") });
   const transport = new StreamableHTTPTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await server.connect(transport);
   try {

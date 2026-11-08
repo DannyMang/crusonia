@@ -8,8 +8,9 @@
 //             use), recording decided_via = 'imessage', and returns the reply text. A 👍 / 👎 tapback on a notice
 //             approves / rejects exactly the approval (and draft version) that bubble was sent for; text commands
 //             (A/R/E <code>) remain the fallback, since a plain reply cannot be tied to a bubble.
-// Multi-tenancy: every decision is resolved from the approval it acts on (by code, or by the bubble's outbox row), so
-// once approvals carry a workspace_id the action lands in that approval's workspace. iMessage stays owner-only.
+// Workspaces: the bridge texts the instance owner's phone (OWNER_PHONE), so iMessage covers the owner workspace only:
+// only its approvals are announced, and every command (by code, or by the bubble's outbox row) is looked up and applied
+// in the owner workspace. Another workspace's approval code is "not found" here.
 // Off unless IMESSAGE_ENABLED=true and BRIDGE_SECRET is set. All message wording lives here.
 import { z } from "zod";
 import type { Sql } from "../db.ts";
@@ -22,6 +23,10 @@ import { answerQuestion, editApproval, getApproval, rejectApproval, resolveTool,
 import { approveAndSend } from "./send.ts";
 import { setPaused } from "./settings.ts";
 import { claimWebhookEvent, releaseWebhookEvent } from "./webhook-events.ts";
+import { OWNER_WORKSPACE_ID } from "./workspaces.ts";
+
+/** The workspace iMessage serves (the owner's phone, the owner's approvals). */
+const WS = OWNER_WORKSPACE_ID;
 
 export const IMESSAGE_ACTOR = "imessage:owner";
 export const PHOTON_WEBHOOK_PATH = "/webhooks/photon";
@@ -233,7 +238,7 @@ const noticeRows = async (sql: Sql, codes: string[]): Promise<NoticeRow[]> =>
     from approvals a
     left join leads l on l.id = a.lead_id
     left join drafts d on d.id = a.draft_id
-    where a.code = any(${codes}::text[])`) as NoticeRow[];
+    where a.workspace_id = ${WS} and a.code = any(${codes}::text[])`) as NoticeRow[];
 
 /**
  * One bridge poll, in one database round trip plus one read:
@@ -268,20 +273,20 @@ export async function handleBridgePoll(getSql: () => Sql, env: Env, poll: Bridge
         where settings.value->>'state' is distinct from excluded.value->>'state'
            or settings.value->>'connected' is distinct from excluded.value->>'connected'
            or coalesce((settings.value->>'seen_at')::timestamptz, 'epoch') < now() - interval '30 seconds'`,
-    sql`insert into imessage_outbox (id, approval_code, kind, draft_id)
-        select 'approval:' || code, code, 'approval', draft_id from approvals
-        where status = 'pending' and expires_at > now() and created_at > now() - interval '24 hours'
+    sql`insert into imessage_outbox (id, workspace_id, approval_code, kind, draft_id)
+        select 'approval:' || code, workspace_id, code, 'approval', draft_id from approvals
+        where workspace_id = ${WS} and status = 'pending' and expires_at > now() and created_at > now() - interval '24 hours'
         on conflict (id) do nothing`,
-    sql`insert into imessage_outbox (id, approval_code, kind, draft_id)
-        select 'warn:' || a.code, a.code, 'expiry_warning', a.draft_id
+    sql`insert into imessage_outbox (id, workspace_id, approval_code, kind, draft_id)
+        select 'warn:' || a.code, a.workspace_id, a.code, 'expiry_warning', a.draft_id
         from approvals a join imessage_outbox o on o.id = 'approval:' || a.code
-        where a.status = 'pending' and a.expires_at > now()
+        where a.workspace_id = ${WS} and a.status = 'pending' and a.expires_at > now()
           and o.delivered_at <= now() - interval '10 minutes'
           and a.expires_at - now() <= least((a.expires_at - a.created_at) / 4, interval '12 hours')
         on conflict (id) do nothing`,
     sql`with picked as (
           select o.id from imessage_outbox o join approvals a on a.code = o.approval_code
-          where o.delivered_at is null and o.attempts < ${MAX_NOTIFY_ATTEMPTS}
+          where o.workspace_id = ${WS} and a.workspace_id = ${WS} and o.delivered_at is null and o.attempts < ${MAX_NOTIFY_ATTEMPTS}
             and (o.leased_at is null or o.leased_at < now() - make_interval(secs => ${LEASE_SECONDS}))
             and a.status = 'pending' and a.expires_at > now()
           order by o.created_at
@@ -319,8 +324,8 @@ export async function imessageStatus(sql: Sql | null, env: Env) {
   try {
     const [row] = await sql`
       select (select value from settings where key = 'imessage_bridge') as bridge,
-             (select count(*)::int from imessage_outbox where delivered_at is null and attempts >= ${MAX_NOTIFY_ATTEMPTS}) as undeliverable,
-             (select max(delivered_at) from imessage_outbox) as last_delivered_at`;
+             (select count(*)::int from imessage_outbox where workspace_id = ${WS} and delivered_at is null and attempts >= ${MAX_NOTIFY_ATTEMPTS}) as undeliverable,
+             (select max(delivered_at) from imessage_outbox where workspace_id = ${WS}) as last_delivered_at`;
     const bridge = (row?.bridge ?? null) as (Record<string, unknown> & { seen_at?: string }) | null;
     const seen = bridge?.seen_at ? Date.parse(bridge.seen_at) : NaN;
     return {
@@ -432,20 +437,20 @@ async function contextOf(sql: Sql, code: string): Promise<ApprovalContext> {
   const rows = await sql`
     select a.recipient, l.name as lead_name, l.company as lead_company, l.email as lead_email, d.subject as draft_subject
     from approvals a left join leads l on l.id = a.lead_id left join drafts d on d.id = a.draft_id
-    where a.code = ${code}`;
+    where a.workspace_id = ${WS} and a.code = ${code}`;
   return (rows[0] ?? { lead_name: null, lead_company: null, lead_email: null, recipient: null, draft_subject: null }) as ApprovalContext;
 }
 
 async function statusReply(sql: Sql, now: Date = new Date()): Promise<string> {
   const [state] = await sql`
-    select coalesce((select value = 'true'::jsonb from settings where key = 'paused'), false) as paused,
-           (select count(*)::int from approvals where status = 'pending' and expires_at > now()) as pending`;
+    select coalesce((select paused from workspaces where id = ${WS}), false) as paused,
+           (select count(*)::int from approvals where workspace_id = ${WS} and status = 'pending' and expires_at > now()) as pending`;
   const rows = (await sql`
     select a.code, a.kind, a.recipient, a.payload, a.expires_at,
            l.name as lead_name, l.company as lead_company, l.email as lead_email,
            d.version as draft_version, d.subject as draft_subject, null::text as draft_body
     from approvals a left join leads l on l.id = a.lead_id left join drafts d on d.id = a.draft_id
-    where a.status = 'pending' and a.expires_at > now()
+    where a.workspace_id = ${WS} and a.status = 'pending' and a.expires_at > now()
     order by a.expires_at
     limit 5`) as NoticeRow[];
   const head = state?.paused ? "Crusonia is PAUSED (text resume to restart)." : "Crusonia is running.";
@@ -463,14 +468,14 @@ async function statusReply(sql: Sql, now: Date = new Date()): Promise<string> {
 
 export async function handleOwnerCommand(ctx: { sql: Sql; env: Env; fetch?: FetchFn }, cmd: OwnerCommand): Promise<CommandResult> {
   const { sql, env } = ctx;
-  const deps: Deps = { sql, env, fetch: ctx.fetch, actor: IMESSAGE_ACTOR, sendTtlMinutes: sendApprovalTtlMinutes(env), via: "imessage" };
+  const deps: Deps = { sql, ws: WS, env, fetch: ctx.fetch, actor: IMESSAGE_ACTOR, sendTtlMinutes: sendApprovalTtlMinutes(env), via: "imessage" };
   let code = "code" in cmd ? cmd.code : undefined;
 
   const approve = async (approvalCode: string): Promise<CommandResult> => {
-    const approval = await getApproval(sql, approvalCode);
+    const approval = await getApproval(sql, WS, approvalCode);
     if (approval.kind === "send") {
       const c = await contextOf(sql, approval.code);
-      const result = await approveAndSend({ sql, env, fetch: ctx.fetch, actor: IMESSAGE_ACTOR, via: "imessage" }, approval.code);
+      const result = await approveAndSend({ sql, ws: WS, env, fetch: ctx.fetch, actor: IMESSAGE_ACTOR, via: "imessage" }, approval.code);
       const to = leadLabel(c);
       return result.status === "sent"
         ? { ok: true, reply: `Approved. Sent "${oneLine(c.draft_subject, 80)}" to ${to}.` }
@@ -484,7 +489,7 @@ export async function handleOwnerCommand(ctx: { sql: Sql; env: Env; fetch?: Fetc
   };
 
   const reject = async (approvalCode: string, reason?: string): Promise<CommandResult> => {
-    const approval = await getApproval(sql, approvalCode);
+    const approval = await getApproval(sql, WS, approvalCode);
     if (approval.kind === "question") {
       return { ok: false, error: "wrong_kind", reply: `Questions can't be rejected. Reply ${approval.code} <your answer> (e.g. ${approval.code} skip this lead).` };
     }
@@ -502,10 +507,10 @@ export async function handleOwnerCommand(ctx: { sql: Sql; env: Env; fetch?: Fetc
       case "status":
         return { ok: true, reply: await statusReply(sql) };
       case "pause":
-        await setPaused(sql, true, IMESSAGE_ACTOR);
+        await setPaused(sql, WS, true, IMESSAGE_ACTOR);
         return { ok: true, reply: "Paused. No emails go out and no new agent work starts. Text resume to restart." };
       case "resume":
-        await setPaused(sql, false, IMESSAGE_ACTOR);
+        await setPaused(sql, WS, false, IMESSAGE_ACTOR);
         return { ok: true, reply: "Resumed. Approved emails send again and agents can start new work." };
       case "approve":
         return await approve(cmd.code);
@@ -517,7 +522,7 @@ export async function handleOwnerCommand(ctx: { sql: Sql; env: Env; fetch?: Fetc
         const [bubble] = await sql`
           select o.approval_code, o.draft_id, a.draft_id as approval_draft_id
           from imessage_outbox o join approvals a on a.code = o.approval_code
-          where o.message_id = ${cmd.message_id}`;
+          where o.workspace_id = ${WS} and a.workspace_id = ${WS} and o.message_id = ${cmd.message_id}`;
         if (!bubble) return { ok: false, error: "unknown_message", reply: "" };
         code = bubble.approval_code as string;
         if ((bubble.draft_id ?? null) !== (bubble.approval_draft_id ?? null)) {
@@ -526,7 +531,7 @@ export async function handleOwnerCommand(ctx: { sql: Sql; env: Env; fetch?: Fetc
         return await (cmd.reaction === "like" ? approve(code) : reject(code, "Rejected with a 👎 tapback"));
       }
       case "edit": {
-        const approval = await getApproval(sql, cmd.code);
+        const approval = await getApproval(sql, WS, cmd.code);
         if (approval.kind !== "send") {
           return { ok: false, error: "wrong_kind", reply: `Only email drafts can be edited; ${approval.code} is an agent ${approval.kind}.` };
         }
@@ -539,7 +544,7 @@ export async function handleOwnerCommand(ctx: { sql: Sql; env: Env; fetch?: Fetc
         };
       }
       case "answer": {
-        const approval = await getApproval(sql, cmd.code);
+        const approval = await getApproval(sql, WS, cmd.code);
         if (approval.kind === "tool") return { ok: false, error: "wrong_kind", reply: `${approval.code} is a tool request: A ${approval.code} to allow, R ${approval.code} to deny.` };
         if (approval.kind === "send") {
           return { ok: false, error: "wrong_kind", reply: `${approval.code} is an email draft: A ${approval.code} to send, R ${approval.code} to reject, E ${approval.code} <new text> to rewrite.` };
@@ -566,7 +571,7 @@ export async function handlePhotonEvent(sql: Sql, env: Env, event: PhotonEvent, 
   if (!(await claimWebhookEvent(sql, "photon", eventId))) {
     const prior = await sql`
       select data->>'reply' as reply from events
-      where kind = 'imessage_command' and data->>'message_id' = ${event.id}
+      where workspace_id = ${WS} and kind = 'imessage_command' and data->>'message_id' = ${event.id}
       order by id desc limit 1`;
     return { ok: true, duplicate: true, reply: (prior[0]?.reply as string | undefined) ?? "Already handled that message." };
   }
@@ -578,7 +583,7 @@ export async function handlePhotonEvent(sql: Sql, env: Env, event: PhotonEvent, 
     throw err;
   }
   const code = "code" in event.command ? event.command.code : null;
-  await sql`insert into events (lead_id, kind, data) values (null, 'imessage_command', ${JSON.stringify({
+  await sql`insert into events (workspace_id, lead_id, kind, data) values (${WS}, null, 'imessage_command', ${JSON.stringify({
     message_id: event.id,
     action: event.command.action,
     ...(event.command.action === "react" ? { reaction: event.command.reaction, target_message_id: event.command.message_id } : {}),

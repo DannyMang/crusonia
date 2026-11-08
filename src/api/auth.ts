@@ -1,18 +1,20 @@
 // Auth for /api/*: `Authorization: Bearer <token>` where the token is either
-//   - MCP_TOKEN (owner/dev bypass, compared in constant time), or
-//   - a per-user API key (`crs_live_...`, created with POST /api/keys; same access as MCP_TOKEN), or
+//   - MCP_TOKEN (the owner workspace, compared in constant time), or
+//   - a workspace API key (`crs_live_...`, created with POST /api/keys; acts on the key's workspace), or
 //   - a Clerk session JWT. With CLERK_JWT_KEY (PEM public key) verification is networkless; otherwise
 //     @clerk/backend fetches the JWKS with CLERK_SECRET_KEY (cached per isolate).
-// Single workspace for now: a verified Clerk user must also be in CLERK_ALLOWED_USER_IDS, so signing up
-// alone never grants access to the owner's data.
-// TODO(workspaces): map Clerk users/orgs to workspaces and scope every query once multi-tenancy is decided.
+// Sign-up is open: a verified Clerk user gets their own private workspace on first sign-in (SIGNUPS_OPEN=false
+// lets only existing members in; BLOCKED_USER_IDS are refused). Every request then acts on exactly one
+// workspace (c.get("workspace")), and every service query is filtered by it.
 import { verifyToken } from "@clerk/backend";
 import type { MiddlewareHandler } from "hono";
 import { resolveBearer } from "../auth.ts";
+import { ensureAccount } from "../billing/accounts.ts";
 import type { Env } from "../env.ts";
-import type { AppEnv, Principal } from "../lib/context.ts";
+import { sqlFor, type AppEnv, type Principal } from "../lib/context.ts";
 import { ApiError } from "../lib/errors.ts";
 import { isApiKey, type ApiKeyLookup } from "../services/api-keys.ts";
+import { OWNER_WORKSPACE, workspaceForClerkUser, workspaceRef, type Workspace } from "../services/workspaces.ts";
 
 const list = (raw: string | undefined) =>
   (raw ?? "")
@@ -39,7 +41,8 @@ export async function authenticate(
   const token = match[1]!;
 
   const bearer = await resolveBearer(env, token, deps.lookupApiKey);
-  if (bearer) return bearer;
+  if (bearer?.kind === "owner_token") return { kind: "owner_token" };
+  if (bearer) return { kind: "api_key", keyId: bearer.keyId, name: bearer.name, workspaceId: bearer.workspaceId, agent: bearer.agent };
   if (isApiKey(token)) throw new ApiError(401, "invalid_token", "API key is not valid or was revoked");
 
   const clerkConfigured = Boolean(env.CLERK_JWT_KEY || env.CLERK_SECRET_KEY);
@@ -63,9 +66,7 @@ export async function authenticate(
     throw new ApiError(401, "invalid_token", `Clerk session token is not valid${reason ? ` (${reason})` : ""}`);
   }
   const userId = typeof payload.sub === "string" ? payload.sub : "";
-  if (!list(env.CLERK_ALLOWED_USER_IDS).includes(userId)) {
-    throw new ApiError(403, "forbidden", "This Clerk user is not allowed (single-workspace mode: add the user id to CLERK_ALLOWED_USER_IDS)");
-  }
+  if (!userId) throw new ApiError(401, "invalid_token", "Clerk session token has no subject");
   const principal: Principal = { kind: "clerk", userId, sessionId: typeof payload.sid === "string" ? payload.sid : null };
   // Present only if the Clerk session token is customized to carry them; GET /api/me fills the rest.
   const claims = payload as unknown as Record<string, unknown>;
@@ -76,7 +77,21 @@ export async function authenticate(
   return principal;
 }
 
+/**
+ * The workspace a principal acts on. Clerk users are looked up (and get a workspace with the free credits on
+ * their first sign-in); keys carry theirs; MCP_TOKEN is the owner workspace. Only Clerk needs the database here.
+ */
+export async function resolveWorkspace(env: Env, principal: Principal): Promise<Workspace> {
+  if (principal.kind === "owner_token") return OWNER_WORKSPACE;
+  if (principal.kind === "api_key") return workspaceRef(principal.workspaceId);
+  const sql = sqlFor(env);
+  const ws = await workspaceForClerkUser(sql, env, principal, (id) => ensureAccount(sql, env, id));
+  return workspaceRef(ws.id);
+}
+
 export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
-  c.set("principal", await authenticate(c.env, c.req.header("authorization")));
+  const principal = await authenticate(c.env, c.req.header("authorization"));
+  c.set("principal", principal);
+  c.set("workspace", await resolveWorkspace(c.env, principal));
   await next();
 };

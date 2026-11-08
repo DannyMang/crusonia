@@ -18,9 +18,10 @@ export const BILLING_APP_PATH = "/app/settings/billing";
 
 /**
  * Metadata on every Stripe object we create (customers, Checkout Sessions, subscriptions, payment intents).
- * `crusonia_user_id` is the billing owner id. Keys are namespaced (app, crusonia_*) so they never collide with
- * another integration's keys, and the webhook acts only on objects with app=crusonia.
+ * `crusonia_workspace_id` is the workspace that pays (objects from before workspaces carry `crusonia_user_id`, the
+ * legacy billing owner id, which the webhook maps to its workspace). Keys are namespaced (app, crusonia_*) so they
+ * never collide with another integration's keys, and the webhook acts only on objects with app=crusonia.
  */
-export function crusoniaMetadata(ownerId: string, extra: Record<string, string> = {}): Record<string, string> {
-  return { app: "crusonia", crusonia_user_id: ownerId, ...extra };
+export function crusoniaMetadata(workspaceId: string, extra: Record<string, string> = {}): Record<string, string> {
+  return { app: "crusonia", crusonia_workspace_id: workspaceId, ...extra };
 }

@@ -2,10 +2,12 @@
 // twice: lowercase, no scheme, path or `www.`, reduced to the registrable domain (careers.acme.co.uk -> acme.co.uk),
 // and never the domain of a site that only hosts the company: a job board, a social network, an ATS, a free
 // mailbox. A lead found on jobs.lever.co/acme needs acme's own domain, not lever.co.
+// The same registrable-domain rule runs in Postgres as crusonia_registrable_domain() (src/schema.sql), which a trigger
+// applies to every leads row; keep MULTI_LABEL_SUFFIXES and its list in step.
 
 // Two-label public suffixes (a registrable domain under them has three labels). Not the whole Public Suffix List:
 // the common country second-level domains plus hosting platforms where each subdomain is a different owner.
-const MULTI_LABEL_SUFFIXES = new Set([
+export const MULTI_LABEL_SUFFIXES = new Set([
   // country second-level domains
   "co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk", "me.uk", "net.uk",
   "com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "org.nz", "net.nz",
@@ -18,6 +20,8 @@ const MULTI_LABEL_SUFFIXES = new Set([
   "github.io", "gitlab.io", "vercel.app", "netlify.app", "herokuapp.com", "workers.dev", "pages.dev", "web.app",
   "firebaseapp.com", "webflow.io", "framer.website", "framer.app", "notion.site", "carrd.co", "wixsite.com",
   "myshopify.com", "substack.com", "squarespace.com", "bubbleapps.io", "replit.app", "fly.dev", "onrender.com",
+  "appspot.com", "azurewebsites.net", "cloudfront.net", "blogspot.com", "wordpress.com", "railway.app", "glitch.me",
+  "readthedocs.io",
 ]);
 
 // Registrable domains that host many companies' pages (job boards, ATSs, social networks, directories, code hosts)

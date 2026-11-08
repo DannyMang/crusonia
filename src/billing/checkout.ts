@@ -9,7 +9,7 @@ import { sha256, toHex } from "../lib/crypto.ts";
 import type { FetchFn } from "../providers/http.ts";
 import { StripeClient, StripeError, type StripeList, type StripePrice } from "../providers/stripe.ts";
 import { missingKey } from "../services/errors.ts";
-import { billingOwnerOf, ensureAccount, getAccount } from "./accounts.ts";
+import { ensureAccount, getAccount } from "./accounts.ts";
 import { BILLING_APP_PATH, crusoniaMetadata } from "./constants.ts";
 import { CURRENCY, offerForPrice, packByKey, planByKey, type Offer } from "./plans.ts";
 
@@ -78,31 +78,31 @@ export async function offerForPriceId(stripe: StripeClient, priceId: string): Pr
 }
 
 /**
- * The owner's Stripe customer, created on first use with our metadata. Looked up by owner id only (never by
+ * The workspace's Stripe customer, created on first use with our metadata. Looked up by workspace only (never by
  * email). A deterministic Idempotency-Key makes concurrent first calls return the same customer.
  */
-export async function findOrCreateCustomer(sql: Sql, env: Env, stripe: StripeClient, ownerId: string, principal?: Principal): Promise<string> {
-  await ensureAccount(sql, env, ownerId);
-  const existing = (await getAccount(sql, ownerId))?.stripe_customer_id;
+export async function findOrCreateCustomer(sql: Sql, env: Env, stripe: StripeClient, ws: string, principal?: Principal): Promise<string> {
+  await ensureAccount(sql, env, ws);
+  const existing = (await getAccount(sql, ws))?.stripe_customer_id;
   if (existing) return existing;
   const params = {
     description: "Crusonia billing account",
-    metadata: crusoniaMetadata(ownerId),
+    metadata: crusoniaMetadata(ws),
     ...(principal?.kind === "clerk" && principal.email ? { email: principal.email } : {}),
     ...(principal?.kind === "clerk" && principal.name ? { name: principal.name } : {}),
   };
-  const key = `crusonia-customer-${toHex(await sha256(`${ownerId}\n${JSON.stringify(params)}`)).slice(0, 40)}`;
+  const key = `crusonia-customer-${toHex(await sha256(`${ws}\n${JSON.stringify(params)}`)).slice(0, 40)}`;
   const customer = await stripe.post<{ id: string }>("/v1/customers", params, key).catch(upstream);
   const linked = await sql`
     update billing_accounts set stripe_customer_id = ${customer.id}, updated_at = now()
-    where owner_id = ${ownerId} and stripe_customer_id is null
+    where workspace_id = ${ws} and stripe_customer_id is null
     returning stripe_customer_id`;
   if (linked.length) {
-    await logEvent(sql, null, "billing_customer_created", { owner_id: ownerId });
+    await logEvent(sql, ws, null, "billing_customer_created", { workspace_id: ws });
     return customer.id;
   }
   // Another request linked one first; keep theirs.
-  return (await getAccount(sql, ownerId))!.stripe_customer_id!;
+  return (await getAccount(sql, ws))!.stripe_customer_id!;
 }
 
 const LIVE_SUBSCRIPTION = new Set(["active", "trialing", "past_due", "unpaid", "incomplete", "paused"]);
@@ -117,20 +117,26 @@ export function resolveOffer(input: { plan?: string; pack?: string }): Offer {
 }
 
 /** POST /api/billing/checkout: a Checkout Session for a monthly plan (subscription) or a credit pack (payment). */
-export async function createCheckout(sql: Sql, env: Env, principal: Principal, input: { plan?: string; pack?: string }, fetchFn?: FetchFn) {
+export async function createCheckout(
+  sql: Sql,
+  env: Env,
+  principal: Principal,
+  ws: string,
+  input: { plan?: string; pack?: string },
+  fetchFn?: FetchFn,
+) {
   const offer = resolveOffer(input);
   const stripe = stripeFor(env, fetchFn);
-  const ownerId = billingOwnerOf(principal);
 
   if (offer.kind === "subscription") {
-    const account = await getAccount(sql, ownerId);
+    const account = await getAccount(sql, ws);
     if (account?.stripe_subscription_id && LIVE_SUBSCRIPTION.has(account.subscription_status ?? "")) {
       throw new ApiError(409, "already_subscribed", "This account already has a subscription. Change or cancel it in the billing portal (POST /api/billing/portal).");
     }
   }
   const price = await priceForOffer(stripe, offer);
-  const customer = await findOrCreateCustomer(sql, env, stripe, ownerId, principal);
-  const metadata = crusoniaMetadata(ownerId, { crusonia_kind: offer.kind, crusonia_key: offer.key });
+  const customer = await findOrCreateCustomer(sql, env, stripe, ws, principal);
+  const metadata = crusoniaMetadata(ws, { crusonia_kind: offer.kind, crusonia_key: offer.key });
   const base = billingUrl(env);
   const session = await stripe
     .post<{ id: string; url: string | null }>(
@@ -148,7 +154,7 @@ export async function createCheckout(sql: Sql, env: Env, principal: Principal, i
     )
     .catch(upstream);
   if (!session.url) throw new ApiError(502, "stripe_error", "Stripe returned a Checkout Session without a URL");
-  await logEvent(sql, null, "billing_checkout_created", { owner_id: ownerId, kind: offer.kind, key: offer.key, checkout_session: session.id });
+  await logEvent(sql, ws, null, "billing_checkout_created", { workspace_id: ws, kind: offer.kind, key: offer.key, checkout_session: session.id });
   return { url: session.url };
 }
 
@@ -163,10 +169,9 @@ async function portalConfigurationId(stripe: StripeClient): Promise<string | nul
 }
 
 /** POST /api/billing/portal: a Customer Portal session (change or cancel the plan, invoices, payment methods). */
-export async function createPortal(sql: Sql, env: Env, principal: Principal, fetchFn?: FetchFn) {
+export async function createPortal(sql: Sql, env: Env, ws: string, fetchFn?: FetchFn) {
   const stripe = stripeFor(env, fetchFn);
-  const ownerId = billingOwnerOf(principal);
-  const customer = (await getAccount(sql, ownerId))?.stripe_customer_id;
+  const customer = (await getAccount(sql, ws))?.stripe_customer_id;
   if (!customer) {
     throw new ApiError(409, "no_billing_account", "No Stripe customer yet: buy a credit pack or subscribe first (POST /api/billing/checkout).");
   }
@@ -175,6 +180,6 @@ export async function createPortal(sql: Sql, env: Env, principal: Principal, fet
   const session = await stripe
     .post<{ url: string }>("/v1/billing_portal/sessions", { customer, configuration, return_url: billingUrl(env) })
     .catch(upstream);
-  await logEvent(sql, null, "billing_portal_opened", { owner_id: ownerId });
+  await logEvent(sql, ws, null, "billing_portal_opened", { workspace_id: ws });
   return { url: session.url };
 }
