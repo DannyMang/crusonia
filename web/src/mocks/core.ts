@@ -9,19 +9,17 @@ import { repliesData, workflowsData } from "./workflows.ts";
 
 let paused = false;
 
-/** Same buckets as the backend's pipelineFromStages: each lead counts in at most one. */
+/** The backend's cumulative funnel (src/services/summary.ts cumulativePipeline), from stages, plus `qualified`. */
 function pipeline(byStage: Record<string, number>, awaitingOpen: number) {
   const n = (...stages: string[]) => stages.reduce((sum, s) => sum + (byStage[s] ?? 0), 0);
-  const awaiting = Math.min(awaitingOpen, n("awaiting_approval"));
-  return {
-    found: n("new", "no_consent", "researching"),
-    researched: n("qualified", "disqualified", "needs_review"),
-    drafted: n("awaiting_approval") - awaiting,
-    awaiting_approval: awaiting,
-    sent: n("sent"),
-    replied: n("replied", "interested", "not_interested"),
-    meetings: n("meeting_booked"),
-  };
+  const meetings = n("meeting_booked");
+  const replied = meetings + n("replied", "interested", "not_interested");
+  const sent = replied + n("sent");
+  const drafted = sent + n("awaiting_approval");
+  const qualified = drafted + n("qualified");
+  const researched = qualified + n("disqualified", "needs_review");
+  const found = researched + n("new", "no_consent", "researching");
+  return { found, researched, qualified, drafted, awaiting_approval: Math.min(awaitingOpen, n("awaiting_approval")), sent, replied, meetings };
 }
 
 function summary(): Summary {

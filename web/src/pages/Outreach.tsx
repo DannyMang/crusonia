@@ -48,7 +48,7 @@ export default function Outreach() {
   }, [toast]);
 
   return (
-    <Page className="gap-5 px-8 pb-14 pt-8">
+    <Page className="gap-5 px-4 pb-14 pt-6 sm:px-8 sm:pt-8">
       <header className="flex h-10 shrink-0 items-center justify-between gap-4">
         <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Outreach</h1>
         <div className="flex items-center gap-2">{tab === "approvals" ? <IMessagePill /> : <TasksPill />}</div>
@@ -673,7 +673,7 @@ function RepliesColumn({ replies, loading }: { replies: Reply[] | undefined; loa
               <ReplyLabel label={r.label} />
             </div>
             <p className="line-clamp-3 text-[13px]/4.75 text-ink">&ldquo;{r.preview}&rdquo;</p>
-            {r.lead_id && waiting.has(r.lead_id) ? <span className="text-xs/4.25 text-muted">Reply waiting in Approvals</span> : null}
+            {r.lead_id && waiting.has(r.lead_id) ? <span className="text-xs/4.25 text-muted">Reply waiting for approval</span> : null}
           </Link>
         ))
       )}

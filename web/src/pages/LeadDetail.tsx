@@ -33,7 +33,7 @@ export default function LeadDetail() {
     const e = lead.error;
     if (isApiError(e) && e.status === 404 && !e.missingRoute) return <NotFoundLead />;
     return (
-      <Page className="gap-6 px-8 py-8">
+      <Page className="gap-6 px-4 py-6 sm:px-8 sm:py-8">
         <Breadcrumb lead={null} />
         <QueryError error={e} what="this lead" onRetry={() => void lead.refetch()} />
       </Page>
@@ -55,7 +55,7 @@ function Detail({ data, approve }: { data: LeadFull; approve: ApproveMutation })
   const sources = evidence.map((e) => e.source_url);
 
   return (
-    <Page className="gap-6 px-8 pb-14 pt-8">
+    <Page className="gap-6 px-4 pb-14 pt-6 sm:px-8 sm:pt-8">
       <Header lead={lead} />
       {approve.isError ? <QueryError error={approve.error} what="sending" /> : null}
       <div className="flex flex-col items-start gap-5 lg:flex-row">
@@ -261,7 +261,7 @@ function ResearchDialog({ lead, open, onClose }: { lead: Lead; open: boolean; on
 
 function NotFoundLead() {
   return (
-    <Page className="gap-6 px-8 py-8">
+    <Page className="gap-6 px-4 py-6 sm:px-8 sm:py-8">
       <Breadcrumb lead={null} />
       <Card className="flex flex-col items-center gap-2 px-6 py-14 text-center">
         <div className="text-[15px]/5 font-semibold tracking-[-0.01em] text-ink">We couldn't find that lead</div>
@@ -275,7 +275,7 @@ function NotFoundLead() {
 
 function Loading() {
   return (
-    <Page className="gap-6 px-8 py-8">
+    <Page className="gap-6 px-4 py-6 sm:px-8 sm:py-8">
       <div className="flex flex-col gap-2.5" aria-busy="true" aria-label="Loading lead">
         <Skeleton className="h-4 w-48" />
         <Skeleton className="h-7.5 w-80" />

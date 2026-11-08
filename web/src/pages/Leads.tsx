@@ -517,8 +517,8 @@ function groupSummary(key: GroupKey, leads: Lead[], oldestWaiting: number | null
       return {
         left: [`${leads.length} awaiting approval`, oldestWaiting !== null ? `oldest ${duration(oldestWaiting)}` : null].filter(Boolean).join(" · "),
         right: (
-          <Link to="/app/approvals" className="hover:text-ink hover:underline">
-            Review in Approvals
+          <Link to="/app/outreach" className="hover:text-ink hover:underline">
+            Review in Outreach
           </Link>
         ),
       };

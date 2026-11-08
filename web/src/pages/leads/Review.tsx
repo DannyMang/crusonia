@@ -79,7 +79,7 @@ export default function Review() {
   const error = leads.error ?? questions.error;
 
   return (
-    <Page className="gap-6 px-8 pb-14 pt-8">
+    <Page className="gap-6 px-4 pb-14 pt-6 sm:px-8 sm:pt-8">
       <header className="flex h-10 shrink-0 items-center justify-between gap-4">
         <div className="flex items-baseline gap-3">
           <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Review</h1>
