@@ -365,7 +365,7 @@ function WaitingOnYou({ kind, approvals }: { kind: "approval" | "answer"; approv
         <ul className="flex flex-col gap-1.5">
           {approvals.map((a) => (
             <li key={a.code}>
-              <Link to={`/app/approvals/${encodeURIComponent(a.code)}`} className="flex items-center gap-2 text-[13px]/4.5 font-medium text-ink hover:underline">
+              <Link to={`/app/outreach/${encodeURIComponent(a.code)}`} className="flex items-center gap-2 text-[13px]/4.5 font-medium text-ink hover:underline">
                 <span className="shrink-0 font-semibold">{a.code}</span>
                 <span className="min-w-0 truncate text-muted">{a.summary}</span>
                 <ChevronRight className="ml-auto text-green" />
@@ -374,7 +374,7 @@ function WaitingOnYou({ kind, approvals }: { kind: "approval" | "answer"; approv
           ))}
         </ul>
       ) : (
-        <Link to="/app/approvals" className="flex items-center gap-1 self-start text-[13px]/4.5 font-medium text-ink hover:underline">
+        <Link to="/app/outreach" className="flex items-center gap-1 self-start text-[13px]/4.5 font-medium text-ink hover:underline">
           Open approvals
           <ChevronRight className="text-green" />
         </Link>

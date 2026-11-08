@@ -144,7 +144,7 @@ function AgentPill() {
   if (hidden) return null;
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 rounded-full bg-[#BDE68973] pl-3.75 pr-1.25">
-      <Link to="/app/connect" className="flex items-center gap-1">
+      <Link to="?connect=1" className="flex items-center gap-1">
         <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden className="shrink-0">
           <rect x="5.75" y="5.75" width="7.5" height="7.5" rx="2" fill="none" stroke="#16A34A" strokeWidth="1.4" />
           <path d="M10.25 3.75a2 2 0 00-2-2h-3.5a3 3 0 00-3 3v3.5a2 2 0 002 2" fill="none" stroke="#16A34A" strokeWidth="1.4" strokeLinecap="round" />

@@ -96,7 +96,7 @@ export default function Step4Leads() {
             <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
               <div className="text-[13px]/4.5 font-medium text-muted">
                 Showing the latest {shown.length} · {researched} researched, {researching} in progress, {queued} queued. Drafts for the top leads will wait in
-                Approvals.
+                Outreach.
               </div>
               <Link to="/app/leads" className="text-[13px]/4 font-medium text-ink underline decoration-[#200D0D4D] underline-offset-[3px] hover:decoration-ink">
                 View all {leads.length} {leads.length === 1 ? "lead" : "leads"}

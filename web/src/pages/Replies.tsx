@@ -88,7 +88,7 @@ export default function Replies() {
             icon={<RepliesIcon />}
             title={filter === "all" ? "No replies yet" : `No ${active.label.toLowerCase()} replies`}
             body="When someone answers an approved email, the reply lands here, labeled Interested, Not now or Unsubscribed, and that lead's follow-ups stop."
-            action={filter === "all" ? <ButtonLink to="/app/approvals" variant="soft">See what's waiting for approval</ButtonLink> : undefined}
+            action={filter === "all" ? <ButtonLink to="/app/outreach" variant="soft">See what's waiting for approval</ButtonLink> : undefined}
           />
         )}
       </Card>

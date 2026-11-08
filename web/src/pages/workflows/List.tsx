@@ -154,7 +154,7 @@ function FlowRow({ flow: w }: { flow: FlowDef }) {
           <div className="min-w-0 grow basis-0 text-[13px]/4.5 font-[450] text-ink">
             Next run will be skipped until you decide on {drafts} {drafts === 1 ? "draft" : "drafts"}.
           </div>
-          <ButtonLink to="/app/approvals" variant="outline" size="sm">
+          <ButtonLink to="/app/outreach" variant="outline" size="sm">
             Review {drafts} {drafts === 1 ? "draft" : "drafts"}
           </ButtonLink>
         </div>
