@@ -1,4 +1,4 @@
-// Onboarding · 4 First leads (Paper artboard 2LQC-0): live progress of the "find my first 25 leads" run,
+// Onboarding · 4 First leads (Paper artboard 2LQC-0): live progress of the "find my first 3 leads" run,
 // from GET /api/leads (newest first, polled every few seconds). Leads created before the run started are
 // left out. The API has no per-lead segment, so that column shows where the lead came from instead.
 import { useQuery } from "@tanstack/react-query";
@@ -12,7 +12,7 @@ import { cx, hostOf, leadTitle } from "../../lib/format.ts";
 import { findProgress } from "../../lib/find-progress.ts";
 import { keys, useFindRun } from "../../queries.ts";
 
-const DEFAULT_TARGET = 25;
+const DEFAULT_TARGET = 3;
 const SHOWN = 9;
 const FILTERS = { limit: 100 } as const;
 
@@ -27,7 +27,7 @@ export default function Step4Leads() {
   const run = useOnboarding().leads;
   const target = run?.target ?? DEFAULT_TARGET;
 
-  // The session says when no more are coming: the page mustn't wait for 25 after the agent has stopped.
+  // The session says when no more are coming: the page mustn't wait for the full target after the agent has stopped.
   const session = useFindRun(run?.sessionId, true);
   const sessionStatus = session.data?.run.status;
   const q = useQuery({

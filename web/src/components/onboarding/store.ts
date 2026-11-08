@@ -39,7 +39,7 @@ export type Onboarding = {
   manual?: boolean;
   /** Unsaved edits on step 3. */
   draft?: unknown;
-  /** The "Find my first 25 leads" run. */
+  /** The "Find my first 3 leads" run. */
   leads?: { sessionId: string; target: number; startedAt: number };
 };
 

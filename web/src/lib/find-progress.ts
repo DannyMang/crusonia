@@ -1,5 +1,5 @@
 // Onboarding step 4's progress line. Pure, so `bun test` covers it. A find session saves what it has and stops (the playbook
-// allows it five turns), so "25" is an upper limit: once the session has ended, no more leads are coming from it.
+// allows it five turns), so the target is an upper limit: once the session has ended, no more leads are coming from it.
 
 export type FindProgress = { finished: boolean; complete: boolean; title: string; status: string; hint: string | null };
 
