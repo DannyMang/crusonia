@@ -320,6 +320,24 @@ describe("per-IP limits", () => {
     for (let i = 0; i < 5; i++) expect((await mcp("owner-token", "8.8.8.8")).status).toBe(200);
   });
 
+  test("Clerk session tokens neither count nor get blocked: an old tab can't lock a shared network out", async () => {
+    const rl = limiter(0);
+    const e = env({ RL_ANON: rl.binding });
+    const session = { Authorization: "Bearer aaa.bbb.ccc" };
+    expect((await call("/api/leads", { ip: "6.6.6.6", headers: session }, e)).status).toBe(401);
+    expect(rl.counts.get("bad_token:6.6.6.6")).toBeUndefined();
+    // Blocked for a wrong key, and a person's session on the same network still gets its usual answer.
+    expect((await call("/api/leads", { ip: "6.6.6.6", headers: { Authorization: "Bearer crs_live_nope" } }, e)).status).toBe(429);
+    expect((await call("/api/leads", { ip: "6.6.6.6", headers: session }, e)).status).toBe(401);
+  });
+
+  test("a shared network has room for several people signing up at once", async () => {
+    const config = await read("wrangler.jsonc");
+    for (const line of config.split("\n").filter((l) => l.includes('"name": "RL_SIGNUP"') || l.includes('"name": "RL_PAID"'))) {
+      expect(Number(/"limit": (\d+)/.exec(line)![1])).toBeGreaterThanOrEqual(60);
+    }
+  });
+
   test("paid starts: per IP past the limit, and the owner's own token is exempt", async () => {
     const e = env({ RL_PAID: limiter(0).binding, NAIVE_API_KEY: "nv" });
     const path = "/api/leads/find";

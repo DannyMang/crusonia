@@ -443,7 +443,7 @@ Every workspace spends the instance's one Naive and Apify account, so these hold
   workspace including the owner's, until a signed-in platform admin releases it. `MCP_TOKEN` can pull it, not release it.
   Logged as `instance_halted` and `instance_resumed`. `GET /api/admin/instance` shows both brakes.
 - **Per-IP limits**, per minute and per Cloudflare location (`ratelimits` in `wrangler.jsonc`, `src/lib/rate-limit.ts`): 60
-  wrong tokens or invite-link reads, 30 paid starts, 5 new workspaces. A valid token on `/mcp` is never limited, because many
+  wrong API keys or invite-link reads, 120 paid starts, 60 new workspaces. Clerk session tokens never count. A valid token on `/mcp` is never limited, because many
   workspaces' agents can share one IP.
 - **Logos.** `SHOW_APPROVAL_LOGOS_ON_PUBLIC_PAGES` in `web/src/lib/public-logos.ts` shows plain names on public pages for
   the companies that require written approval (`web/src/assets/logos/LOGOS.md`).

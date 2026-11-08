@@ -108,14 +108,20 @@ export async function resolveWorkspace(env: Env, principal: Principal, requested
   return { workspace, role: principal.kind === "owner_token" ? "owner" : "admin" };
 }
 
-/** authenticate(), with wrong tokens counted per IP. Only failures count: an IP over the limit gets 429 without a lookup. */
+/**
+ * authenticate(), with wrong tokens counted per IP. Only failures count: an IP over the limit gets 429 without a lookup.
+ * Clerk session tokens don't count and aren't blocked: they cost a signature check, not a lookup, and they expire all the
+ * time, so an old tab polling on a shared network would otherwise lock everyone on it out.
+ */
 async function authenticateLimited(c: Context<AppEnv>): Promise<Principal> {
   const ip = clientIp(c);
-  if (badTokenBlocked(ip)) throw tooManyRequests();
+  const authorization = c.req.header("authorization");
+  const session = looksLikeJwt(/^Bearer\s+(\S+)\s*$/i.exec(authorization ?? "")?.[1] ?? "");
+  if (!session && badTokenBlocked(ip)) throw tooManyRequests();
   try {
-    return await authenticate(c.env, c.req.header("authorization"));
+    return await authenticate(c.env, authorization);
   } catch (err) {
-    if (err instanceof ApiError && err.status === 401 && c.req.header("authorization") && (await noteBadToken(c.env, ip))) throw tooManyRequests();
+    if (err instanceof ApiError && err.status === 401 && authorization && !session && (await noteBadToken(c.env, ip))) throw tooManyRequests();
     throw err;
   }
 }
