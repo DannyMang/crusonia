@@ -41,11 +41,26 @@ export function AuthHeading({ title, subtitle }: { title: ReactNode; subtitle: R
 
 export type Provider = "github" | "google";
 
-export function ProviderButtons({ onProvider, pending, disabled }: { onProvider?: (p: Provider) => void; pending?: string | null; disabled?: boolean }) {
+export const ALL_PROVIDERS: Provider[] = ["github", "google"];
+const PROVIDER_LABEL: Record<Provider, string> = { github: "Continue with GitHub", google: "Continue with Google" };
+
+export function ProviderButtons({
+  onProvider,
+  pending,
+  disabled,
+  providers = ALL_PROVIDERS,
+}: {
+  onProvider?: (p: Provider) => void;
+  pending?: string | null;
+  disabled?: boolean;
+  providers?: Provider[];
+}) {
+  if (!providers.length) return null;
   return (
     <div className="flex flex-col gap-3 pt-7.25">
-      <ProviderButton provider="github" label="Continue with GitHub" onClick={onProvider} loading={pending === "github"} disabled={disabled || Boolean(pending)} />
-      <ProviderButton provider="google" label="Continue with Google" onClick={onProvider} loading={pending === "google"} disabled={disabled || Boolean(pending)} />
+      {providers.map((p) => (
+        <ProviderButton key={p} provider={p} label={PROVIDER_LABEL[p]} onClick={onProvider} loading={pending === p} disabled={disabled || Boolean(pending)} />
+      ))}
     </div>
   );
 }
@@ -179,6 +194,8 @@ export type StartFormProps = {
   onEmailChange?: (v: string) => void;
   onSubmit?: (e: FormEvent<HTMLFormElement>) => void;
   onProvider?: (p: Provider) => void;
+  /** Social providers turned on in the Clerk instance (default: both, as designed). */
+  providers?: Provider[];
   pending?: Provider | "email" | null;
   /** Everything disabled (static build, Clerk still loading). */
   disabled?: boolean;
@@ -195,16 +212,16 @@ export function StartForm(p: StartFormProps) {
     <AuthShell>
       <AuthBrand />
       <AuthHeading title={p.title} subtitle={p.subtitle} />
-      <ProviderButtons onProvider={p.onProvider} pending={p.pending === "email" ? "email" : p.pending} disabled={p.disabled || p.pending === "email"} />
+      <ProviderButtons onProvider={p.onProvider} providers={p.providers} pending={p.pending === "email" ? "email" : p.pending} disabled={p.disabled || p.pending === "email"} />
       <form
-        className="flex flex-col gap-3 pt-5"
+        className={cx("flex flex-col gap-3", p.providers && !p.providers.length ? "pt-7.25" : "pt-5")}
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
           p.onSubmit?.(e);
         }}
       >
-        <OrDivider />
+        {p.providers && !p.providers.length ? null : <OrDivider />}
         <AuthField
           id="auth-email"
           label="Work email"

@@ -46,6 +46,26 @@ export function clerkMessage(e: ErrorLike): string | null {
   return e.longMessage || e.message || null;
 }
 
+/**
+ * Social providers this Clerk instance has turned on (`oauth_github`, `oauth_google`), read from Clerk's loaded
+ * environment. Clerk exposes it only as an internal getter, so anything unexpected falls back to `all`.
+ */
+export function enabledProviders<P extends string>(clerk: unknown, all: P[]): P[] {
+  const env = (clerk as { __internal_environment?: { userSettings?: { authenticatableSocialStrategies?: unknown } } | null } | null)
+    ?.__internal_environment;
+  const on = env?.userSettings?.authenticatableSocialStrategies;
+  if (!Array.isArray(on)) return all;
+  return all.filter((p) => on.includes(`oauth_${p}`));
+}
+
+/** Clerk rejects a strategy that is not turned on with "oauth_github does not match one of the allowed values". */
+export function providerOffMessage(err: { message?: string; longMessage?: string } | null | undefined, provider: string): string | null {
+  const text = `${err?.longMessage ?? ""} ${err?.message ?? ""}`;
+  if (!/does not match one of the allowed values/i.test(text) || !/strategy/i.test(text)) return null;
+  const name = provider === "github" ? "GitHub" : provider === "google" ? "Google" : provider;
+  return `${name} sign-in is not turned on for this workspace yet. Use another option.`;
+}
+
 export const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
 // ---------- website from the landing page ----------

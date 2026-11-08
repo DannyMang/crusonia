@@ -2,16 +2,16 @@
 // or email: signIn.create({ identifier }) -> emailCode.sendCode() -> emailCode.verifyCode({ code }) ->
 // finalize() to `redirect_url` (same-origin paths only) or /app. Without a publishable key the same layout
 // renders disabled, so Clerk hooks never run outside <ClerkProvider>.
-import { useAuth, useSignIn } from "@clerk/react";
+import { useAuth, useClerk, useSignIn } from "@clerk/react";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { clerkEnabled } from "../../auth.tsx";
-import { CodeForm, StartForm, SwitchLine, type Provider } from "../../components/auth/AuthLayout.tsx";
-import { clerkMessage, goTo, isEmail, rememberAfterAuth, safeNext } from "../../components/auth/flow.ts";
+import { ALL_PROVIDERS, CodeForm, StartForm, SwitchLine, type Provider } from "../../components/auth/AuthLayout.tsx";
+import { clerkMessage, enabledProviders, goTo, isEmail, providerOffMessage, rememberAfterAuth, safeNext } from "../../components/auth/flow.ts";
 
 const TITLE = "Welcome back";
 const SUBTITLE = "Sign in to your Crusonia workspace";
-const TWO_FACTOR = "This account has two-step verification turned on, which this screen does not support yet. Continue with GitHub or Google instead.";
+const TWO_FACTOR = "This account has two-step verification turned on, which this screen does not support yet.";
 
 const footer = <SwitchLine className="pt-5" text="New to Crusonia?" to="/sign-up" label="Create an account" />;
 
@@ -28,6 +28,8 @@ type Pending = Provider | "email" | "verify" | "resend" | null;
 function ClerkSignIn() {
   const { signIn, errors } = useSignIn();
   const { isLoaded } = useAuth();
+  const clerk = useClerk();
+  const providers = enabledProviders(clerk, ALL_PROVIDERS);
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const next = safeNext(params.get("redirect_url")) ?? "/app";
@@ -46,11 +48,10 @@ function ClerkSignIn() {
     if (status === "needs_second_factor") setMessage(TWO_FACTOR);
   }, [status]);
 
-  const identifierError = clerkMessage(errors.fields.identifier);
-  const codeError = clerkMessage(errors.fields.code);
-  const globalError = clerkMessage(errors.global?.[0]);
-  // A returned error that Clerk did not attach to a field (network, runtime) still needs saying.
-  const formError = globalError ?? (identifierError || codeError ? null : message);
+  // Only errors from the action just taken (Clerk keeps the last error on the resource across steps).
+  const identifierError = step === "start" ? clerkMessage(errors.fields.identifier) : null;
+  const codeError = step === "code" ? clerkMessage(errors.fields.code) : null;
+  const formError = identifierError || codeError ? null : message;
 
   async function onProvider(p: Provider) {
     setPending(p);
@@ -59,7 +60,7 @@ function ClerkSignIn() {
     const { error } = await signIn.sso({ strategy: p === "github" ? "oauth_github" : "oauth_google", redirectUrl: next, redirectCallbackUrl: "/sso-callback" });
     // On success the browser is already leaving for GitHub / Google.
     if (error) {
-      setMessage(clerkMessage(error) ?? "Could not reach the sign-in provider. Try again.");
+      setMessage(providerOffMessage(error, p) ?? clerkMessage(error) ?? "Could not reach the sign-in provider. Try again.");
       setPending(null);
     }
   }
@@ -154,6 +155,7 @@ function ClerkSignIn() {
       }}
       onSubmit={() => void onEmail()}
       onProvider={(p) => void onProvider(p)}
+      providers={providers}
       pending={pending === "github" || pending === "google" || pending === "email" ? pending : null}
       disabled={!isLoaded}
       emailError={emailHint ?? identifierError}
