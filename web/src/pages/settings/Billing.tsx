@@ -25,7 +25,6 @@ const POLL_FOR_MS = 30_000;
 const PURCHASE_WINDOW_MS = 3 * 60_000;
 
 const sectionTitle = "text-[15px]/4.5 font-medium text-ink";
-const sectionNote = "text-[13px]/4 font-medium text-faint";
 const label = "text-[13px]/4 font-medium text-faint";
 /** The design's square-ish secondary button (Manage billing, Buy). */
 const outlineButton =
@@ -108,12 +107,7 @@ export default function Billing() {
           <SettingsTabs />
 
           <div className="flex flex-col items-start gap-4 pb-2 pt-3 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
-            <div className="flex min-w-0 max-w-full flex-col gap-2">
-              <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Billing</h1>
-              <p className="w-140 max-w-full text-[13px]/4.5 font-medium text-muted">
-                Credits pay for hosted agent work, at 1 credit = $0.01. Payments, invoices and cards are handled by Stripe.
-              </p>
-            </div>
+            <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Billing</h1>
             {b?.has_customer && configured && canManage ? (
               <button type="button" className={outlineButton} onClick={openPortal} disabled={anyBusy} aria-busy={busy({ kind: "portal" }) || undefined}>
                 {busy({ kind: "portal" }) ? <Spinner size={12} /> : null}
@@ -145,10 +139,7 @@ export default function Billing() {
               <BalanceCard b={b} />
 
               <Card className="flex flex-col gap-4 p-4 sm:p-6">
-                <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-                  <h2 className={sectionTitle}>Buy credits</h2>
-                  <p className={sectionNote}>One-time top-ups at the same rate. Pack credits never expire.</p>
-                </div>
+                <h2 className={sectionTitle}>Buy credits</h2>
                 <div className="flex flex-col gap-3 sm:flex-row">
                   {b.packs.map((p) => (
                     <div key={p.key} className="flex grow basis-0 items-center justify-between gap-3 rounded-[10px] border border-[#200D0D1A] py-4.5 pl-5 pr-4.5">
@@ -175,10 +166,7 @@ export default function Billing() {
               </Card>
 
               <Card className="flex flex-col gap-4 p-4 sm:p-6">
-                <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-                  <h2 className={sectionTitle}>Monthly plans</h2>
-                  <p className={sectionNote}>Each plan adds its price back as credit every month. Change or cancel in Manage billing.</p>
-                </div>
+                <h2 className={sectionTitle}>Monthly plans</h2>
                 <div className="flex flex-col gap-3 sm:flex-row">
                   {b.plans
                     .filter((p) => p.kind === "subscription")
@@ -361,10 +349,7 @@ function FactRow({ label: text, last, children }: { label: string; last?: boolea
 function Activity({ b }: { b: BillingData }) {
   return (
     <Card className="flex flex-col px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
-      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 pb-3.5">
-        <h2 className={sectionTitle}>Recent activity</h2>
-        <p className={sectionNote}>The last 20 changes to your balance</p>
-      </div>
+      <h2 className={cx(sectionTitle, "pb-3.5")}>Recent activity</h2>
       {b.ledger.length ? (
         // Phones drop the Date column and show the date under each entry instead.
         <table className="w-full border-collapse text-left">

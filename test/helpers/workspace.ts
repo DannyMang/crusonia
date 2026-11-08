@@ -39,7 +39,7 @@ export async function deleteTestWorkspaces(sql: Sql, ids: string[]): Promise<voi
     sql`delete from workflow_defs where workspace_id = any(${ws}::text[])`,
     sql`delete from leads where workspace_id = any(${ws}::text[])`,
     sql`delete from api_keys where workspace_id = any(${ws}::text[])`,
-    sql`delete from company_summary_versions where workspace_id = any(${ws}::text[])`,
+    sql`delete from company_summaries where workspace_id = any(${ws}::text[])`,
     sql`delete from credit_ledger where workspace_id = any(${ws}::text[])`,
     sql`delete from billing_accounts where workspace_id = any(${ws}::text[])`,
     sql`delete from workspace_members where workspace_id = any(${ws}::text[])`,

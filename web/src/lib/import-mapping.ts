@@ -28,14 +28,21 @@ export function guessMapping(columns: string[]): Record<string, ImportMapField |
   return out;
 }
 
+const CONSENT_FIELDS: readonly ImportMapField[] = ["consent", "consent_at"];
+
+/** The fields someone may map: consent only for owners and admins (POST /api/import/commit answers 403 otherwise). */
+export function importFields(canGrantConsent: boolean): readonly ImportMapField[] {
+  return canGrantConsent ? IMPORT_FIELDS : IMPORT_FIELDS.filter((f) => !CONSENT_FIELDS.includes(f));
+}
+
 /** Assigns `field` to `col`, taking it off any other column. */
 export function assignField(map: Record<string, ImportMapField | "">, col: string, field: ImportMapField | ""): Record<string, ImportMapField | ""> {
   return Object.fromEntries(Object.entries(map).map(([c, f]) => [c, c === col ? field : field && f === field ? "" : f]));
 }
 
-/** Field -> column, as the API takes it. */
-export function toMapping(map: Record<string, ImportMapField | "">): Partial<Record<ImportMapField, string>> {
+/** Field -> column, as the API takes it, with only the fields in `allowed` (a guess may have taken a consent column). */
+export function toMapping(map: Record<string, ImportMapField | "">, allowed: readonly ImportMapField[] = IMPORT_FIELDS): Partial<Record<ImportMapField, string>> {
   const m: Partial<Record<ImportMapField, string>> = {};
-  for (const [col, field] of Object.entries(map)) if (field) m[field] = col;
+  for (const [col, field] of Object.entries(map)) if (field && allowed.includes(field)) m[field] = col;
   return m;
 }

@@ -8,6 +8,7 @@ import { useApi } from "../../auth.tsx";
 import { Dialog, Dropdown, Field, inputClass, MenuItem, textareaClass } from "../../components/leads/Overlay.tsx";
 import { Button, ButtonLink, QueryError } from "../../components/ui.tsx";
 import { cx } from "../../lib/format.ts";
+import { useRole } from "../../queries.ts";
 
 export function AddLeadsButton() {
   const navigate = useNavigate();
@@ -168,6 +169,8 @@ export function AddContactDialog({ open, onClose }: { open: boolean; onClose: ()
   const api = useApi();
   const qc = useQueryClient();
   const [form, setForm] = useState(empty);
+  // Consent decides who may be emailed: only owners and admins record it (the server answers 403 forbidden_role).
+  const { canManage } = useRole();
   const add = useMutation({
     mutationFn: (input: CreateLeadInput) => api.createLead(input),
     onSuccess: () => {
@@ -185,7 +188,7 @@ export function AddContactDialog({ open, onClose }: { open: boolean; onClose: ()
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    const consent = form.consent.trim();
+    const consent = canManage ? form.consent.trim() : "";
     add.mutate({
       email: form.email.trim(),
       name: opt(form.name),
@@ -254,18 +257,20 @@ export function AddContactDialog({ open, onClose }: { open: boolean; onClose: ()
         <Field label="Title">
           <input value={form.title} onChange={set("title")} placeholder="Head of Sales" className={inputClass} />
         </Field>
-        <Field
-          label="How they opted in"
-          hint="Required before Crusonia will email them. Leave it empty to save the contact without ever emailing them."
-        >
-          <textarea
-            rows={2}
-            value={form.consent}
-            onChange={set("consent")}
-            placeholder="Signed up on our waitlist, Nov 3"
-            className={textareaClass}
-          />
-        </Field>
+        {canManage ? (
+          <Field
+            label="How they opted in"
+            hint="Required before Crusonia will email them. Leave it empty to save the contact without ever emailing them."
+          >
+            <textarea
+              rows={2}
+              value={form.consent}
+              onChange={set("consent")}
+              placeholder="Signed up on our waitlist, Nov 3"
+              className={textareaClass}
+            />
+          </Field>
+        ) : null}
         {add.isError ? <QueryError error={add.error} what="adding contacts" /> : null}
         <div className="-mx-5 -mb-4 flex items-center justify-end gap-2 border-t border-t-[#200D0D14] bg-[#200D0D06] px-5 py-3">
           <Button variant="soft" onClick={close}>

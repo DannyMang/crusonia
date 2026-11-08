@@ -1,7 +1,7 @@
 // The structured onboarding profile (what the user sells and who to target): a compatibility view of the
 // workspace's Company summary (./company-summary.ts), which is the source of truth. GET /api/profile and MCP
 // get_profile read it from the markdown; PUT /api/profile and MCP save_profile write the profile's parts into the
-// markdown as a new summary version and keep every other section. Inputs in the first profile shape
+// markdown and keep every other section. Inputs in the first profile shape
 // (company_name, icp, segments and buying_signals as strings) are accepted by normalizeProfile.
 import { z } from "zod";
 import type { Sql } from "../db.ts";
@@ -137,13 +137,13 @@ export function normalizeProfile(raw: Record<string, unknown>): Profile {
 }
 
 /**
- * Saves a full profile (not a patch) into the workspace's Company summary as a new version: the title, Website
+ * Saves a full profile (not a patch) into the workspace's Company summary: the title, Website
  * line and the profile's sections are replaced, the rest of the document is kept. `author` is the summary author.
  */
-export async function saveProfile(sql: Sql, ws: string, input: ProfileInput, author: string, note = "Profile saved"): Promise<Profile> {
+export async function saveProfile(sql: Sql, ws: string, input: ProfileInput, author: string): Promise<Profile> {
   const profile = normalizeProfile(input as Record<string, unknown>);
   const current = await getCompanySummary(sql, ws);
-  const saved = await writeCompanySummary(sql, ws, { markdown: profileToMarkdown(profile, current.markdown), author, note });
+  const saved = await writeCompanySummary(sql, ws, { markdown: profileToMarkdown(profile, current.markdown), author });
   return markdownToProfile(saved.markdown ?? "", saved.updated_at);
 }
 

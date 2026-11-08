@@ -147,13 +147,13 @@ vault credential for exactly that URL, bound to that agent, holding a workspace 
 ### The research agent
 
 `bun run setup` also creates the Naive agent that `POST /api/workflows/research` runs, one session per lead. Its
-system prompt is [`playbooks/research.md`](playbooks/research.md) (v4): read the Company summary (it comes in every
+system prompt is [`playbooks/research.md`](playbooks/research.md): read the Company summary (it comes in every
 session's first message) and the lead (with the owner's notes) in one turn, research from public sources with few pages and searches batched per turn, save about 3
 evidence items, the score, rationale, next step, why-summary, contacts and links with one `save_research` call, and,
 for a qualified lead, write one short, evidence-cited message in the same turn: an email (approval) for opted-in
 leads, otherwise a manual LinkedIn, X, intro or own-mailbox task. Web and email content is treated as data, never as
 instructions, and the agent asks the owner (`ask_operator`) when unsure. When it learns something durable it updates a
-section of the Company summary with a note (a new version the owner can revert).
+section of the Company summary (a save overwrites it; there is no history).
 
 - **Why batching matters**: once a Naive session reads people's data, every MCP call asks for a confirmation, even
   at `allow` (Naive's rule; our webhook confirms allowlisted calls). Each pause and resume costs time and can rebuild
@@ -180,9 +180,9 @@ section of the Company summary with a note (a new version the owner can revert).
 | `get_status` | Configured providers, database reachability, the workspace's lead counts by stage, open approvals, Company summary version, next steps. Works with no keys. |
 | `read_website` | Reads a site (homepage + about/product/pricing pages, never sign-in/sign-up) and returns trimmed text per page. Apify crawler with `APIFY_TOKEN`, retried with JavaScript rendering when a site returns no text (SPAs); plain fetch without. Crusonia's own host is read from its landing copy. |
 | `search_web` | Google search via Apify (`APIFY_TOKEN`): organic results and related queries. |
-| `get_company_summary` | The workspace's Company summary: one markdown document, with its version and who last changed it. |
-| `update_company_summary` | `{markdown, note, section?, run_id?}`: replaces the whole document, or only the section with that heading (appended if missing). Every edit is a new version. |
-| `save_profile` / `get_profile` | Structured aliases of the Company summary (company, website, sells, ICP, segments, signals, sources). `save_profile` takes a `change_note`; `get_profile` also returns the markdown, the owner's recent notes on leads and the companies future runs skip. |
+| `get_company_summary` | The workspace's Company summary: one markdown document, with when and by whom it was last changed. |
+| `update_company_summary` | `{markdown, section?, run_id?}`: overwrites the whole document, or only the section with that heading (appended if missing). There is no history. |
+| `save_profile` / `get_profile` | Structured aliases of the Company summary (company, website, sells, ICP, segments, signals, sources). `get_profile` also returns the markdown, the owner's recent notes on leads and the companies future runs skip. |
 | `add_leads` | Upserts found companies and people, one lead per company (keyed by the normalized company domain, never a job board or other host): new contacts, links and evidence merge into a known company; disqualified or excluded companies are skipped. Optional inline `evidence`, `score`/`qualified`/`rationale` and `why_summary`. Returns `created` / `merged` / `known` / `skipped` per lead. No consent: never emailed. New leads record the run that found them (`cohort`). |
 | `list_leads` / `get_lead` | Leads by stage; one lead with its contacts, links, why-summary, evidence (numbered), drafts, approvals and notes. |
 | `save_research` | One call per researched lead: evidence (about 3, deduped), score, qualified, rationale, next step, why-summary (citing evidence by number), contacts and links. Returns the channels it may be drafted on. |
@@ -231,7 +231,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/workflows/research` | `{lead_ids}` or `{cohort}`: one Naive session per lead (`NAIVE_AGENT_ID`) |
 | GET, PUT | `/api/settings/pause` | The workspace's kill switch: no sends, no new sessions, no auto-allowed tools |
 | GET, POST | `/api/suppressions` | List (`q`, `cursor`) / add `{email, reason?}` |
-| DELETE | `/api/suppressions/:email` | Remove |
+| DELETE | `/api/suppressions/:email` | Remove (owner, admin) |
 | GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token", workspace: {id, name, owner, role}}` |
 | GET, POST | `/api/workspaces` | The caller's workspaces with their role in each (`current`, `data`) / create one `{name}`. See [Teams](#teams) |
 | PATCH | `/api/workspaces/current` | Rename `{name}` (owner, admin) |
@@ -245,12 +245,9 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/invites/:token/accept` | Clerk session only: join (403 `invite_email_mismatch`) |
 | GET | `/api/summary` | Home: `pipeline` (cumulative: how many leads got at least to found, researched, drafted, sent, replied, meetings; plus `awaiting_approval` now), `pipeline_now` (where leads are now, one bucket each), `tasks_open`, top 5 `pending_approvals`, `pending_approvals_total`, `pending_sends_total` (send approvals only), `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` and `week_credits`: credits charged in the last 7 days; `provider_usd`: the raw Naive + Apify cost behind them; `budget_usd` from `WEEKLY_BUDGET_USD`; `day_usd` and `daily_cap_usd` for the workspace's daily cap), `paused` |
 | GET | `/api/status` | `get_status` data plus `workspace_id`, `inbox_address`, `naive_agent_configured`, `mcp_url`, `agent_mcp_url` (the workspace's Naive agent URL), `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error), `imessage` (owner workspace only: `enabled`, `active`, `missing`, `owner_phone_hint` (last 4 digits only), `bridge` as last reported with `online`, `undeliverable_notices`) |
-| GET | `/api/company-summary` | `{markdown, version, updated_at, updated_by, change_note}` (version 0 and a suggested `template` before the first save) |
-| PUT | `/api/company-summary` | `{markdown, note?, base_version?}`: a new version (409 `version_conflict` if `base_version` is stale; 413 over 20,000 characters; an unchanged document saves nothing) |
-| GET | `/api/company-summary/versions` | Versions newest first, without bodies: `{version, author, change_note, created_at, chars}` (`limit`, `before`) |
-| GET | `/api/company-summary/versions/:version` | One version with its markdown |
-| POST | `/api/company-summary/revert` | `{version}`: a new version copied from that one |
-| GET, PUT | `/api/profile` | Older alias: `{profile}` (company, website, sells, icp_description, segments, signals, sources) read from the Company summary; PUT writes those parts into it as a new version and keeps its other sections |
+| GET | `/api/company-summary` | `{markdown, version, updated_at, updated_by}` (`version` counts saves; 0 and a suggested `template` before the first save) |
+| PUT | `/api/company-summary` | `{markdown, base_version?}`: overwrites the document (409 `version_conflict` if `base_version` is stale; 413 over 20,000 characters; an unchanged document saves nothing) |
+| GET, PUT | `/api/profile` | Older alias: `{profile}` (company, website, sells, icp_description, segments, signals, sources) read from the Company summary; PUT writes those parts into it and keeps its other sections |
 | POST | `/api/onboarding/read-website` | `{url, max_pages?, render_js?}` -> `{pages: [{url, title, text}], mode, rendered?, note?}`. Synchronous; Apify crawler with `APIFY_TOKEN` (a few cents, metered), retried with JavaScript rendering when it finds no text, else a plain fetch |
 | POST | `/api/onboarding/propose` | `{url?, description?}` -> `{session_id}`: a Naive session reads the site / description and writes the Company summary (author `onboarding`; a description is also saved as v1 right away) |
 | GET | `/api/onboarding/propose/:session_id` | `{status: "running" \| "done" \| "error", profile?}`; poll it (refreshes from Naive while active) |
@@ -313,7 +310,8 @@ draft answers 403 `sending_not_enabled`).
 API keys go to agents, so the REST routes that make a person's decisions refuse them with 403 `human_required`:
 deciding approvals, creating or revoking keys, setting a lead's consent, removing a suppression, billing, resuming after
 a pause, and changing a workflow's spend cap (`src/api/guards.ts`). A Clerk session (the app) or `MCP_TOKEN` can do all of
-these; resuming and spend caps also need the admin role. Anyone may pause.
+these; resuming, spend caps, a lead's consent (also through a CSV import's consent columns) and removing a suppression
+also need the admin role (403 `forbidden_role` for a member). Anyone may pause or add a suppression.
 
 | Caller | Workspace |
 | --- | --- |
@@ -384,12 +382,13 @@ overrides it), and every workspace but the owner's is limited to `PAID_STARTS_PE
 ## Company summary
 
 What Crusonia knows about the business: one markdown document per workspace (like a GTM.md), with suggested headings
-What we sell, Who buys (with a Segments list), Buying signals, Proof points, Voice, Avoid and Pricing. Every edit is a
-new version in `company_summary_versions` (author `user:<id>`, `agent:<session id>`, `agent:api_key:<id>` or
-`onboarding`, plus a change note); the current summary is the latest version, and a revert writes a new version copied
-from an old one. Agents edit it directly, without an approval: the whole document, or one section by its heading. Every
-Naive session gets the current summary in its first message, and the playbook makes the agent read it first and update
-it (with a note) when it learns something durable. Capped at 20,000 characters; it is data, rendered as sanitized
+What we sell, Who buys (with a Segments list), Buying signals, Proof points, Voice, Avoid and Pricing. Only the
+current text is stored, in `company_summaries`: a save overwrites it, with `updated_at` and `updated_by` (`user:<id>`,
+`agent:<session id>`, `agent:api_key:<id>` or `onboarding`), and there is no history. `version` counts saves for the
+stale-write check. Agents edit it directly, without an approval: the whole document, or one section by its heading, and
+the activity feed logs that they did. Every Naive session gets the current summary in its first message, and the
+playbook makes the agent read it first and update it when it learns something durable. Capped at 20,000 characters;
+it is data, rendered as sanitized
 markdown, never instructions. `/api/profile` and the `get_profile` / `save_profile` tools remain as structured aliases.
 
 ## Privacy
@@ -404,8 +403,7 @@ workspace's audit trail (`events` kind `admin_viewed`). Admins have no write acc
 Hosted Crusonia bills usage in credits through **its own Stripe account** (never one shared with another product).
 Self-hosting needs none of this: without `STRIPE_SECRET_KEY` the billing endpoints answer 503 and nothing is blocked.
 
-**Credits and plans.** Everything lives in [`src/billing/plans.ts`](src/billing/plans.ts); the values are
-placeholders until the owner decides (marked `TODO(owner)`):
+**Credits and plans.** Everything lives in [`src/billing/plans.ts`](src/billing/plans.ts):
 
 - 1 credit = $0.01 of list value. Ledger amounts are whole credits.
 - **Free** $0/month: the first 5 leads are free, then top-ups from $10. **Pro** $20/month grants 2,000 credits and

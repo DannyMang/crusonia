@@ -17,7 +17,7 @@ export default function SettingsConnectAgent() {
   const status = useStatus();
   const list = useApiKeys();
   const missing = isApiError(list.error) && list.error.missingRoute;
-  // Members can see the keys (their names label notes and summary versions) but can't make or revoke them.
+  // Members can see the keys (their names label notes) but can't make or revoke them.
   const { role } = useRole();
   const member = role === "member";
   return (

@@ -756,25 +756,36 @@ update workspaces set paused = true
 where id = 'ws_owner' and exists (select 1 from settings where key = 'paused' and value = 'true'::jsonb);
 delete from settings where key = 'paused';
 
--- Company summary: what Crusonia knows about the business, as one markdown document per workspace (like a GTM.md),
--- one immutable row per version. The current summary is the latest version; a revert is a new version copied from
--- an old one. Agents edit it directly, and every edit can be viewed and reverted. `author`: 'user:<clerk id>',
--- 'agent:<naive session id>' (or 'agent:api_key:<id>' / 'agent:mcp_token' for an agent outside Naive), or
--- 'onboarding'. Capped at 20,000 characters; the web app renders it as sanitized markdown.
-create table if not exists company_summary_versions (
-  id           bigserial primary key,
-  workspace_id text not null references workspaces(id),
-  version      int not null check (version > 0),
+-- Company summary: what Crusonia knows about the business, as one markdown document per workspace (like a GTM.md).
+-- Only the current text is stored: a save overwrites it, and there is no history. `version` counts saves, for the
+-- stale-write check. Agents edit it directly. `updated_by`: 'user:<clerk id>', 'agent:<naive session id>' (or
+-- 'agent:api_key:<id>' / 'agent:mcp_token' for an agent outside Naive), or 'onboarding'. Capped at 20,000 characters;
+-- the web app renders it as sanitized markdown.
+create table if not exists company_summaries (
+  workspace_id text primary key references workspaces(id),
   content_md   text not null check (char_length(content_md) <= 20000),
-  author       text not null,
-  change_note  text,
-  created_at   timestamptz not null default now(),
-  unique (workspace_id, version)
+  version      int not null default 1 check (version > 0),
+  updated_by   text not null,
+  updated_at   timestamptz not null default now()
 );
--- The owner's onboarding profile (settings 'profile') becomes v1 of the owner's summary, rendered as markdown under
--- the same headings as src/services/company-summary.ts (profileToMarkdown). The settings row is kept for rollback.
-insert into company_summary_versions (workspace_id, version, content_md, author, change_note)
-select 'ws_owner', 1, left(md, 20000), 'onboarding', 'Imported from the onboarding profile'
+-- Before that, company_summary_versions kept one immutable row per edit. A database that still has it keeps each
+-- workspace's latest row and loses every older version, on purpose (the owner's decision). A rerun finds no table.
+do $$
+begin
+  if to_regclass('company_summary_versions') is not null then
+    insert into company_summaries (workspace_id, content_md, version, updated_by, updated_at)
+    select distinct on (workspace_id) workspace_id, content_md, version, author, created_at
+    from company_summary_versions
+    order by workspace_id, version desc
+    on conflict (workspace_id) do nothing;
+    drop table company_summary_versions;
+  end if;
+end
+$$;
+-- The owner's onboarding profile (settings 'profile') becomes the owner's summary when there is none yet, rendered as
+-- markdown under the same headings as src/services/company-summary.ts (profileToMarkdown). The settings row is kept for rollback.
+insert into company_summaries (workspace_id, content_md, updated_by)
+select 'ws_owner', left(md, 20000), 'onboarding'
 from (
   select concat_ws(E'\n\n',
     '# ' || coalesce(nullif(p->>'company', ''), nullif(p->>'company_name', ''), 'Company summary'),
@@ -810,7 +821,7 @@ from (
     from settings where key = 'profile' and jsonb_typeof(value) = 'object'
   ) prof
 ) rendered
-where not exists (select 1 from company_summary_versions where workspace_id = 'ws_owner');
+where not exists (select 1 from company_summaries where workspace_id = 'ws_owner');
 
 -- Billing moves from owner id to workspace: one billing account per workspace (owner_id stays as the legacy key;
 -- new accounts use the workspace id). A workspace that had several accounts (the owner: 'owner' for MCP_TOKEN and
@@ -1070,7 +1081,7 @@ begin
                  and table_name = 'workspaces' and column_name = 'autopilot_provisioned_at') then
     alter table workspaces add column autopilot_provisioned_at timestamptz;
     update workspaces w set autopilot_provisioned_at = now()
-    where exists (select 1 from company_summary_versions v where v.workspace_id = w.id);
+    where exists (select 1 from company_summaries v where v.workspace_id = w.id);
   end if;
 end
 $$;

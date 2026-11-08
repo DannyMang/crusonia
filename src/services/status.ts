@@ -49,7 +49,7 @@ export async function getStatus(env: Env, ws?: string): Promise<Status> {
           (select coalesce(jsonb_object_agg(stage, n), '{}'::jsonb)
              from (select stage, count(*)::int as n from leads where workspace_id = ${w} group by stage) s) as leads_by_stage,
           (select count(*)::int from approvals where workspace_id = ${w} and status = 'pending' and expires_at > now()) as pending_approvals,
-          (select coalesce(max(version), 0)::int from company_summary_versions where workspace_id = ${w}) as summary_version,
+          coalesce((select version from company_summaries where workspace_id = ${w}), 0) as summary_version,
           coalesce((select paused from workspaces where id = ${w}), false) as paused`;
       const byStage = (row?.leads_by_stage ?? {}) as Record<string, number>;
       Object.assign(database, {

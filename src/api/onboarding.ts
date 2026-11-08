@@ -1,22 +1,11 @@
-// /api/company-summary (the workspace's Company summary: one markdown document, versioned), /api/profile (the
+// /api/company-summary (the workspace's Company summary: one markdown document), /api/profile (the
 // older structured view of it), and /api/onboarding/* (read a website, have the agent write the summary).
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireCredits } from "../billing/accounts.ts";
 import { apifyMeter } from "../billing/usage.ts";
-import { actorOf, authorOf, parseJson, parseQuery, sqlFor, wsOf, type AppEnv } from "../lib/context.ts";
-import { ApiError } from "../lib/errors.ts";
-import {
-  getCompanySummary,
-  getSummaryVersion,
-  listSummaryVersions,
-  MAX_NOTE_CHARS,
-  MAX_SUMMARY_CHARS,
-  revertCompanySummary,
-  SUMMARY_TEMPLATE,
-  writeCompanySummary,
-  type SummaryView,
-} from "../services/company-summary.ts";
+import { actorOf, authorOf, parseJson, sqlFor, wsOf, type AppEnv } from "../lib/context.ts";
+import { getCompanySummary, MAX_SUMMARY_CHARS, SUMMARY_TEMPLATE, writeCompanySummary, type SummaryView } from "../services/company-summary.ts";
 import { requireWebCall } from "../services/limits.ts";
 import { getProfile, profileUpdateSchema, saveProfile } from "../services/profile.ts";
 import { getOnboardingProposal, naiveAgent, startOnboardingProposal } from "../services/runs.ts";
@@ -26,16 +15,10 @@ import { readWebsite } from "../services/web.ts";
 
 export const companySummary = new Hono<AppEnv>();
 
-const present = (s: SummaryView) => ({
-  markdown: s.markdown,
-  version: s.version,
-  updated_at: s.updated_at,
-  updated_by: s.updated_by,
-  change_note: s.change_note,
-});
+const present = (s: SummaryView) => ({ markdown: s.markdown, version: s.version, updated_at: s.updated_at, updated_by: s.updated_by });
 
-// -> {markdown, version, updated_at, updated_by, change_note}; version 0 and markdown null before the first save,
-// with the suggested starting `template`.
+// -> {markdown, version, updated_at, updated_by}; version 0 and markdown null before the first save, with the
+// suggested starting `template`. `version` counts saves: send it back as base_version.
 companySummary.get("/", async (c) => {
   const s = await getCompanySummary(sqlFor(c.env), wsOf(c));
   return c.json({ ...present(s), ...(s.version === 0 ? { template: SUMMARY_TEMPLATE } : {}), max_chars: MAX_SUMMARY_CHARS });
@@ -44,45 +27,19 @@ companySummary.get("/", async (c) => {
 const PutBody = z
   .object({
     markdown: z.string().max(MAX_SUMMARY_CHARS + 2000),
-    note: z.string().trim().max(MAX_NOTE_CHARS).nullish(),
-    // Optional optimistic concurrency: 409 version_conflict if someone saved since this version.
+    // Optional stale-write check: 409 version_conflict if someone saved since this version.
     base_version: z.number().int().min(0).nullish(),
   })
   .strict();
 
-// A new version with the whole document. An unchanged document saves nothing (`unchanged: true`).
+// Overwrites the document. An unchanged document saves nothing (`unchanged: true`).
 companySummary.put("/", async (c) => {
   const body = await parseJson(c, PutBody);
   const s = await writeCompanySummary(sqlFor(c.env), wsOf(c), {
     markdown: body.markdown,
-    note: body.note,
     author: authorOf(c.get("principal")),
     baseVersion: body.base_version ?? null,
   });
-  return c.json({ ...present(s), unchanged: s.unchanged ?? false });
-});
-
-const VersionsQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  before: z.coerce.number().int().min(1).optional(),
-});
-
-// Newest first, without bodies: {data: [{version, author, change_note, created_at, chars}]}.
-companySummary.get("/versions", async (c) => {
-  const q = parseQuery(c, VersionsQuery);
-  return c.json({ data: await listSummaryVersions(sqlFor(c.env), wsOf(c), q) });
-});
-
-companySummary.get("/versions/:version", async (c) => {
-  const version = Number(c.req.param("version"));
-  if (!Number.isSafeInteger(version) || version < 1) throw new ApiError(400, "invalid_request", "version must be a positive integer");
-  return c.json(present(await getSummaryVersion(sqlFor(c.env), wsOf(c), version)));
-});
-
-// A new version copied from {version}.
-companySummary.post("/revert", async (c) => {
-  const body = await parseJson(c, z.object({ version: z.number().int().min(1) }).strict());
-  const s = await revertCompanySummary(sqlFor(c.env), wsOf(c), body.version, authorOf(c.get("principal")));
   return c.json({ ...present(s), unchanged: s.unchanged ?? false });
 });
 
@@ -93,7 +50,7 @@ export const profile = new Hono<AppEnv>();
 // The structured fields read from the Company summary (null before the first save).
 profile.get("/", async (c) => c.json({ profile: await getProfile(sqlFor(c.env), wsOf(c)) }));
 
-// Writes the profile's parts into the Company summary as a new version; its other sections are kept.
+// Writes the profile's parts into the Company summary; its other sections are kept.
 profile.put("/", async (c) => {
   const body = await parseJson(c, profileUpdateSchema);
   return c.json({ profile: await saveProfile(sqlFor(c.env), wsOf(c), body, authorOf(c.get("principal"))) });

@@ -58,15 +58,11 @@ export default function Step3Customer() {
   }, [draft]);
 
   const title = draft?.origin === "empty" ? "Who buys from you?" : draft?.origin === "saved" ? "Your ideal customer" : "Here's who we think buys from you";
-  const subtitle =
-    draft?.origin === "empty"
-      ? "Describe who you sell to. The agent uses this to find, research and score every lead."
-      : "Click anything to edit it. The agent uses this to find, research and score every lead.";
 
   return (
     <div className="flex grow justify-center px-6 pb-18 pt-14">
       <div className="flex w-full max-w-260 flex-col gap-8">
-        <StepTitle step={3} title={title} subtitle={subtitle} />
+        <StepTitle step={3} title={title} />
         {draft ? (
           <Editor draft={draft} setDraft={setDraft} />
         ) : profile.isError && !calmError ? (
@@ -372,9 +368,6 @@ function Signals({ signals, site, onChange }: { signals: SignalDraft[]; site: st
           + Add signal
         </AddButton>
       </div>
-      <p className="pb-2 text-[13px]/4.5 font-medium text-muted">
-        Leads showing one of these get researched first.{signals.some((s) => !s.checked) ? " Unchecked ones are not saved." : ""}
-      </p>
       {signals.length ? (
         signals.map((s) => (
           <div key={s.key} className="flex items-start gap-3 border-t border-t-[#200D0D0F] py-3.5">
@@ -419,12 +412,9 @@ function Signals({ signals, site, onChange }: { signals: SignalDraft[]; site: st
 function Sharpen() {
   return (
     <section className={cx(card, "gap-3.5 p-6")} aria-label="Make it sharper">
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center gap-2">
-          <h2 className={cardTitle}>Make it sharper</h2>
-          <span className="flex h-5 items-center rounded-full bg-pill px-2 text-[11px]/3.5 font-medium text-muted">Optional</span>
-        </div>
-        <p className="text-[13px]/4.5 font-medium text-muted">Show us who already bought. The agent looks for more like them and skips existing customers.</p>
+      <div className="flex items-center gap-2">
+        <h2 className={cardTitle}>Make it sharper</h2>
+        <span className="flex h-5 items-center rounded-full bg-pill px-2 text-[11px]/3.5 font-medium text-muted">Optional</span>
       </div>
       <ConnectRow logo="hubspot" label="Connect HubSpot" />
       <ConnectRow logo="notion" label="Connect Notion" />

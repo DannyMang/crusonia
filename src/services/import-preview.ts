@@ -57,7 +57,7 @@ const REASONS: Record<string, string> = {
 
 type Parsed = { header: string[]; candidates: ImportCandidate[]; rowSource: Map<number, string> };
 
-/** `allowConsent: false` (an API key): consent columns are not read, so an agent's import never grants consent. */
+/** `allowConsent: false` (an API key or a member): consent columns are not read, so that import never grants consent. */
 function parse(body: ImportBody, importedAt: string, opts: { allowConsent?: boolean } = {}): Parsed {
   let rows: string[][];
   try {

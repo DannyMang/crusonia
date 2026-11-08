@@ -417,7 +417,7 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
 
   test("find runs: like_lead_id shapes the brief; GET /api/leads/find/:id lists the leads the run touched with their status", async () => {
     {
-      await writeCompanySummary(sql, WS, { markdown: "# IT\n\n## What we sell\nx\n\n## Who buys\ny", author: "user:test", note: "test" });
+      await writeCompanySummary(sql, WS, { markdown: "# IT\n\n## What we sell\nx\n\n## Who buys\ny", author: "user:test" });
       const { results } = await addLeads(sql, WS, [found("like")]);
       const likeId = results[0]!.id!;
       const nv = provider((c) => (c.method === "POST" && c.url.endsWith("/v1/sessions") ? Response.json({ id: sid("find"), status: "running" }) : undefined));

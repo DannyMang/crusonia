@@ -1,7 +1,7 @@
 // CSV parsing and column mapping for the import screen (web/src/lib/csv.ts, web/src/lib/import-mapping.ts).
 import { describe, expect, test } from "bun:test";
 import { csvColumns, csvRowCount, parseCsv } from "../web/src/lib/csv.ts";
-import { assignField, guessMapping, toMapping } from "../web/src/lib/import-mapping.ts";
+import { assignField, guessMapping, IMPORT_FIELDS, importFields, toMapping } from "../web/src/lib/import-mapping.ts";
 
 describe("parseCsv", () => {
   test("quotes, escaped quotes, CRLF and blank lines", () => {
@@ -15,6 +15,17 @@ describe("parseCsv", () => {
     const csv = "﻿Email address , Name\nme@x.io,Me\nyou@x.io,You\n";
     expect(csvColumns(csv)).toEqual(["Email address", "Name"]);
     expect(csvRowCount(csv)).toBe(2);
+  });
+});
+
+describe("consent columns are for owners and admins", () => {
+  test("a member doesn't get the consent fields, and a guess on a consent column isn't sent", () => {
+    expect(importFields(true)).toEqual(IMPORT_FIELDS);
+    expect(importFields(false)).not.toContain("consent");
+    expect(importFields(false)).not.toContain("consent_at");
+    const map = guessMapping(["Email", "Opted in", "Opt-in date"]);
+    expect(toMapping(map)).toEqual({ email: "Email", consent: "Opted in", consent_at: "Opt-in date" });
+    expect(toMapping(map, importFields(false))).toEqual({ email: "Email" });
   });
 });
 

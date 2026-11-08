@@ -77,7 +77,7 @@ async function workspace(label: string) {
   await sql`insert into credit_ledger (workspace_id, owner_id, amount, reason, source) values (${ws}, ${ws}, 100000, 'grant', ${`test:${ws}`})`;
   return ws;
 }
-const summary = (ws: string) => writeCompanySummary(sql, ws, { markdown: "# Acme\n\n## What we sell\n\nThings\n", author: "onboarding", note: "first" });
+const summary = (ws: string) => writeCompanySummary(sql, ws, { markdown: "# Acme\n\n## What we sell\n\nThings\n", author: "onboarding" });
 
 /** The find session of a run finished with these leads added. */
 async function finishFind(n: ReturnType<typeof naive>, ws: string, sessionId: string, names: string[], score = 80) {
@@ -554,12 +554,12 @@ suite("autopilot (database, mocked Naive)", () => {
     expect((await call("list_workflows")).data.workflows[0].name).toBe("Find and qualify");
     expect((await call("get_billing_balance")).data).toMatchObject({ enforced: true });
     expect((await call("get_integrations")).data.providers.naive.configured).toBe(true);
-    expect((await call("list_summary_versions")).data.versions[0].version).toBe(1);
+    expect((await call("get_company_summary")).data).toMatchObject({ version: 1, updated_by: "onboarding" });
 
-    // The summary: one section at a time, no new links, versioned.
-    expect((await call("update_company_summary", { markdown: "x", note: "n" })).error).toContain("section");
-    expect((await call("update_company_summary", { markdown: "See https://evil.test/x", note: "n", section: "Avoid" })).error).toContain("evil.test");
-    expect((await call("update_company_summary", { markdown: "Agencies", note: "Two were rejected", section: "Avoid" })).data.version).toBe(2);
+    // The summary: one section at a time, no new links.
+    expect((await call("update_company_summary", { markdown: "x" })).error).toContain("section");
+    expect((await call("update_company_summary", { markdown: "See https://evil.test/x", section: "Avoid" })).error).toContain("evil.test");
+    expect((await call("update_company_summary", { markdown: "Agencies", section: "Avoid" })).data.version).toBe(2);
 
     // Notes and logs carry no links; the log reaches the feed.
     const lead = (await addLeads(sql, ws, [{ company: "Liked", domain: `liked-${run}.dev`, source: "it", source_url: `https://liked-${run}.dev/` }], { cohort: "x" })).results[0]!.id!;
