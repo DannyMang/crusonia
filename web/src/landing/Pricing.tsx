@@ -50,7 +50,7 @@ export default function Pricing() {
           <div className="flex flex-col items-start justify-between gap-4 rounded-2xl border border-[#200D0D14] px-7 py-5 md:flex-row md:items-center md:gap-6">
             <p className="flex flex-col gap-1 text-[15px]/5.5 md:flex-row md:items-center md:gap-3.5">
               <span className="font-semibold text-ink">Rather run it yourself?</span>
-              <span className="font-medium text-[#200D0D99]">
+              <span className="font-medium text-muted">
                 Crusonia is MIT open source. Self-host it free on your own Cloudflare and Neon, with your own provider keys and no caps.
               </span>
             </p>
@@ -66,7 +66,7 @@ export default function Pricing() {
             <h2 id="billing-title" className="text-[32px]/10 font-semibold tracking-[-0.035em] sm:text-[40px]/11">
               How billing works
             </h2>
-            <p className="text-[15px]/5.5 font-medium text-[#200D0D99]">1 credit = {`$${CREDIT.usd.toFixed(2)}`} · same rates on every plan</p>
+            <p className="text-[15px]/5.5 font-medium text-muted">1 credit = {`$${CREDIT.usd.toFixed(2)}`} · same rates on every plan</p>
           </div>
           <ol className="flex flex-col overflow-clip rounded-[20px] border border-[#200D0D14] bg-white md:flex-row">
             <Step n={1} title="Start with credit">
@@ -92,7 +92,7 @@ function Step({ n, title, last, children }: { n: number; title: string; last?: b
     <li className={cx("flex grow basis-0 flex-col gap-2.5 px-6 py-7", !last && "border-b border-[#200D0D14] md:border-b-0 md:border-r")}>
       <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-ink text-[13px]/4 font-bold text-white">{n}</span>
       <h3 className="pt-2 text-[19px]/6 font-semibold tracking-[-0.015em] text-ink">{title}</h3>
-      <p className="text-sm/5.25 font-medium text-[#200D0D99]">{children}</p>
+      <p className="text-sm/5.25 font-medium text-muted">{children}</p>
     </li>
   );
 }
@@ -138,16 +138,16 @@ function TierCard({ plan: p }: { plan: CatalogPlan }) {
       <div className="flex items-center justify-between">
         <h2 className="text-[22px]/7 font-semibold tracking-[-0.02em] text-ink">{name}</h2>
         {tag ? (
-          <span className={cx("rounded-full px-2.75 py-1.25 text-xs/4 font-medium", featured ? "bg-lime text-ink" : "border border-[#200D0D14] text-[#200D0D99]")}>{tag}</span>
+          <span className={cx("rounded-full px-2.75 py-1.25 text-xs/4 font-medium", featured ? "bg-lime text-ink" : "border border-[#200D0D14] text-muted")}>{tag}</span>
         ) : null}
       </div>
       <div className="flex flex-col gap-1.5">
         <div className="tabular-nums text-6xl/14.25 font-semibold tracking-tighter text-ink">{priceAmount(p.price)}</div>
-        <div className="text-sm/4.5 font-medium text-[#200D0D99]">
+        <div className="text-sm/4.5 font-medium text-muted">
           {p.kind === "free" ? `no monthly fee · credits from ${SMALLEST_PACK.price}` : `per month · includes ${credits$(p.monthly_credits)} of credit`}
         </div>
       </div>
-      <p className="shrink-0 text-[15px]/5.5 font-medium text-[#200D0D99] lg:h-16.5">{blurb(p)}</p>
+      <p className="shrink-0 text-[15px]/5.5 font-medium text-muted lg:h-16.5">{blurb(p)}</p>
       <TierCta plan={p} featured={featured} />
       {featured ? (
         <div className="flex items-center gap-2 rounded-xl border border-[#200D0D14] bg-white p-3.5" aria-label={`${priceAmount(p.price)} fee becomes ${num(p.monthly_credits)} credits, about ${num(leadsFor(p.monthly_credits))} researched leads`}>
@@ -167,7 +167,7 @@ function TierCard({ plan: p }: { plan: CatalogPlan }) {
           <li key={b.text} className="flex items-center gap-2.5 text-sm/4.5">
             <span aria-hidden className="size-1.5 shrink-0 bg-ink" />
             <span className="tabular-nums font-semibold text-ink">{b.value}</span>
-            <span className="font-medium text-[#200D0D99]">{b.text}</span>
+            <span className="font-medium text-muted">{b.text}</span>
           </li>
         ))}
       </ul>
@@ -179,7 +179,7 @@ function Figure({ value, label }: { value: string; label: string }) {
   return (
     <div className="flex grow basis-0 flex-col items-center gap-0.75">
       <span className="tabular-nums text-xl/6 font-semibold tracking-[-0.03em] text-ink">{value}</span>
-      <span className="text-[13px]/4 font-medium text-[#200D0D99]">{label}</span>
+      <span className="text-[13px]/4 font-medium text-muted">{label}</span>
     </div>
   );
 }
@@ -251,7 +251,7 @@ function TierCta({ plan: p, featured }: { plan: CatalogPlan; featured: boolean }
         Start {name}, {p.price}
       </button>
       {err ? (
-        <p role="alert" className="text-[13px]/5 font-medium text-[#200D0D99]">
+        <p role="alert" className="text-[13px]/5 font-medium text-muted">
           <span className="font-semibold text-ink">{err.title}.</span> {err.body}
         </p>
       ) : null}

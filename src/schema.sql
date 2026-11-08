@@ -162,6 +162,7 @@ alter table approvals add column if not exists recipient text;
 alter table approvals add column if not exists payload jsonb not null default '{}';
 create index if not exists approvals_pending_idx on approvals (expires_at) where status = 'pending';
 
+
 -- Send bookkeeping: `sending_at` is when the draft was claimed for sending (the cron reconciles drafts
 -- stuck in 'sending' against AgentMail); `delivered_at` comes from message.delivered.
 alter table drafts add column if not exists sending_at timestamptz;
@@ -398,6 +399,31 @@ end
 $$;
 drop trigger if exists events_crm_sync on events;
 create trigger events_crm_sync after insert on events for each row execute function crm_sync_enqueue();
+
+-- ---------------------------------------------------------------------------
+-- iMessage approvals (Photon). Additive and idempotent. See "iMessage approvals (Photon)" in README.md.
+-- ---------------------------------------------------------------------------
+
+-- Texts for the owner, pulled by the bridge (POST /webhooks/photon/poll). One row per notice, keyed so each approval
+-- is announced once ('approval:<code>') and reminded at most once ('warn:<code>'). `leased_at` is when a poll handed
+-- it to the bridge (a lease that is never acked expires after 2 minutes); `delivered_at` when the bridge confirmed the
+-- text went out. Rows whose approval closed are never sent. Decisions made by text have approvals.decided_via = 'imessage'.
+-- Tapbacks: `message_id` is the iMessage id of the delivered bubble (reported by the bridge) and `draft_id` the exact
+-- draft version it showed, so a 👍 on that bubble approves that approval and version only.
+create table if not exists imessage_outbox (
+  id            text primary key,
+  approval_code text not null references approvals(code) on delete cascade,
+  kind          text not null check (kind in ('approval', 'expiry_warning')),
+  draft_id      text,
+  created_at    timestamptz not null default now(),
+  leased_at     timestamptz,
+  attempts      int not null default 0,
+  delivered_at  timestamptz,
+  message_id    text,
+  last_error    text
+);
+create index if not exists imessage_outbox_due_idx on imessage_outbox (created_at) where delivered_at is null;
+create unique index if not exists imessage_outbox_message_uq on imessage_outbox (message_id) where message_id is not null;
 
 -- ---------------------------------------------------------------------------
 -- Agent loop v2: outreach channels and the manual task queue, batched research, Apify metering.

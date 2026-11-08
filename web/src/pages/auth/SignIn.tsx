@@ -6,7 +6,7 @@ import { useAuth, useClerk, useSignIn } from "@clerk/react";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { clerkEnabled } from "../../auth.tsx";
-import { ALL_PROVIDERS, CodeForm, StartForm, SwitchLine, type Provider } from "../../components/auth/AuthLayout.tsx";
+import { ALL_PROVIDERS, AuthLoadFailed, CodeForm, StartForm, SwitchLine, useLoadTimedOut, type Provider } from "../../components/auth/AuthLayout.tsx";
 import { clerkMessage, enabledProviders, goTo, isEmail, providerOffMessage, rememberAfterAuth, safeNext } from "../../components/auth/flow.ts";
 
 const TITLE = "Welcome back";
@@ -29,7 +29,8 @@ function ClerkSignIn() {
   const { signIn, errors } = useSignIn();
   const { isLoaded } = useAuth();
   const clerk = useClerk();
-  const providers = enabledProviders(clerk, ALL_PROVIDERS);
+  const providers = enabledProviders(clerk, ALL_PROVIDERS, isLoaded);
+  const loadFailed = useLoadTimedOut(isLoaded);
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const next = safeNext(params.get("redirect_url")) ?? "/app";
@@ -126,6 +127,8 @@ function ClerkSignIn() {
     setMessage(null);
     setNote(null);
   }
+
+  if (loadFailed) return <AuthLoadFailed title={TITLE} subtitle={SUBTITLE} footer={footer} />;
 
   if (step === "code") {
     return (

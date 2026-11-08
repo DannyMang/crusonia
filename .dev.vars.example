@@ -153,12 +153,16 @@ STRIPE_WEBHOOK_SECRET=
 # CRM_SYNC_BATCH_SIZE=5
 
 # ---------------------------------------------------------------------------
-# Later: Photon iMessage approvals (Photon Stable)
+# iMessage approvals (Photon): see "iMessage approvals (Photon)" in README.md. Off by default.
 # ---------------------------------------------------------------------------
 
-# Photon Spectrum project credentials for sending/receiving iMessages.
-# photon.codes dashboard > your project (Stable) > project ID and secret.
-SPECTRUM_PROJECT_ID=
-SPECTRUM_PROJECT_SECRET=
-# Owner's phone number in E.164 (e.g. +14155550123): where approval requests are sent.
+# "true" turns it on: new approvals are queued for the bridge to text the owner, and owner replies are applied.
+# IMESSAGE_ENABLED=false
+# Shared with the bridge: signs its calls to /webhooks/photon and /webhooks/photon/poll. Generate once and give the
+# same value to the bridge: openssl rand -hex 32
+BRIDGE_SECRET=
+# Optional: the owner's phone in E.164 (e.g. +14155550123). When set, /webhooks/photon also refuses commands from any
+# other sender (the bridge already filters).
 OWNER_PHONE=
+# The Photon credentials (SPECTRUM_PROJECT_ID / SPECTRUM_PROJECT_SECRET) belong on the bridge only (bridge/.env.example),
+# never on the Worker.

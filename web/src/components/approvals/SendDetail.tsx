@@ -1,7 +1,7 @@
 // Right pane for a `send` approval: the exact draft, what the approval is bound to, why this lead, and
 // Approve & send (two-step: it emails a real person) / Edit (new version + new code) / Reject.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Link } from "react-router";
 import type { ApprovalListItem, LeadFull } from "../../api.ts";
 import { useApi } from "../../auth.tsx";
@@ -13,6 +13,12 @@ import { ActionBar, ActionButton, Bound, BindingStrip, DetailHead, ReasonRow, us
 
 type Mode = "view" | "confirm" | "edit" | "reject";
 
+/**
+ * Set by the open approval while it has unsaved edits. The page calls it before J / K move on: true means
+ * "wait, I am asking whether to discard" (an inline confirm, never a browser dialog), false means go ahead.
+ */
+export type LeaveGuard = RefObject<((go: () => void) => boolean) | null>;
+
 const SOURCE: Record<string, string> = {
   apify: "found on the web",
   agent: "added by your agent",
@@ -22,7 +28,7 @@ const SOURCE: Record<string, string> = {
   manual: "added by hand",
 };
 
-export function SendDetail({ a, now, onDecided }: { a: ApprovalListItem; now: number; onDecided: OnDecided }) {
+export function SendDetail({ a, now, onDecided, leaveGuard }: { a: ApprovalListItem; now: number; onDecided: OnDecided; leaveGuard?: LeaveGuard }) {
   const api = useApi();
   const qc = useQueryClient();
   const lead = useLead(a.lead_id ?? undefined);
@@ -76,11 +82,42 @@ export function SendDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
   };
   const cancel = () => setMode("view");
   useDisarm(mode === "confirm", useCallback(() => setMode((m) => (m === "confirm" ? "view" : m)), []));
+
+  // J / K with unsaved edits: ask inline first. Pressing J / K again (or Discard) leaves; Esc keeps editing.
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+  const leavingRef = useRef(leaving);
+  leavingRef.current = leaving;
+  const dirty = mode === "edit" && changed;
+  useEffect(() => {
+    if (!leaveGuard || !dirty) return;
+    leaveGuard.current = (go) => {
+      // Already asking: this second press is the answer.
+      if (leavingRef.current) go();
+      else setLeaving(() => go);
+      return true;
+    };
+    return () => {
+      leaveGuard.current = null;
+    };
+  }, [leaveGuard, dirty]);
+  useEffect(() => {
+    if (!dirty) setLeaving(null);
+  }, [dirty]);
+  // Keyboard users land on the question's answer (Enter discards, Esc keeps editing).
+  useEffect(() => {
+    if (leaving) document.getElementById(`discard-${a.code}`)?.focus();
+  }, [leaving, a.code]);
+  const discardAndLeave = () => {
+    const go = leaving;
+    setLeaving(null);
+    go?.();
+  };
+
   useKeys({
     a: mode === "view" || mode === "confirm" ? pressApprove : undefined,
     e: mode === "view" ? startEdit : undefined,
     r: mode === "view" ? () => setMode("reject") : undefined,
-    escape: mode !== "view" && !busy ? cancel : undefined,
+    escape: leaving ? () => setLeaving(null) : mode !== "view" && !busy ? cancel : undefined,
   });
 
   const full = lead.data;
@@ -116,7 +153,7 @@ export function SendDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
         {draft ? (
           <div className="flex shrink-0 flex-col rounded-[10px] border border-[#200D0D1A]">
             <div className="flex items-baseline gap-2.5 border-b border-b-[#200D0D14] px-3.5 py-2.5">
-              <label htmlFor={`subject-${a.code}`} className="w-13 shrink-0 text-xs/4 font-medium text-[#200D0D8C]">
+              <label htmlFor={`subject-${a.code}`} className="w-13 shrink-0 text-xs/4 font-medium text-muted">
                 Subject
               </label>
               {mode === "edit" ? (
@@ -125,6 +162,10 @@ export function SendDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
                   autoFocus
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSave) edit.mutate();
+                    if (e.key === "Escape" && !busy) cancel();
+                  }}
                   maxLength={200}
                   className="-my-1 min-w-0 grow rounded-md border border-[#200D0D26] px-2 py-1 text-sm/5 font-semibold text-ink outline-none focus:border-[#200D0D59]"
                 />
@@ -153,7 +194,7 @@ export function SendDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
             </div>
           </div>
         ) : (
-          <div className="rounded-[10px] border border-[#200D0D1A] px-3.5 py-3 text-[13px]/5 font-medium text-[#200D0D99]">
+          <div className="rounded-[10px] border border-[#200D0D1A] px-3.5 py-3 text-[13px]/5 font-medium text-muted">
             The draft for this approval is no longer available. {a.summary}
           </div>
         )}
@@ -163,7 +204,12 @@ export function SendDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
       <ActionBar
         error={approve.error ?? reject.error ?? edit.error}
         note={
-          mode === "edit" ? (
+          mode === "edit" && leaving ? (
+            <>
+              Your edits are not saved. Press <span className="text-ink">J</span> or <span className="text-ink">K</span> again to discard them,{" "}
+              <span className="text-ink">Esc</span> to keep editing.
+            </>
+          ) : mode === "edit" ? (
             <>
               Saving creates <span className="tabular-nums text-ink">v{nextVersion}</span> and voids {a.code}; you get a new code to approve.
             </>
@@ -188,6 +234,16 @@ export function SendDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
             submitLabel="Reject draft"
             placeholder="Reason for the agent (optional)"
           />
+        ) : mode === "edit" && leaving ? (
+          <>
+            <span role="alert" className="mr-1 text-sm/4.5 font-semibold text-ink">
+              Discard changes?
+            </span>
+            <ActionButton tone="danger" id={`discard-${a.code}`} onClick={discardAndLeave}>
+              Discard
+            </ActionButton>
+            <ActionButton onClick={() => setLeaving(null)}>Keep editing</ActionButton>
+          </>
         ) : mode === "edit" ? (
           <>
             <ActionButton tone="primary" loading={edit.isPending} disabled={!canSave} onClick={() => edit.mutate()} title="⌘ Enter">
@@ -230,7 +286,7 @@ function Consent({ has, full }: { has: boolean; full: LeadFull | undefined }) {
       <span className={cx("size-1.5 shrink-0 rounded-full", yes ? "bg-green" : "bg-[#B42318]")} />
       <span className="truncate font-medium text-ink">
         {yes ? (l?.consent_at ? `Opted in ${shortDate(l.consent_at)}` : "Opted in") : "No consent on file"}
-        {yes && l?.consent_text ? <span className="text-[#200D0D80]"> · {l.consent_text}</span> : null}
+        {yes && l?.consent_text ? <span className="text-faint"> · {l.consent_text}</span> : null}
       </span>
     </span>
   );
@@ -242,7 +298,7 @@ function Cited({ text }: { text: string }) {
     <>
       {text.split(/(\[\d+\])/).map((part, i) =>
         /^\[\d+\]$/.test(part) ? (
-          <span key={i} className="text-[11px] font-semibold text-green">
+          <span key={i} className="text-[11px] font-semibold text-green-dark">
             {part}
           </span>
         ) : (
@@ -260,11 +316,11 @@ function WhyThisLead({ full, loading, failed, sessionId }: { full: LeadFull | un
   return (
     <section className="flex shrink-0 flex-col gap-2 rounded-[10px] border border-panel-line bg-panel px-3.5 py-3">
       <div className="flex items-center gap-2">
-        <h3 className="text-[13px]/4 font-semibold text-ink">Why this lead</h3>
+        <h3 className="shrink-0 whitespace-nowrap text-[13px]/4 font-semibold text-ink">Why this lead</h3>
         {l?.score !== null && l?.score !== undefined ? (
           <span className="flex h-5 shrink-0 items-center rounded-full bg-lime px-1.75 text-[11px]/3.5 font-semibold tabular-nums text-ink">score {l.score}</span>
         ) : null}
-        <span className="min-w-0 grow truncate text-xs/4 font-medium text-[#200D0D8C]">{meta}</span>
+        <span className="min-w-0 grow truncate text-xs/4 font-medium text-muted">{meta}</span>
         {l ? (
           <Link to={`/app/leads/${encodeURIComponent(l.id)}`} className="shrink-0 text-xs/4 font-medium text-ink underline decoration-1 underline-offset-[3px]">
             Open lead
@@ -283,7 +339,7 @@ function WhyThisLead({ full, loading, failed, sessionId }: { full: LeadFull | un
           <Skeleton className="h-7 w-full" />
         </div>
       ) : failed || !l ? (
-        <p className="text-[13px]/4.75 font-medium text-[#200D0D99]">The research for this lead could not be loaded. The draft above is exactly what will be sent.</p>
+        <p className="text-[13px]/4.75 font-medium text-muted">The research for this lead could not be loaded. The draft above is exactly what will be sent.</p>
       ) : (
         <>
           {l.rationale ? (
@@ -297,16 +353,16 @@ function WhyThisLead({ full, loading, failed, sessionId }: { full: LeadFull | un
                 const href = safeHref(ev.source_url);
                 return (
                   <li key={ev.id} className="flex h-7 shrink-0 items-center gap-2.5 border-b border-b-panel-line last:border-b-0">
-                    <span className="w-5 shrink-0 text-[11px]/3.5 font-semibold tabular-nums text-green">[{i + 1}]</span>
+                    <span className="w-5 shrink-0 text-[11px]/3.5 font-semibold tabular-nums text-green-dark">[{i + 1}]</span>
                     <span className="min-w-0 grow truncate text-[13px]/4 font-medium text-ink" title={ev.claim}>
                       {ev.claim}
                     </span>
                     {href ? (
-                      <a href={href} target="_blank" rel="noopener noreferrer" className="max-w-[45%] shrink-0 truncate text-[11px]/3.5 text-[#200D0D99] hover:text-ink hover:underline">
+                      <a href={href} target="_blank" rel="noopener noreferrer" className="max-w-[45%] shrink-0 truncate text-[11px]/3.5 text-muted hover:text-ink hover:underline">
                         {shortUrl(ev.source_url)}
                       </a>
                     ) : (
-                      <span className="max-w-[45%] shrink-0 truncate text-[11px]/3.5 text-[#200D0D99]">{shortUrl(ev.source_url)}</span>
+                      <span className="max-w-[45%] shrink-0 truncate text-[11px]/3.5 text-muted">{shortUrl(ev.source_url)}</span>
                     )}
                   </li>
                 );
@@ -314,7 +370,7 @@ function WhyThisLead({ full, loading, failed, sessionId }: { full: LeadFull | un
             </ol>
           ) : null}
           {!l.rationale && !evidence.length ? (
-            <p className="text-[13px]/4.75 font-medium text-[#200D0D99]">No research saved for this lead yet. Every claim in a draft should link to a source the agent saved.</p>
+            <p className="text-[13px]/4.75 font-medium text-muted">No research saved for this lead yet. Every claim in a draft should link to a source the agent saved.</p>
           ) : null}
         </>
       )}

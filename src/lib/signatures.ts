@@ -79,6 +79,38 @@ export async function verifyNaive(input: {
   return { ok: false, reason: "no matching v1 signature" };
 }
 
+// The iMessage bridge (bridge/src/hmac.ts implements the same scheme with node:crypto): HMAC-SHA256 keyed by
+// BRIDGE_SECRET over `${timestamp}.${path}.${body}`, sent as `X-Crusonia-Signature: v1=<hex>` plus
+// `X-Crusonia-Timestamp`. The path ("/notify" or "/webhooks/photon") is signed so a request cannot be replayed
+// in the other direction.
+export const BRIDGE_SIGNATURE_HEADER = "x-crusonia-signature";
+export const BRIDGE_TIMESTAMP_HEADER = "x-crusonia-timestamp";
+
+export async function signBridge(secret: string, timestamp: string | number, path: string, body: string): Promise<string> {
+  return `v1=${toHex(await hmacSha256(utf8(secret), `${timestamp}.${path}.${body}`))}`;
+}
+
+export async function verifyBridge(input: {
+  secret: string;
+  path: string;
+  signature: string | undefined;
+  timestamp: string | undefined;
+  body: string;
+  now: number;
+  tolerance?: number;
+}): Promise<VerifyResult> {
+  if (!input.signature) return { ok: false, reason: "missing X-Crusonia-Signature" };
+  const time = checkTimestamp(input.timestamp, input.now, input.tolerance ?? SIGNATURE_TOLERANCE_SECONDS);
+  if (!time.ok) return time;
+  const expected = utf8(toHex(await hmacSha256(utf8(input.secret), `${input.timestamp}.${input.path}.${input.body}`)));
+  for (const entry of input.signature.split(",")) {
+    const eq = entry.indexOf("=");
+    if (eq < 0 || entry.slice(0, eq).trim() !== "v1") continue;
+    if (bytesEqual(utf8(entry.slice(eq + 1).trim().toLowerCase()), expected)) return { ok: true };
+  }
+  return { ok: false, reason: "no matching v1 signature" };
+}
+
 export async function signStripe(secret: string, timestamp: string | number, body: string): Promise<string> {
   return `t=${timestamp},v1=${toHex(await hmacSha256(utf8(secret), `${timestamp}.${body}`))}`;
 }

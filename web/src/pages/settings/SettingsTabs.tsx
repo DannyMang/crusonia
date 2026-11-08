@@ -18,7 +18,7 @@ export function SettingsTabs() {
           className={({ isActive }) =>
             cx(
               "-mb-px flex h-9 items-center text-sm/4.5",
-              isActive ? "border-b-[1.5px] border-b-ink font-semibold text-ink" : "pb-0.5 font-medium text-[#200D0D99] hover:text-ink",
+              isActive ? "border-b-[1.5px] border-b-ink font-semibold text-ink" : "pb-0.5 font-medium text-muted hover:text-ink",
             )
           }
         >

@@ -1,0 +1,24 @@
+{
+  "name": "crusonia-bridge",
+  "private": true,
+  "type": "module",
+  "description": "Always-on iMessage bridge between Photon Spectrum (Stable) and the Crusonia Worker: owner approvals by text.",
+  "license": "MIT",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "dev:mock": "SPECTRUM_MODE=mock bun src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check-history": "bun deploy/check-history.ts"
+  },
+  "dependencies": {
+    "@spectrum-ts/core": "12.14.0",
+    "@spectrum-ts/imessage": "12.14.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "bun-types": "1.4.4",
+    "typescript": "6.0.3",
+    "@photon-ai/advanced-imessage": "2.5.0"
+  }
+}

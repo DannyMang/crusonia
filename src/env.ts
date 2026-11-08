@@ -74,9 +74,15 @@ export interface Env {
   // Leads synced per target per cron run (default 5). Keep it small on the Workers Free plan (50 subrequests).
   CRM_SYNC_BATCH_SIZE?: string;
 
-  // secrets: later (Photon / iMessage)
-  SPECTRUM_PROJECT_ID?: string;
-  SPECTRUM_PROJECT_SECRET?: string;
+  // iMessage approvals through Photon (src/services/imessage.ts, bridge/). The Photon credentials
+  // (SPECTRUM_PROJECT_ID / SPECTRUM_PROJECT_SECRET) live only on the bridge, never on the Worker.
+  // The bridge only calls the Worker (it accepts no inbound traffic), so the Worker needs no bridge URL.
+  // "true" turns it on (default off): new approvals and expiry reminders are texted, owner replies are applied.
+  IMESSAGE_ENABLED?: string;
+  // Shared HMAC secret signing the bridge's calls to /webhooks/photon and /webhooks/photon/poll. `openssl rand -hex 32`.
+  BRIDGE_SECRET?: string;
+  // Owner's phone in E.164. Optional on the Worker: when set, /webhooks/photon also refuses any other sender
+  // (the bridge already filters; this is defense in depth).
   OWNER_PHONE?: string;
 }
 

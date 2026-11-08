@@ -88,6 +88,7 @@ export async function getSummary(sql: Sql, env: Env) {
           (select count(*)::int from approvals where status = 'pending' and expires_at > now()) as pending_total,
           (select count(*)::int from drafts d join leads l on l.id = d.lead_id
              where d.channel <> 'email' and d.status = 'open' and l.stage <> 'unsubscribed') as tasks_open,
+          (select count(*)::int from approvals where status = 'pending' and expires_at > now() and kind = 'send') as pending_sends,
           -- Credits charged in the last 7 days (agent sessions and Apify runs, at the usage markup).
           (select coalesce(-sum(amount), 0)::text from credit_ledger
              where reason = 'usage' and created_at >= now() - interval '7 days') as week_credits,
@@ -143,6 +144,8 @@ export async function getSummary(sql: Sql, env: Env) {
       subject: a.draft?.subject ?? null,
     })),
     pending_approvals_total: counts?.pending_total ?? 0,
+    // Drafts (send approvals) only; the rest are tool calls and agent questions.
+    pending_sends_total: counts?.pending_sends ?? 0,
     active_workflows: workflows.filter((w) => w.active_runs > 0),
     recent_replies: replies.data,
     // week_usd is what the last 7 days cost in credits (usage at the markup), not raw provider cost: null until

@@ -146,7 +146,7 @@ function Editor({ draft, setDraft }: { draft: ProfileDraft; setDraft: SetDraft }
       <aside className="flex w-full shrink-0 flex-col gap-4 lg:w-85">
         <Sharpen />
         <RunCard draft={draft} validate={validate} />
-        <Link to="/onboarding/1" className="flex items-center justify-center gap-1.5 text-[13px]/4 font-medium text-[#200D0D99] hover:text-ink">
+        <Link to="/onboarding/1" className="flex items-center justify-center gap-1.5 text-[13px]/4 font-medium text-muted hover:text-ink">
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden className="shrink-0">
             <path d="M10 4L6 8l4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -216,7 +216,7 @@ function TextCard({
 // ---------- segments ----------
 
 function CountChip({ n }: { n: number }) {
-  return <span className="flex h-4.5 items-center rounded-full bg-[#200D0D14] px-1.5 text-xs/3 font-medium tabular-nums text-[#200D0D94]">{n}</span>;
+  return <span className="flex h-4.5 items-center rounded-full bg-[#200D0D14] px-1.5 text-xs/3 font-medium tabular-nums text-muted">{n}</span>;
 }
 
 function AddButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {
@@ -270,7 +270,7 @@ function Segments({ segments, site, errorKey, onChange }: { segments: SegmentDra
           />
         ))
       ) : (
-        <p className="rounded-[10px] border border-dashed border-[#200D0D26] px-4 py-3.5 text-[13px]/5 font-medium text-[#200D0D8C]">
+        <p className="rounded-[10px] border border-dashed border-[#200D0D26] px-4 py-3.5 text-[13px]/5 font-medium text-muted">
           No segments yet. A segment is one group you sell to, like “Seed-stage devtools, 10 to 50 people, founders and heads of growth”. Optional, but
           it helps the agent search.
         </p>
@@ -300,7 +300,7 @@ function SegmentCard({
   return (
     <div className={cx("flex flex-col gap-3 rounded-[10px] border p-4", nameError ? "border-[#B42318]" : "border-[#200D0D1A]")}>
       <div className="flex items-center gap-2">
-        <span className="w-4.5 shrink-0 text-xs/4 font-medium tabular-nums text-[#200D0D8C]">{String(i + 1).padStart(2, "0")}</span>
+        <span className="w-4.5 shrink-0 text-xs/4 font-medium tabular-nums text-muted">{String(i + 1).padStart(2, "0")}</span>
         <label className="flex min-w-0 cursor-text items-center gap-2">
           <span className="sr-only">Segment name</span>
           <InlineInput
@@ -325,19 +325,19 @@ function SegmentCard({
       ) : null}
       <div className="flex flex-col gap-2.5 pl-6.5 sm:flex-row">
         <div className="flex w-full shrink-0 flex-col gap-1.25 sm:w-30">
-          <label htmlFor={`${id}-size`} className="text-xs/4 font-medium text-[#200D0D80]">
+          <label htmlFor={`${id}-size`} className="text-xs/4 font-medium text-faint">
             Company size
           </label>
           <BoxInput id={`${id}-size`} value={s.company_size} placeholder="10–50" onChange={(e) => set({ company_size: e.target.value })} className="tabular-nums" />
         </div>
         <div className="flex w-full shrink-0 flex-col gap-1.25 sm:w-40">
-          <label htmlFor={`${id}-industry`} className="text-xs/4 font-medium text-[#200D0D80]">
+          <label htmlFor={`${id}-industry`} className="text-xs/4 font-medium text-faint">
             Industry
           </label>
           <BoxInput id={`${id}-industry`} value={s.industry} placeholder="Developer tools" onChange={(e) => set({ industry: e.target.value })} />
         </div>
         <div className="flex min-w-0 grow basis-0 flex-col gap-1.25">
-          <label htmlFor={`${id}-roles`} className="text-xs/4 font-medium text-[#200D0D80]">
+          <label htmlFor={`${id}-roles`} className="text-xs/4 font-medium text-faint">
             Roles
           </label>
           <RolesInput id={`${id}-roles`} roles={s.roles} onChange={(roles) => set({ roles })} />
@@ -369,7 +369,7 @@ function Signals({ signals, site, onChange }: { signals: SignalDraft[]; site: st
           + Add signal
         </AddButton>
       </div>
-      <p className="pb-2 text-[13px]/4.5 font-medium text-[#200D0D99]">
+      <p className="pb-2 text-[13px]/4.5 font-medium text-muted">
         Leads showing one of these get researched first.{signals.some((s) => !s.checked) ? " Unchecked ones are not saved." : ""}
       </p>
       {signals.length ? (
@@ -394,7 +394,7 @@ function Signals({ signals, site, onChange }: { signals: SignalDraft[]; site: st
                   value={s.description}
                   placeholder="What it looks like, e.g. an SDR job post at a company with no sales team yet"
                   onChange={(e) => set(s.key, { description: e.target.value })}
-                  className="-mx-1 rounded-md px-1 text-[13px]/4.5 font-medium text-[#200D0D99] placeholder:text-[#200D0D4D] hover:bg-[#200D0D08] focus:[box-shadow:0_0_0_1px_#200D0D,0_0_0_4px_#BDE68966]"
+                  className="-mx-1 rounded-md px-1 text-[13px]/4.5 font-medium text-muted placeholder:text-[#200D0D4D] hover:bg-[#200D0D08] focus:[box-shadow:0_0_0_1px_#200D0D,0_0_0_4px_#BDE68966]"
                 />
               </label>
             </div>
@@ -402,7 +402,7 @@ function Signals({ signals, site, onChange }: { signals: SignalDraft[]; site: st
           </div>
         ))
       ) : (
-        <p className="mb-4 rounded-[10px] border border-dashed border-[#200D0D26] px-4 py-3.5 text-[13px]/5 font-medium text-[#200D0D8C]">
+        <p className="mb-4 rounded-[10px] border border-dashed border-[#200D0D26] px-4 py-3.5 text-[13px]/5 font-medium text-muted">
           No signals yet. A signal is something you can see from outside that says a company may buy now, like “hiring their first SDR” or “raised
           a Series A in the last 90 days”.
         </p>
@@ -419,9 +419,9 @@ function Sharpen() {
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
           <h2 className={cardTitle}>Make it sharper</h2>
-          <span className="flex h-5 items-center rounded-full bg-pill px-2 text-[11px]/3.5 font-medium text-[#200D0D99]">Optional</span>
+          <span className="flex h-5 items-center rounded-full bg-pill px-2 text-[11px]/3.5 font-medium text-muted">Optional</span>
         </div>
-        <p className="text-[13px]/4.5 font-medium text-[#200D0D99]">Show us who already bought. The agent looks for more like them and skips existing customers.</p>
+        <p className="text-[13px]/4.5 font-medium text-muted">Show us who already bought. The agent looks for more like them and skips existing customers.</p>
       </div>
       <ConnectRow letter="H" label="Connect HubSpot" />
       <ConnectRow letter="N" label="Connect Notion" />
@@ -501,11 +501,11 @@ function RunCard({ draft, validate }: { draft: ProfileDraft; validate: () => boo
     <section className="flex flex-col gap-4 rounded-xl border border-panel-line bg-panel p-6" aria-label="Summary">
       <dl className="flex flex-col gap-2.5 text-[13px]/4 font-medium">
         <div className="flex justify-between">
-          <dt className="text-[#200D0D99]">Segments</dt>
+          <dt className="text-muted">Segments</dt>
           <dd className="tabular-nums text-ink">{segments}</dd>
         </div>
         <div className="flex justify-between">
-          <dt className="text-[#200D0D99]">Buying signals</dt>
+          <dt className="text-muted">Buying signals</dt>
           <dd className="tabular-nums text-ink">{signals}</dd>
         </div>
       </dl>
@@ -514,7 +514,7 @@ function RunCard({ draft, validate }: { draft: ProfileDraft; validate: () => boo
         <div role="status" className="flex flex-col gap-3 rounded-[10px] border border-panel-line bg-white px-4 py-3.5">
           <div className="flex flex-col gap-0.5 text-[13px]/5">
             <div className="font-semibold text-ink">Your profile is saved</div>
-            <div className="font-medium text-[#200D0D99]">Finding leads needs the Naive agent; coming online. Your agents start from this profile as soon as it is live.</div>
+            <div className="font-medium text-muted">Finding leads needs the Naive agent; coming online. Your agents start from this profile as soon as it is live.</div>
           </div>
           <Link to="/app" className={cx(bigButton, "h-10 text-sm/4.5")}>
             Go to dashboard
@@ -528,7 +528,7 @@ function RunCard({ draft, validate }: { draft: ProfileDraft; validate: () => boo
             {phase === "saving" ? "Saving your profile…" : phase === "finding" ? "Starting the search…" : run ? "Save and see your leads" : `Find my first ${TARGET} leads`}
             {phase === "idle" ? <ArrowIcon /> : null}
           </button>
-          <p className="text-center text-xs/4.25 font-medium text-[#200D0D8C]">Research only. Nothing sends without your OK.</p>
+          <p className="text-center text-xs/4.25 font-medium text-muted">Research only. Nothing sends without your OK.</p>
         </>
       )}
     </section>

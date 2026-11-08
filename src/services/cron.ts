@@ -1,7 +1,8 @@
 // The minute cron: expire stale approvals, reconcile Naive sessions that missed a webhook, settle sends
-// AgentMail did not confirm, drain the CRM sync queue, debit finished sessions and Apify runs that still owe credits, and expire
-// unused plan credits after their rollover month, complete finished agent traces and prune old ones. Each step is
-// independent; one failing does not skip the others.
+// AgentMail did not confirm, drain the CRM sync queue, debit finished sessions and Apify runs that still owe credits, expire
+// unused plan credits after their rollover month, complete finished agent traces and prune old ones, and prune old
+// iMessage notices. Each step is independent; one failing does not skip the others. (iMessage notices themselves go
+// out when the bridge polls, not from here.)
 import { expireCredits } from "../billing/expiry.ts";
 import { settleApifyUsage, settleUsage } from "../billing/usage.ts";
 import { getSql } from "../db.ts";
@@ -9,6 +10,7 @@ import type { Env } from "../env.ts";
 import type { FetchFn } from "../providers/http.ts";
 import { expireStaleApprovals } from "./approvals.ts";
 import { runCrmSync } from "./crm-sync.ts";
+import { pruneOutbox } from "./imessage.ts";
 import { reconcileSending } from "./send.ts";
 import { pruneTraces, syncFinishedTraces } from "./traces.ts";
 import { reconcileSessions } from "./workflows.ts";
@@ -31,6 +33,8 @@ export async function runScheduled(env: Env, fetchFn?: FetchFn): Promise<Record<
     // Agent traces: read finished sessions to the end, and drop traces past TRACE_RETENTION_DAYS.
     ["synced_traces", () => syncFinishedTraces(sql, env, fetchFn)],
     ["pruned_trace_events", () => pruneTraces(sql, env)],
+    // Old iMessage notices (only while iMessage approvals are on).
+    ["pruned_imessage_notices", () => pruneOutbox(sql, env)],
   ];
   for (const [name, step] of steps) {
     try {

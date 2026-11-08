@@ -28,13 +28,14 @@ export function DetailHead({
   const wf = workflowOf(a);
   const urgent = msLeft(a, now) < SOON_MS;
   return (
-    <div className="flex shrink-0 items-start justify-between gap-4 border-b border-b-[#200D0D1A] px-5 pb-3.5 pt-4">
+    // Below 1280px the expiry and code pills drop under a long title instead of cutting it short.
+    <div className="flex shrink-0 flex-wrap items-start justify-between gap-x-4 gap-y-2.5 border-b border-b-[#200D0D1A] px-5 pb-3.5 pt-4 xl:flex-nowrap">
       <div className="flex min-w-0 flex-col gap-1.25">
         <h2 className="truncate text-[15px]/5 font-semibold text-ink">
           {title}
-          {aside ? <span className="font-medium text-[#200D0D8C]"> · {aside}</span> : null}
+          {aside ? <span className="font-medium text-muted"> · {aside}</span> : null}
         </h2>
-        <div className="truncate text-xs/4 font-medium text-[#200D0D8C]">
+        <div className="truncate text-xs/4 font-medium text-muted">
           {wf ? `${wf} · ` : null}
           {sessionId ? (
             <>
@@ -59,7 +60,7 @@ export function DetailHead({
           </span>
         </div>
         <div className="flex h-7 items-center gap-1.5 rounded-full border border-[#200D0D26] px-2.5">
-          <span className="text-xs/4 font-medium text-[#200D0D8C]">Code</span>
+          <span className="text-xs/4 font-medium text-muted">Code</span>
           <span className="tabular-nums text-xs/4 font-semibold text-ink">{a.code}</span>
         </div>
       </div>
@@ -70,7 +71,8 @@ export function DetailHead({
 /** The "Bound to" strip: exactly what this approval covers. */
 export function BindingStrip({ children }: { children: ReactNode }) {
   return (
-    <div className="flex h-10 shrink-0 items-center gap-4.5 overflow-hidden whitespace-nowrap border-b border-b-[#200D0D1A] bg-[#200D0D04] px-5 text-xs/4 font-[525] text-[#200D0D80]">
+    // Below 1280px the detail pane is narrow, so the bindings wrap onto a second line instead of being cut off.
+    <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-4.5 gap-y-1 overflow-hidden whitespace-nowrap border-b border-b-[#200D0D1A] bg-[#200D0D04] px-5 py-2 text-xs/4 font-[525] text-faint xl:h-10 xl:flex-nowrap xl:py-0">
       <span className="flex shrink-0 items-center gap-1.5">
         <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden className="shrink-0">
           <rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="rgb(32 13 13 / 60%)" strokeWidth="2" />
@@ -130,13 +132,13 @@ export function ActionBar({ children, note, error }: { children: ReactNode; note
   const e = error ? errorCopy(error, "this decision") : null;
   return (
     <div className="flex shrink-0 flex-col gap-2.5 border-t border-t-[#200D0D1A] px-5 pb-3.5 pt-3">
-      <div className="flex min-h-9 items-center gap-2">{children}</div>
+      <div className="flex min-h-9 flex-wrap items-center gap-2">{children}</div>
       {e ? (
         <div role="alert" className="text-xs/4 font-medium text-[#B42318]">
           {e.title}: {e.body}
         </div>
       ) : null}
-      <div className="flex items-center gap-4 text-xs/4 font-medium text-[#200D0D8C]">
+      <div className="flex items-center gap-4 text-xs/4 font-medium text-muted">
         <span className="min-w-0">{note}</span>
         <span className="grow" />
         <span className="shrink-0">
@@ -193,7 +195,7 @@ export function ReasonRow({
 }) {
   return (
     <form
-      className="flex grow items-center gap-2"
+      className="flex min-w-0 grow items-center gap-2"
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit();

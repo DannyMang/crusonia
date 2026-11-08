@@ -13,7 +13,7 @@ import { CrumbBar } from "./connect/CrumbBar.tsx";
 import { SettingsTabs } from "./settings/SettingsTabs.tsx";
 
 const cardTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
-const muted = "text-[13px]/5 font-medium text-[#200D0D99]";
+const muted = "text-[13px]/5 font-medium text-muted";
 
 export default function Settings() {
   return (
@@ -24,7 +24,7 @@ export default function Settings() {
           <SettingsTabs />
           <div className="flex flex-col gap-2 pb-2 pt-3">
             <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">General</h1>
-            <p className="text-[13px]/4.5 font-medium text-[#200D0D99]">Workspace controls. Changes apply right away.</p>
+            <p className="text-[13px]/4.5 font-medium text-muted">Workspace controls. Changes apply right away.</p>
           </div>
           <div className="flex flex-col gap-6">
             <PauseCard />
@@ -145,8 +145,8 @@ function Suppressions() {
         rows.map((r) => (
           <div key={r.email} className="flex items-center gap-4 border-t border-t-[#200D0D0F] px-6 py-3">
             <div className="grow truncate tabular-nums text-[13px]/4 text-ink">{r.email}</div>
-            <div className="w-28 text-xs/4 font-medium text-[#200D0D8C]">{r.reason}</div>
-            <div className="w-28 text-xs/4 font-medium text-[#200D0D8C]">{longDate(r.created_at)}</div>
+            <div className="w-28 text-xs/4 font-medium text-muted">{r.reason}</div>
+            <div className="w-28 text-xs/4 font-medium text-muted">{longDate(r.created_at)}</div>
             <Button variant="danger" size="sm" onClick={() => window.confirm(`Allow ${r.email} to be contacted again?`) && remove.mutate(r.email)}>
               Remove
             </Button>

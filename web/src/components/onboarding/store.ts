@@ -4,6 +4,7 @@
 // React StrictMode's double effect, remounts and back/forward navigation never start a second one.
 import { useSyncExternalStore } from "react";
 import { isApiError, type Api, type Profile } from "../../api.ts";
+import { cleanWebsite } from "../../lib/website.ts";
 
 const KEY = "crusonia.onboarding";
 
@@ -113,13 +114,18 @@ export function isComingOnline(e: StoredError | undefined) {
   return (e.status === 503 && (e.code === "not_configured" || e.code === "schema_out_of_date")) || (e.status === 404 && e.code === "not_found" && e.message.startsWith("No route for"));
 }
 
+/** A website that passes lib/website.ts, or a description. A stored url from an older build is checked again. */
+export function hasValidInput(s: Pick<Onboarding, "url" | "description">): boolean {
+  return s.url ? cleanWebsite(s.url) !== null : Boolean(s.description);
+}
+
 /**
  * Starts the paid crawl and the profile proposal for the current run, unless they already started.
  * Returns false when there is nothing to read (the user has not been through step 1).
  */
 export function ensureStarted(api: Api): boolean {
   const s = state;
-  if (!s.url && !s.description) return false;
+  if (!hasValidInput(s)) return false;
   const runId = s.runId;
   const stillCurrent = () => state.runId === runId;
 

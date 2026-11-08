@@ -65,11 +65,11 @@ export function ToolDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
       <div className="flex min-h-0 grow flex-col gap-3 overflow-y-auto px-5 py-3.5">
         <div className="flex shrink-0 flex-col rounded-[10px] border border-[#200D0D1A]">
           <div className="flex items-baseline gap-2.5 border-b border-b-[#200D0D14] px-3.5 py-2.5">
-            <div className="w-13 shrink-0 text-xs/4 font-medium text-[#200D0D8C]">Tool</div>
+            <div className="w-13 shrink-0 text-xs/4 font-medium text-muted">Tool</div>
             <div className="text-sm/5 font-semibold text-ink">{tool}</div>
           </div>
           <div className="flex items-baseline gap-2.5 px-3.5 pb-3 pt-2.5">
-            <div className="w-13 shrink-0 text-xs/4 font-medium text-[#200D0D8C]">Input</div>
+            <div className="w-13 shrink-0 text-xs/4 font-medium text-muted">Input</div>
             <pre className="min-w-0 grow whitespace-pre-wrap break-words font-sans text-[13px]/5 font-medium tabular-nums text-ink">
               {args === undefined ? "No input" : jsonText(args)}
             </pre>
@@ -83,7 +83,7 @@ export function ToolDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
           </p>
           <fieldset className="flex items-center gap-2 pt-1">
             <legend className="sr-only">Allow for</legend>
-            <span className="text-xs/4 font-medium text-[#200D0D8C]">Allow for</span>
+            <span className="text-xs/4 font-medium text-muted">Allow for</span>
             {(
               [
                 ["call", "This call only"],
@@ -94,7 +94,7 @@ export function ToolDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
                 key={v}
                 className={cx(
                   "flex h-7 cursor-pointer items-center rounded-full border px-3 text-xs/4 font-medium has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-green",
-                  scope === v ? "border-ink bg-white text-ink" : "border-[#200D0D1F] text-[#200D0D99] hover:text-ink",
+                  scope === v ? "border-ink bg-white text-ink" : "border-[#200D0D1F] text-muted hover:text-ink",
                 )}
               >
                 <input type="radio" name={`scope-${a.code}`} value={v} checked={scope === v} onChange={() => setScope(v)} className="sr-only" />
@@ -187,7 +187,7 @@ export function QuestionDetail({ a, now, onDecided }: { a: ApprovalListItem; now
                 <Field key={f.key} field={f} value={answers[f.key]} onChange={(v) => setAnswers((prev) => ({ ...prev, [f.key]: v }))} />
               ))
             ) : (
-              <p className="text-[13px]/5 font-medium text-[#200D0D99]">The agent did not send any fields to answer. It may ask again with a new code.</p>
+              <p className="text-[13px]/5 font-medium text-muted">The agent did not send any fields to answer. It may ask again with a new code.</p>
             )}
           </div>
         </div>
@@ -196,7 +196,7 @@ export function QuestionDetail({ a, now, onDecided }: { a: ApprovalListItem; now
         <ActionButton tone="primary" kbd="A" type="submit" form={`answer-${a.code}`} loading={send.isPending} disabled={!complete}>
           Send answer
         </ActionButton>
-        {!complete && fields.length ? <span className="pl-1 text-xs/4 font-medium text-[#200D0D8C]">Answer every field to send.</span> : null}
+        {!complete && fields.length ? <span className="pl-1 text-xs/4 font-medium text-muted">Answer every field to send.</span> : null}
       </ActionBar>
     </>
   );
@@ -214,7 +214,7 @@ function Field({ field: f, value, onChange }: { field: QuestionField; value: str
       <fieldset className="flex flex-col gap-2">
         <legend className="pb-2 text-[13px]/4 font-medium text-ink">
           {f.label}
-          {f.multiple ? <span className="text-[#200D0D8C]"> · pick any</span> : null}
+          {f.multiple ? <span className="text-muted"> · pick any</span> : null}
         </legend>
         <div className="flex flex-wrap gap-2">
           {f.options.map((o) => {
@@ -224,7 +224,7 @@ function Field({ field: f, value, onChange }: { field: QuestionField; value: str
                 key={o}
                 className={cx(
                   "flex h-8 cursor-pointer items-center rounded-full border px-3.5 text-[13px]/4 font-medium has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-green",
-                  on ? "border-ink bg-white text-ink" : "border-[#200D0D1F] text-[#200D0D99] hover:text-ink",
+                  on ? "border-ink bg-white text-ink" : "border-[#200D0D1F] text-muted hover:text-ink",
                 )}
               >
                 <input type={f.multiple ? "checkbox" : "radio"} name={id} value={o} checked={on} onChange={() => toggle(o)} className="sr-only" />

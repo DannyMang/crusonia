@@ -30,8 +30,13 @@ export type ApprovalRow = {
   created_at: Date;
 };
 
-/** `sendTtlMinutes`: lifetime of the send approval an edit opens (SEND_APPROVAL_TTL_HOURS). */
-export type Deps = { sql: Sql; env: Env; fetch?: FetchFn; actor: string; sendTtlMinutes: number };
+/**
+ * `sendTtlMinutes`: lifetime of the send approval an edit opens (SEND_APPROVAL_TTL_HOURS).
+ * `via`: the channel recorded as `decided_via` and on the audit events ('api' by default, 'imessage' from the bridge).
+ */
+export type Deps = { sql: Sql; env: Env; fetch?: FetchFn; actor: string; sendTtlMinutes: number; via?: DecisionChannel };
+
+export type DecisionChannel = "api" | "imessage";
 
 export const APPROVAL_STATUSES = ["pending", "approved", "rejected", "answered", "expired"] as const;
 
@@ -76,6 +81,7 @@ const eventRow = (sql: Sql, leadId: string | null, kind: string, data: Record<st
 
 export async function rejectApproval(deps: Deps, code: string, reason: string | undefined) {
   const { sql, actor } = deps;
+  const via = deps.via ?? "api";
   const approval = await getApproval(sql, code);
   if (approval.kind === "tool") return resolveTool(deps, approval, { decision: "deny", reason });
   if (approval.kind === "question") {
@@ -83,7 +89,7 @@ export async function rejectApproval(deps: Deps, code: string, reason: string | 
   }
   const rows = await sql`
     with a as (
-      update approvals set status = 'rejected', decided_at = now(), decided_via = 'api', answer = ${reason ?? null}
+      update approvals set status = 'rejected', decided_at = now(), decided_via = ${via}, answer = ${reason ?? null}
       where code = ${approval.code} and status = 'pending'
       returning *
     ), d as (
@@ -91,7 +97,7 @@ export async function rejectApproval(deps: Deps, code: string, reason: string | 
     ), ev as (
       insert into events (lead_id, kind, data)
       select lead_id, 'approval_rejected',
-             jsonb_build_object('via', 'api', 'code', code, 'draft_id', draft_id, 'reason', ${reason ?? null}::text, 'actor', ${actor}::text)
+             jsonb_build_object('via', ${via}::text, 'code', code, 'draft_id', draft_id, 'reason', ${reason ?? null}::text, 'actor', ${actor}::text)
       from a
     )
     select * from a`;
@@ -125,7 +131,7 @@ export async function editApproval(deps: Deps, code: string, edit: { subject?: s
   return createDraft(
     sql,
     { lead_id: approval.lead_id!, subject: edit.subject ?? draft.subject, body: edit.body ?? draft.body },
-    { ttlMinutes: deps.sendTtlMinutes, via: "api", actor: deps.actor },
+    { ttlMinutes: deps.sendTtlMinutes, via: deps.via ?? "api", actor: deps.actor },
   );
 }
 
@@ -145,11 +151,12 @@ export type ToolDecision = { decision: "allow" | "deny"; reason?: string; scope?
 
 export async function resolveTool(deps: Deps, approval: ApprovalRow, decision: ToolDecision) {
   const { sql, actor } = deps;
+  const via = deps.via ?? "api";
   if (approval.kind !== "tool") throw new ApiError(409, "wrong_kind", `This is a ${approval.kind} approval`);
   const client = naive(deps);
   const status = decision.decision === "allow" ? "approved" : "rejected";
   const claimed = await sql`
-    update approvals set status = ${status}, decided_at = now(), decided_via = 'api', answer = ${JSON.stringify(decision)}
+    update approvals set status = ${status}, decided_at = now(), decided_via = ${via}, answer = ${JSON.stringify(decision)}
     where code = ${approval.code} and status = 'pending' and expires_at > now()
     returning *`;
   if (!claimed[0]) throw notPending(approval);
@@ -169,7 +176,7 @@ export async function resolveTool(deps: Deps, approval: ApprovalRow, decision: T
   await sql.transaction([
     sql`update naive_sessions set status = 'running', updated_at = now() where id = ${approval.naive_session_id}`,
     eventRow(sql, approval.lead_id, "naive_tool_decided", {
-      via: "api",
+      via,
       code: approval.code,
       session_id: approval.naive_session_id,
       tool: approval.payload?.name,
@@ -182,6 +189,7 @@ export async function resolveTool(deps: Deps, approval: ApprovalRow, decision: T
 
 export async function answerQuestion(deps: Deps, approval: ApprovalRow, answers: Record<string, string | string[]>) {
   const { sql, actor } = deps;
+  const via = deps.via ?? "api";
   if (approval.kind !== "question") throw new ApiError(409, "wrong_kind", `This is a ${approval.kind} approval`);
   const fields = ((approval.payload?.question as PendingAction["question"])?.fields ?? []) as { key: string; multiple?: boolean }[];
   const keys = new Set(fields.map((f) => f.key));
@@ -195,7 +203,7 @@ export async function answerQuestion(deps: Deps, approval: ApprovalRow, answers:
   }
   const client = naive(deps);
   const claimed = await sql`
-    update approvals set status = 'answered', decided_at = now(), decided_via = 'api', answer = ${JSON.stringify(answers)}
+    update approvals set status = 'answered', decided_at = now(), decided_via = ${via}, answer = ${JSON.stringify(answers)}
     where code = ${approval.code} and status = 'pending' and expires_at > now()
     returning *`;
   if (!claimed[0]) throw notPending(approval);
@@ -208,7 +216,7 @@ export async function answerQuestion(deps: Deps, approval: ApprovalRow, answers:
   }
   await sql.transaction([
     sql`update naive_sessions set status = 'running', updated_at = now() where id = ${approval.naive_session_id}`,
-    eventRow(sql, approval.lead_id, "naive_question_answered", { via: "api", code: approval.code, session_id: approval.naive_session_id, actor }),
+    eventRow(sql, approval.lead_id, "naive_question_answered", { via, code: approval.code, session_id: approval.naive_session_id, actor }),
   ]);
   return { approval: claimed[0] as ApprovalRow };
 }

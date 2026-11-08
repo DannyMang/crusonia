@@ -63,7 +63,7 @@ export function SetupCard({ token, mcpUrl = MCP_URL, keysShipped = true }: { tok
     <Card className="flex flex-col gap-5 p-6">
       <div className="flex flex-col gap-2.5">
         <h2 className="text-[15px]/4.5 font-medium text-ink">Setup</h2>
-        <p className="text-[13px]/4.5 font-medium text-[#200D0D99]">
+        <p className="text-[13px]/4.5 font-medium text-muted">
           Put your API key in <C>CRUSONIA_MCP_TOKEN</C>
           {token ? " (filled in with the key you just created)" : keysShipped ? " (create one under API keys)" : " (the owner token for now)"}, then add Crusonia to your
           agent. Add the line to{" "}
@@ -76,11 +76,11 @@ export function SetupCard({ token, mcpUrl = MCP_URL, keysShipped = true }: { tok
         <section key={c.name} aria-label={c.name} className="flex flex-col gap-2.5 border-t border-t-[#200D0D14] pt-5">
           <div className="flex items-center gap-2.5">
             <span className="flex h-6.5 shrink-0 items-center rounded-full bg-lime px-3 text-[13px]/4 font-medium text-ink">{c.name}</span>
-            <span className="grow text-xs/4 font-medium text-[#200D0D99]">{c.where ?? ""}</span>
+            <span className="grow text-xs/4 font-medium text-muted">{c.where ?? ""}</span>
             <CopyChip text={c.text} />
           </div>
           <pre className="whitespace-pre-wrap rounded-[10px] bg-[#200D0D0A] px-4 py-3 text-[13px]/5 text-ink [overflow-wrap:anywhere]">{c.shown ?? c.text}</pre>
-          <p className="text-xs/4.25 font-medium text-[#200D0D80]">{c.note}</p>
+          <p className="text-xs/4.25 font-medium text-faint">{c.note}</p>
         </section>
       ))}
 
@@ -163,7 +163,7 @@ function TestConnection() {
       </span>
       <div role="status" aria-live="polite" className="flex min-w-0 grow basis-0 flex-col gap-0.5">
         <div className="text-[13px]/4.5 font-medium tabular-nums text-ink">{title}</div>
-        <div className="text-xs/4 font-medium text-[#200D0D8C]">{body}</div>
+        <div className="text-xs/4 font-medium text-muted">{body}</div>
       </div>
       <button
         type="button"
