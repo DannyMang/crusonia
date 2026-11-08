@@ -33,7 +33,7 @@ function CheckMark({ size }: { size: number }) {
 
 export function CursorButton({ mcpUrl, size = "lg" }: { mcpUrl?: string; size?: Size }) {
   return (
-    <a href={cursorInstallUrl(mcpUrl)} className={button(size)} title="Opens Cursor to install the crusonia MCP server">
+    <a href={cursorInstallUrl(mcpUrl)} target="_blank" rel="noreferrer" className={button(size)} title="Opens Cursor to install the crusonia MCP server">
       <BrandLogo name="cursor" size={markSize[size]} />
       Add to Cursor
     </a>

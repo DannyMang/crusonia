@@ -33,6 +33,6 @@ the word mark only; logos need written permission) and Neon's (named in text onl
 
 **Needs the owner's call:** HubSpot, Anthropic (Claude) and Clerk ask for permission before their logos are shown on
 another website, and Notion asks integrations to use its "Made for Notion" badge instead of the cube. Until that is
-settled, the marks above are the correct official files, but showing them in public is the owner's decision. Public pages
-show the first three as plain names: `SHOW_APPROVAL_LOGOS_ON_PUBLIC_PAGES` in `web/src/lib/public-logos.ts` is the one
+settled, the marks above are the correct official files, but showing them in public is the owner's decision. The owner chose
+to show Claude's on public pages. Public pages show HubSpot and Clerk as plain names: `SHOW_APPROVAL_LOGOS_ON_PUBLIC_PAGES` in `web/src/lib/public-logos.ts` is the one
 switch, off until the approvals are in. Logos inside the signed-in app stay.

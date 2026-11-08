@@ -230,13 +230,13 @@ describe("Terms and Privacy", () => {
 });
 
 describe("logos on public pages", () => {
-  test("HubSpot, Anthropic and Clerk show plain names until the one constant flips", () => {
+  test("HubSpot and Clerk show plain names until the one constant flips", () => {
     expect(SHOW_APPROVAL_LOGOS_ON_PUBLIC_PAGES).toBe(false);
-    for (const name of ["hubspot", "claude", "clerk"] as const) {
+    for (const name of ["hubspot", "clerk"] as const) {
       expect(publicLogoAllowed(name)).toBe(false);
       expect(publicLogoAllowed(name, true)).toBe(true);
     }
-    for (const name of ["apify", "cursor", "codex", "github", "google", "notion"] as const) expect(publicLogoAllowed(name)).toBe(true);
+    for (const name of ["apify", "claude", "cursor", "codex", "github", "google", "notion"] as const) expect(publicLogoAllowed(name)).toBe(true);
   });
 
   test("the landing goes through it, and the signed-in app doesn't", async () => {
