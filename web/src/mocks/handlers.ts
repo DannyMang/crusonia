@@ -5,6 +5,7 @@ import { coreHandlers } from "./core.ts";
 import { keyHandlers } from "./keys.ts";
 import { leadHandlers } from "./leads.ts";
 import { onboardingHandlers } from "./onboarding.ts";
+import { summaryHandlers } from "./summary.ts";
 import { workflowHandlers } from "./workflows.ts";
 
 export const handlers = [
@@ -15,4 +16,5 @@ export const handlers = [
   ...keyHandlers,
   ...onboardingHandlers,
   ...billingHandlers,
+  ...summaryHandlers,
 ];

@@ -29,6 +29,11 @@ export const keys = {
   keys: ["keys"] as const,
   suppressions: (q?: string) => ["suppressions", q ?? ""] as const,
   billing: ["billing"] as const,
+  companySummary: ["company-summary"] as const,
+  summaryVersions: ["company-summary", "versions"] as const,
+  findRun: (id: string) => ["find-run", id] as const,
+  tasks: (status: string) => ["tasks", status] as const,
+  trace: (id: string) => ["trace", id] as const,
 };
 
 export function useMe() {
@@ -113,4 +118,39 @@ export function useApiKeys() {
 export function useBilling({ enabled = true, poll }: { enabled?: boolean; poll?: number | false } = {}) {
   const api = useApi();
   return useQuery({ queryKey: keys.billing, queryFn: () => api.billing(), enabled, staleTime: 30_000, refetchInterval: poll ?? false });
+}
+
+// ---------- company summary ----------
+
+export function useCompanySummary() {
+  const api = useApi();
+  return useQuery({ queryKey: keys.companySummary, queryFn: () => api.companySummary() });
+}
+
+export function useSummaryVersions() {
+  const api = useApi();
+  return useQuery({ queryKey: keys.summaryVersions, queryFn: () => api.summaryVersions({ limit: 50 }) });
+}
+
+// ---------- leads v2 ----------
+
+/** The leads of one find run (polls while the run is active). */
+export function useFindRun(sessionId: string | null | undefined, live = false) {
+  const api = useApi();
+  return useQuery({ queryKey: keys.findRun(sessionId ?? ""), queryFn: () => api.findRun(sessionId!), enabled: Boolean(sessionId), refetchInterval: live ? 5_000 : false });
+}
+
+export function useTasks(status: "open" | "sent" | "all" = "open") {
+  const api = useApi();
+  return useQuery({ queryKey: keys.tasks(status), queryFn: () => api.tasks({ status, limit: 100 }), refetchInterval: 30_000 });
+}
+
+/** Everything a note or rating can change. */
+export function useInvalidateLead() {
+  const qc = useQueryClient();
+  return (leadId?: string) => {
+    if (leadId) void qc.invalidateQueries({ queryKey: keys.lead(leadId) });
+    void qc.invalidateQueries({ queryKey: ["leads"] });
+    void qc.invalidateQueries({ queryKey: ["find-run"] });
+  };
 }

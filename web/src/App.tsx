@@ -31,6 +31,7 @@ const pages = {
   Replies: () => import("./pages/Replies.tsx"),
   Settings: () => import("./pages/Settings.tsx"),
   SettingsBilling: () => import("./pages/settings/Billing.tsx"),
+  SettingsCompany: () => import("./pages/settings/CompanySummary.tsx"),
   WorkflowRun: () => import("./pages/WorkflowRun.tsx"),
   Workflows: () => import("./pages/Workflows.tsx"),
 } satisfies Record<string, Loader>;
@@ -173,6 +174,7 @@ export function App() {
                   <Route path="settings" element={page(L.Settings)} />
                   {/* Stripe Checkout success/cancel and the portal return here (src/billing/constants.ts BILLING_APP_PATH). */}
                   <Route path="settings/billing" element={page(L.SettingsBilling)} />
+                  <Route path="settings/company" element={page(L.SettingsCompany)} />
                   <Route path="*" element={page(L.NotFound)} />
                 </Route>
               </Route>
