@@ -16,7 +16,7 @@ import { displayUrl, groupOf, safeHref, sourceLabel, stamp } from "./leads/share
 import { Timeline } from "./leads/Timeline.tsx";
 
 const sectionTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
-const muted = "text-[#200D0D8C]";
+const muted = "text-muted";
 
 export default function LeadDetail() {
   const { id = "" } = useParams();
@@ -627,7 +627,7 @@ function Conversation({ messages }: { messages: Message[] }) {
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {m.direction === "in" && m.label ? <ReplyLabel label={m.label} /> : null}
-                <time dateTime={m.created_at} className="text-[11px]/3.5 font-medium tabular-nums text-[#200D0D66]">
+                <time dateTime={m.created_at} className="text-[11px]/3.5 font-medium tabular-nums text-faint">
                   {stamp(m.created_at)}
                 </time>
               </div>

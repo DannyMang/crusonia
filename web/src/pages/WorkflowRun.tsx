@@ -15,7 +15,7 @@ import { ButtonLink, EmptyState, QueryError, RingSpinner, Skeleton, stageLabel }
 import { cx, duration, hostOf, leadTitle, timeAgo, timeLeft, usd } from "../lib/format.ts";
 import { keys, useWorkflowRun } from "../queries.ts";
 
-const meta = "text-xs/4 font-[525] text-[#200D0D80]";
+const meta = "text-xs/4 font-[525] text-faint";
 
 export default function WorkflowRun() {
   const { id } = useParams();
@@ -213,13 +213,13 @@ function footerNote(run: Run, steps: RunStep[], a: RunApproval | undefined, lead
 function Breadcrumb({ name, id }: { name?: string; id?: string }) {
   return (
     <nav aria-label="Breadcrumb" className="flex h-4 shrink-0 items-center gap-1.5 text-xs/4">
-      <Link to="/app/workflows" className="font-medium text-[#200D0D8C] hover:text-ink">
+      <Link to="/app/workflows" className="font-medium text-muted hover:text-ink">
         Workflows
       </Link>
       {name ? (
         <>
           <span className="text-[#200D0D59]">/</span>
-          <span className="font-medium text-[#200D0D8C]">{name}</span>
+          <span className="font-medium text-muted">{name}</span>
         </>
       ) : null}
       {id ? (
@@ -251,7 +251,7 @@ function RunChip({ run, waiting }: { run: Run; waiting: boolean }) {
   }
   if (run.status === "paused") return <span className={cx(base, "bg-pill text-[#200D0DB3]")}>{run.stop_reason === "budget_paused" ? "Paused at budget" : "Paused"}</span>;
   if (run.status === "error") return <span className={cx(base, "bg-[#FDECEB] text-[#B42318]")}>Stopped</span>;
-  return <span className={cx(base, "border border-[#200D0D26] text-[#200D0D99]")}>Finished</span>;
+  return <span className={cx(base, "border border-[#200D0D26] text-muted")}>Finished</span>;
 }
 
 // ---------- right column ----------
@@ -259,14 +259,14 @@ function RunChip({ run, waiting }: { run: Run; waiting: boolean }) {
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <dt className="shrink-0 text-xs/4 font-[525] text-[#200D0D80]">{label}</dt>
+      <dt className="shrink-0 text-xs/4 font-[525] text-faint">{label}</dt>
       <dd className="min-w-0 truncate text-right text-xs/4 font-medium text-ink">{children}</dd>
     </div>
   );
 }
 
 function SectionTitle({ children }: { children: ReactNode }) {
-  return <h2 className="text-xs/4 font-medium text-[#200D0D8C]">{children}</h2>;
+  return <h2 className="text-xs/4 font-medium text-muted">{children}</h2>;
 }
 
 function CostSection({ run, steps, cost, tools }: { run: Run; steps: RunStep[]; cost: number | null; tools: number }) {
@@ -277,7 +277,7 @@ function CostSection({ run, steps, cost, tools }: { run: Run; steps: RunStep[]; 
       <SectionTitle>{isActive(run.status) ? "Cost so far" : "Cost"}</SectionTitle>
       <div className="flex items-baseline gap-1.5">
         <div className="text-[22px]/6.5 font-semibold tracking-[-0.01em] tabular-nums text-ink">{usd(cost)}</div>
-        <div className="text-[13px]/4 font-medium text-[#200D0D8C]">{cost === null ? "not reported yet" : "for this run"}</div>
+        <div className="text-[13px]/4 font-medium text-muted">{cost === null ? "not reported yet" : "for this run"}</div>
       </div>
       <dl className="flex flex-col gap-1.5 pt-0.5">
         <Row label="Tool calls">
@@ -316,7 +316,7 @@ function LeadSection({ lead, steps }: { lead: RunLead; steps: RunStep[] }) {
         <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-pill text-[13px]/4 font-semibold text-ink">{name.charAt(0).toUpperCase()}</div>
         <div className="flex min-w-0 grow flex-col gap-px">
           <div className="truncate text-sm/4.5 font-semibold text-ink">{name}</div>
-          {lead.domain ? <div className="truncate text-[11px]/3.5 text-[#200D0D8C]">{lead.domain}</div> : null}
+          {lead.domain ? <div className="truncate text-[11px]/3.5 text-muted">{lead.domain}</div> : null}
         </div>
         {lead.score !== null ? (
           <span className="flex h-5.5 shrink-0 items-center rounded-full bg-lime px-2 text-xs/4 font-semibold tabular-nums text-ink">{lead.score}</span>
@@ -360,14 +360,14 @@ function ApprovalSection({ approvals, lead, now }: { approvals: RunApproval[]; l
                     expires in <span className="font-semibold tabular-nums">{timeLeft(a.expires_at, now)}</span>
                   </>
                 ) : (
-                  <span className="text-[#200D0D8C]">
+                  <span className="text-muted">
                     {DECIDED[a.status] ?? (a.status === "pending" ? "Expired" : a.status)}
                     {a.decided_at ? ` ${timeAgo(a.decided_at, now)}` : ""}
                   </span>
                 )}
               </span>
             </div>
-            <p className="text-xs/4.25 font-medium text-[#200D0D8C]">
+            <p className="text-xs/4.25 font-medium text-muted">
               {a.kind === "send"
                 ? `${open ? "Waiting in your approvals queue. " : ""}Bound to ${a.draft ? `v${a.draft.version}` : "one draft version"}${lead?.email ? ` for ${lead.email}` : ""} only.`
                 : a.kind === "tool"

@@ -16,8 +16,11 @@
   --color-pill: #f0eeea;
   --color-green: #16a34a;
   --color-red: #dc2626;
-  --color-muted: #200d0d99;
-  --color-faint: #200d0d73;
+  /* Secondary text, both at least 4.5:1 (WCAG AA) on white, bg-panel and bg-pill: muted is ink at 62% (5.3:1
+     on white), faint is ink at 58.8%, the lightest ink tint that still passes on bg-pill (4.7:1 on white).
+     Lighter ink tints are for borders, placeholders and decoration only, never for text. */
+  --color-muted: #200d0d9e;
+  --color-faint: #200d0d96;
   --color-hairline: #200d0d14;
   --color-hairline-soft: #200d0d0f;
 }

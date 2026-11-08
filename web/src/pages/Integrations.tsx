@@ -73,12 +73,12 @@ export default function Integrations() {
           <div className="flex items-end justify-between gap-6 pb-2">
             <div className="flex flex-col gap-2">
               <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Integrations</h1>
-              <p className="w-140 max-w-full text-[13px]/4.5 font-medium text-[#200D0D99]">
+              <p className="w-140 max-w-full text-[13px]/4.5 font-medium text-muted">
                 The tools your Crusonia agent works through. Keys are stored encrypted and only used for the job listed on each card.
               </p>
             </div>
             {s ? (
-              <div className="shrink-0 text-[13px]/4 font-medium text-[#200D0D99]">
+              <div className="shrink-0 text-[13px]/4 font-medium text-muted">
                 {connected} connected · {needs} {needs === 1 ? "needs" : "need"} a key · 1 coming soon
               </div>
             ) : loading ? (
@@ -94,7 +94,7 @@ export default function Integrations() {
             />
           ) : null}
           {missing ? (
-            <p className="-mt-1 text-xs/4 font-medium text-[#200D0D80]">
+            <p className="-mt-1 text-xs/4 font-medium text-faint">
               Until then the cards below describe each integration without its live status.
             </p>
           ) : null}
@@ -111,7 +111,7 @@ export default function Integrations() {
             </>
           )}
 
-          <p className="pt-1 text-xs/4 font-medium text-[#200D0D80]">
+          <p className="pt-1 text-xs/4 font-medium text-faint">
             Missing a tool? Your own coding agent can call Crusonia alongside any other MCP server.{" "}
             <Link to="/app/connect" className="text-ink underline decoration-[#200D0D4D] decoration-1 underline-offset-[3px] hover:decoration-ink">
               Connect your agent
@@ -135,14 +135,14 @@ function StatusPill({ state }: { state: State }) {
         Needs key
       </span>
     );
-  if (state === "soon") return <span className={cx(base, "bg-pill text-[#200D0D99]")}>Coming soon</span>;
-  if (state === "local") return <span className={cx(base, "bg-pill text-[#200D0D99]")}>Local dev</span>;
-  return <span className={cx(base, "bg-pill text-[#200D0D99]")}>Status unknown</span>;
+  if (state === "soon") return <span className={cx(base, "bg-pill text-muted")}>Coming soon</span>;
+  if (state === "local") return <span className={cx(base, "bg-pill text-muted")}>Local dev</span>;
+  return <span className={cx(base, "bg-pill text-muted")}>Status unknown</span>;
 }
 
 function Tile({ children, muted }: { children: ReactNode; muted?: boolean }) {
   return (
-    <span className={cx("flex size-7 shrink-0 items-center justify-center rounded-[7px] bg-pill text-[13px]/4 font-semibold", muted ? "text-[#200D0D80]" : "text-ink")}>
+    <span className={cx("flex size-7 shrink-0 items-center justify-center rounded-[7px] bg-pill text-[13px]/4 font-semibold", muted ? "text-faint" : "text-ink")}>
       {children}
     </span>
   );
@@ -187,13 +187,13 @@ function ProviderCard({
         <span className="grow" />
         {state === "connected" && manage ? <Manage {...manage} /> : null}
       </div>
-      <p className="text-[13px]/4.5 font-medium text-[#200D0D99]">{description}</p>
+      <p className="text-[13px]/4.5 font-medium text-muted">{description}</p>
       {children}
     </Card>
   );
 }
 
-const fieldLabel = "text-[13px]/4 text-[#200D0D99]";
+const fieldLabel = "text-[13px]/4 text-muted";
 
 /** Names the missing secret(s) and how to add them to the Worker. Replaces the design's token input on purpose:
  *  the API has no endpoint to store keys, so an input would only pretend to save. */
@@ -207,9 +207,9 @@ function MissingSecrets({ secrets }: { secrets: string[] }) {
           <div key={k} className="flex items-center gap-3">
             <div className="flex h-9.25 w-90 shrink-0 items-center gap-2 rounded-lg border border-[#200D0D1A] px-3.5">
               <span className="grow truncate text-[13px]/4.5 font-medium text-ink">{k}</span>
-              <span className="shrink-0 text-xs/4 font-medium text-[#200D0D73]">not set</span>
+              <span className="shrink-0 text-xs/4 font-medium text-faint">not set</span>
             </div>
-            {SECRET_HINT[k] ? <div className="text-[11px]/3.5 font-medium text-[#200D0D80]">{renderTicks(SECRET_HINT[k])}</div> : null}
+            {SECRET_HINT[k] ? <div className="text-[11px]/3.5 font-medium text-faint">{renderTicks(SECRET_HINT[k])}</div> : null}
           </div>
         ))}
       </div>
@@ -217,7 +217,7 @@ function MissingSecrets({ secrets }: { secrets: string[] }) {
         <div className="flex flex-col gap-1.5 pt-1">
           <div className={fieldLabel}>Add {commands.length === 1 ? "it" : "them"} to the Worker</div>
           <CodeWell display={commands.join("\n")} className="w-fit min-w-90 max-w-full py-2.5" />
-          <div className="text-xs/4 font-medium text-[#200D0D80]">
+          <div className="text-xs/4 font-medium text-faint">
             Or put {commands.length === 1 ? "it" : "them"} in <code className="font-medium text-ink">.dev.vars</code> and run{" "}
             <code className="font-medium text-ink">bun run secrets</code> (see the README). This card turns Connected on the next status check.
           </div>
@@ -243,7 +243,7 @@ function renderTicks(text: string) {
 function Fact({ title, value, first }: { title: string; value: ReactNode; first?: boolean }) {
   return (
     <div className={cx("flex shrink-0 flex-col gap-1", first ? "w-42.5" : "w-32.5 border-l border-l-[#200D0D1A] pl-4.75")}>
-      <div className="text-[13px]/4 font-medium text-[#200D0D80]">{title}</div>
+      <div className="text-[13px]/4 font-medium text-faint">{title}</div>
       <div className="text-[15px]/4.5 font-semibold text-ink">{value}</div>
     </div>
   );
@@ -263,7 +263,7 @@ function SyncFacts({ sync, switchName }: { sync: CrmSyncTarget | undefined; swit
         <Fact title="Queue" value={queue} />
       </div>
       {sync.configured && !sync.enabled ? (
-        <div className="text-[13px]/4.5 font-medium text-[#200D0D99]">
+        <div className="text-[13px]/4.5 font-medium text-muted">
           Nothing is written until <span className="text-ink">{switchName}=true</span> is set on the Worker.
         </div>
       ) : null}
@@ -307,7 +307,7 @@ function AgentMailCard({ status, known }: CardProps) {
                   <CopyButton text={inbox} label="Copy inbox address" iconOnly />
                 </>
               ) : (
-                <span className="grow text-[13px]/4.5 font-medium text-[#200D0D80]">Address not reported yet</span>
+                <span className="grow text-[13px]/4.5 font-medium text-faint">Address not reported yet</span>
               )}
             </div>
           </div>
@@ -395,7 +395,7 @@ function ApifyCard({ status, known }: CardProps) {
             </span>
           ))}
           <span className="grow" />
-          <span className="text-xs/4 font-medium text-[#200D0D8C]">
+          <span className="text-xs/4 font-medium text-muted">
             Used by <code>read_website</code> and <code>search_web</code>
           </span>
         </div>
@@ -426,7 +426,7 @@ function PlatformRow({
       <Tile muted={state === "soon"}>{tile}</Tile>
       <div className="w-33 shrink-0 text-sm/4.5 font-medium text-ink">{name}</div>
       <div className="flex min-w-0 grow basis-0 flex-col gap-1.5">
-        <div className="text-[13px]/4 font-medium text-[#200D0D99]">{description}</div>
+        <div className="text-[13px]/4 font-medium text-muted">{description}</div>
         {extra}
       </div>
       <div className="flex w-29 shrink-0">
@@ -443,7 +443,7 @@ function PlatformCard({ status, known }: CardProps) {
     <Card className="flex flex-col px-6 pb-2 pt-6">
       <div className="flex items-baseline gap-2.5 pb-2">
         <h2 className="text-[15px]/4.5 font-medium text-ink">Platform</h2>
-        <div className="text-[13px]/4 font-medium text-[#200D0D80]">Runs the agent, signs you in, and (soon) asks for approvals by text</div>
+        <div className="text-[13px]/4 font-medium text-faint">Runs the agent, signs you in, and (soon) asks for approvals by text</div>
       </div>
       <PlatformRow
         tile="N"
@@ -452,7 +452,7 @@ function PlatformCard({ status, known }: CardProps) {
         description="Agent runtime. Runs research, scoring and drafting jobs."
         extra={
           naiveState === "needs_key" && naiveMissing.length ? (
-            <div className="flex flex-col gap-1 text-xs/4 font-medium text-[#200D0D80]">
+            <div className="flex flex-col gap-1 text-xs/4 font-medium text-faint">
               {naiveMissing.map((k) => (
                 <div key={k} className="flex items-center gap-2">
                   <span>

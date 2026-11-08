@@ -85,7 +85,7 @@ function Head({ e }: { e: Experiment }) {
     <div className="flex shrink-0 items-start justify-between gap-4 border-b border-b-[#200D0D1A] px-5 pb-4 pt-4.5">
       <div className="flex min-w-0 flex-col gap-1.5">
         <div className="flex items-center gap-2.5">
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">{e.hypothesis ? "Hypothesis" : "Experiment"}</div>
+          <div className="text-xs/4 font-medium text-muted">{e.hypothesis ? "Hypothesis" : "Experiment"}</div>
           <StatusChip e={e} />
         </div>
         <h2 className="text-lg/6 font-semibold tracking-[-0.015em] text-ink">{e.hypothesis || e.name}</h2>
@@ -104,12 +104,12 @@ function Head({ e }: { e: Experiment }) {
 function Fact({ title, value, sub, className }: { title: string; value: ReactNode; sub?: ReactNode; className?: string }) {
   return (
     <div className={cx("flex min-w-0 basis-0 flex-col gap-0.75", className)}>
-      <div className="text-xs/4 font-medium text-[#200D0D8C]">{title}</div>
+      <div className="text-xs/4 font-medium text-muted">{title}</div>
       <div className="truncate text-sm/4.5 font-semibold text-ink" title={typeof value === "string" ? value : undefined}>
         {value}
       </div>
       {sub ? (
-        <div className="truncate text-xs/4 font-medium text-[#200D0D8C]" title={typeof sub === "string" ? sub : undefined}>
+        <div className="truncate text-xs/4 font-medium text-muted" title={typeof sub === "string" ? sub : undefined}>
           {sub}
         </div>
       ) : null}
@@ -176,7 +176,7 @@ function Facts({ e }: { e: Experiment }) {
 const cell = "py-0 pl-3 text-right text-[13px]/4 tabular-nums text-ink";
 
 function VariantTable({ e }: { e: Experiment }) {
-  const th = "h-8 py-0 text-xs/4 font-medium text-[#200D0D80]";
+  const th = "h-8 py-0 text-xs/4 font-medium text-faint";
   return (
     <div className="shrink-0 overflow-clip rounded-[10px] border border-[#200D0D1A]">
       <table className="w-full table-fixed border-collapse">
@@ -222,16 +222,16 @@ function VariantTable({ e }: { e: Experiment }) {
                     </span>
                     <div className="flex min-w-0 flex-col gap-0.5">
                       <div className="truncate text-[13px]/4 font-semibold text-ink">{armName(e, k)}</div>
-                      {desc ? <div className="truncate text-xs/4 font-medium text-[#200D0D8C]">“{desc.replace(/^[“"]+|[”"]+$/g, "")}”</div> : null}
+                      {desc ? <div className="truncate text-xs/4 font-medium text-muted">“{desc.replace(/^[“"]+|[”"]+$/g, "")}”</div> : null}
                     </div>
                   </div>
                 </th>
                 <td className={cell}>{s.sent}</td>
                 <td className={cell}>
-                  {s.replies} <span className="text-[#200D0D8C]">· {pct(s.replies, s.sent, 1)}</span>
+                  {s.replies} <span className="text-muted">· {pct(s.replies, s.sent, 1)}</span>
                 </td>
                 <td className={cell}>
-                  {s.positive} <span className="text-[#200D0D8C]">· {pct(s.positive, s.sent, 1)}</span>
+                  {s.positive} <span className="text-muted">· {pct(s.positive, s.sent, 1)}</span>
                 </td>
                 <td className={cx(cell, "pr-4 font-medium")}>{s.replies && s.cost_usd !== null ? usd(s.cost_usd / s.replies) : "—"}</td>
               </tr>
@@ -263,7 +263,7 @@ function Verdict({ e }: { e: Experiment }) {
 
 function SpendLine({ e }: { e: Experiment }) {
   const t = totals(e);
-  const item = "text-xs/4 font-[525] text-[#200D0D80]";
+  const item = "text-xs/4 font-[525] text-faint";
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-x-4.5 gap-y-1 px-0.5">
       <div className={item}>

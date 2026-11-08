@@ -46,7 +46,7 @@ export default function Experiments() {
       <header className="flex h-9 shrink-0 items-center justify-between gap-6">
         <div className="flex min-w-0 items-baseline gap-3">
           <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Experiments</h1>
-          <p className="truncate text-[13px]/4 font-medium text-[#200D0D8C]">A/B tests on signals and messages, with a stop rule set up front.</p>
+          <p className="truncate text-[13px]/4 font-medium text-muted">A/B tests on signals and messages, with a stop rule set up front.</p>
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
           {!empty && !missing ? (
@@ -84,8 +84,8 @@ export default function Experiments() {
         <div className="flex min-h-0 grow overflow-clip rounded-xl border border-[#200D0D1A]">
           <div className="flex w-90 shrink-0 flex-col overflow-y-auto border-r border-r-[#200D0D1A]">
             <div className="sticky top-0 z-10 flex h-9 shrink-0 items-center justify-between border-b border-b-[#200D0D1A] bg-[#FAF9F9] px-4">
-              <div className="text-xs/4 font-medium text-[#200D0D80]">Experiment</div>
-              <div className="text-xs/4 font-medium text-[#200D0D80]">Sends</div>
+              <div className="text-xs/4 font-medium text-faint">Experiment</div>
+              <div className="text-xs/4 font-medium text-faint">Sends</div>
             </div>
             {list.isPending ? (
               [0, 1, 2].map((i) => (
@@ -95,7 +95,7 @@ export default function Experiments() {
                 </div>
               ))
             ) : shown.length === 0 ? (
-              <div className="px-4 py-6 text-center text-xs/4 font-medium text-[#200D0D8C]">
+              <div className="px-4 py-6 text-center text-xs/4 font-medium text-muted">
                 {all.length ? `No experiments match “${q.trim()}”.` : "No experiments yet."}
               </div>
             ) : (
@@ -160,7 +160,7 @@ function GroupHeader({ title, count }: { title: string; count: number }) {
   return (
     <div className="flex h-8.5 shrink-0 items-center gap-2 border-b border-b-[#200D0D1A] bg-[#200D0D08] px-4">
       <h2 className="text-xs/4 font-semibold text-ink">{title}</h2>
-      <div className="text-xs/4 font-medium tabular-nums text-[#200D0D8C]">· {count}</div>
+      <div className="text-xs/4 font-medium tabular-nums text-muted">· {count}</div>
     </div>
   );
 }
@@ -187,7 +187,7 @@ function Row({ e, selected, onSelect }: { e: Experiment; selected: boolean; onSe
       </div>
       {live ? (
         <div className="flex items-center gap-2.5">
-          <div className="min-w-0 grow truncate text-xs/4 font-medium text-[#200D0D8C]">
+          <div className="min-w-0 grow truncate text-xs/4 font-medium text-muted">
             {[e.segment, e.stop_rule_met ? "stop rule met" : dayLabel(e)].filter(Boolean).join(" · ")}
           </div>
           {p.share !== null ? (
@@ -199,7 +199,7 @@ function Row({ e, selected, onSelect }: { e: Experiment; selected: boolean; onSe
       ) : (
         <div className="flex items-center gap-2">
           <span className="flex h-4.5 shrink-0 items-center rounded-full bg-pill px-1.75 text-[11px]/3.5 font-semibold text-[#200D0DB3]">Stopped</span>
-          <div className="min-w-0 truncate text-xs/4 font-medium tabular-nums text-[#200D0D8C]">
+          <div className="min-w-0 truncate text-xs/4 font-medium tabular-nums text-muted">
             A {a.positive} · B {b.positive} positive{e.stopped_at ? ` · ${shortDate(e.stopped_at)}` : ""}
           </div>
         </div>
@@ -220,7 +220,7 @@ function CreatedNote({ enrollment, onClose }: { enrollment: Enrollment; onClose:
         {enrollment.enrolled ? `${enrollment.enrolled} ${enrollment.enrolled === 1 ? "lead" : "leads"} enrolled` : "No leads enrolled yet"}
         {skipped ? `, ${skipped} skipped (already in another running experiment)` : ""}. Nothing was sent.
       </div>
-      <button type="button" aria-label="Dismiss" onClick={onClose} className="flex size-5 shrink-0 items-center justify-center rounded-full text-[#200D0D80] hover:bg-[#200D0D0A]">
+      <button type="button" aria-label="Dismiss" onClick={onClose} className="flex size-5 shrink-0 items-center justify-center rounded-full text-faint hover:bg-[#200D0D0A]">
         <XIcon />
       </button>
     </div>
@@ -253,7 +253,7 @@ function EmptyExplainer({ missing, error, onCreate }: { missing: boolean; error:
       <div className="flex w-full max-w-[720px] flex-col items-center gap-6 text-center">
         <div className="flex flex-col items-center gap-2">
           <h2 className="text-[15px]/5 font-semibold tracking-[-0.01em] text-ink">No experiments yet</h2>
-          <p className="max-w-130 text-[13px]/5 font-medium text-[#200D0D8C]">
+          <p className="max-w-130 text-[13px]/5 font-medium text-muted">
             An experiment tests one hypothesis with two message variants and compares positive replies. Crusonia shows the numbers and how big the sample is; it never
             calls a winner for you, and every send still waits for your approval.
           </p>
@@ -261,9 +261,9 @@ function EmptyExplainer({ missing, error, onCreate }: { missing: boolean; error:
         <ol className="grid w-full grid-cols-3 gap-3 text-left">
           {STEPS.map((s, i) => (
             <li key={s.title} className="flex flex-col gap-1.5 rounded-[10px] border border-[#200D0D14] bg-[#200D0D05] p-4">
-              <div className="text-[11px]/3.5 font-medium tabular-nums text-[#200D0D80]">0{i + 1}</div>
+              <div className="text-[11px]/3.5 font-medium tabular-nums text-faint">0{i + 1}</div>
               <div className="text-[13px]/4 font-semibold text-ink">{s.title}</div>
-              <div className="text-xs/4.25 font-medium text-[#200D0D99]">{s.body}</div>
+              <div className="text-xs/4.25 font-medium text-muted">{s.body}</div>
               <div className="mt-1 text-xs/4 font-medium text-ink">“{s.example}”</div>
             </li>
           ))}

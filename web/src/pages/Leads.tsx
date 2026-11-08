@@ -141,7 +141,7 @@ export default function Leads() {
           footer={
             leads.hasNextPage ? (
               <div className="flex h-11 items-center justify-between border-t border-t-[#200D0D14] bg-[#200D0D06] px-4">
-                <div className="text-xs/4 font-medium text-[#200D0D8C]">Showing the newest {num(rows.length)}</div>
+                <div className="text-xs/4 font-medium text-muted">Showing the newest {num(rows.length)}</div>
                 <Button variant="soft" loading={leads.isFetchingNextPage} onClick={() => void leads.fetchNextPage()}>
                   Load more
                 </Button>
@@ -234,7 +234,7 @@ function Chip({ label, value, open, onClick }: { label: string; value: string; o
       onClick={onClick}
       className="flex h-7.5 items-center gap-1.25 rounded-full bg-lime px-3 hover:bg-[#b3de7a]"
     >
-      <span className="text-[13px]/4 text-[#200D0D99]">{label}</span>
+      <span className="text-[13px]/4 text-muted">{label}</span>
       <span className="text-[13px]/4 font-medium tabular-nums text-ink">{value}</span>
     </button>
   );
@@ -319,7 +319,7 @@ function FilterBar({
             </MenuItem>
             {GROUPS.map((g) => (
               <div key={g.key} className="mt-1 border-t border-t-[#200D0D14] pt-1">
-                <div className="px-2.5 pb-0.5 pt-1 text-[11px]/3.5 font-semibold text-[#200D0D8C]">{g.title}</div>
+                <div className="px-2.5 pb-0.5 pt-1 text-[11px]/3.5 font-semibold text-muted">{g.title}</div>
                 {g.stages.map((s) => (
                   <MenuItem key={s} checked={filters.stage === s} onSelect={() => pick({ stage: s })}>
                     {stageLabel(s)}
@@ -365,11 +365,11 @@ function FilterBar({
                 {sourceLabel(s)}
               </MenuItem>
             ))}
-            {!sources.length ? <div className="px-2.5 py-2 text-xs/4 font-medium text-[#200D0D8C]">Sources appear once you have leads.</div> : null}
+            {!sources.length ? <div className="px-2.5 py-2 text-xs/4 font-medium text-muted">Sources appear once you have leads.</div> : null}
           </div>
         </Dropdown>
       </div>
-      <div className="shrink-0 text-[13px]/4 text-[#200D0D73]" aria-live="polite">
+      <div className="shrink-0 text-[13px]/4 text-faint" aria-live="polite">
         {loading ? (
           "Loading leads…"
         ) : (
@@ -426,7 +426,7 @@ function LeadTable({
     <Card className="overflow-clip">
       <table className="w-full table-fixed border-collapse text-left">
         <thead>
-          <tr className="h-9 bg-[#200D0D06] text-xs/4 font-medium text-[#200D0D80]">
+          <tr className="h-9 bg-[#200D0D06] text-xs/4 font-medium text-faint">
             <th scope="col" className={cx(col.company, "font-medium")}>Company</th>
             <th scope="col" className={cx(col.contact, "font-medium")}>Contact</th>
             <th scope="col" className={cx(col.signal, "font-medium")}>Signal · why now</th>
@@ -477,7 +477,7 @@ function LeadTable({
             <tr className="border-t border-t-[#200D0D14]">
               <td colSpan={COLS} className="px-6 py-12 text-center">
                 <div className="text-[15px]/5 font-semibold tracking-[-0.01em] text-ink">No leads match</div>
-                <div className="mx-auto mt-1.5 max-w-md text-[13px]/5 font-medium text-[#200D0D8C]">
+                <div className="mx-auto mt-1.5 max-w-md text-[13px]/5 font-medium text-muted">
                   Nothing fits this search and these filters. Try a broader search or clear the filters.
                 </div>
                 {filtered ? (
@@ -551,9 +551,9 @@ function GroupBody({ group, leads, preview, oldestWaiting }: { group: Group; lea
                 <path d="M6 9l6 6 6-6" fill="none" stroke="#200D0D" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span className="whitespace-nowrap text-[13px]/4 font-semibold text-ink">{group.title}</span>
-              <span className="truncate text-[13px]/4 text-[#200D0D8C]">{s.left}</span>
+              <span className="truncate text-[13px]/4 text-muted">{s.left}</span>
             </button>
-            {s.right ? <div className="shrink-0 text-xs/4 text-[#200D0D8C]">{s.right}</div> : null}
+            {s.right ? <div className="shrink-0 text-xs/4 text-muted">{s.right}</div> : null}
           </div>
         </th>
       </tr>
@@ -563,7 +563,7 @@ function GroupBody({ group, leads, preview, oldestWaiting }: { group: Group; lea
           <td colSpan={COLS} className="px-4">
             <button type="button" onClick={() => setAll(true)} className="flex max-w-full items-center gap-2 text-left">
               <span className="whitespace-nowrap text-xs/4 font-medium text-ink hover:underline">Show {hidden.length} more</span>
-              <span className="truncate text-xs/4 text-[#200D0D8C]">
+              <span className="truncate text-xs/4 text-muted">
                 {hidden
                   .slice(0, 4)
                   .map((l) => l.company || l.domain || l.name || l.email)
@@ -603,30 +603,30 @@ function LeadRow({ lead: l }: { lead: Lead }) {
           <Link to={href} className="truncate text-sm/4.5 font-medium text-ink hover:underline">
             {company}
           </Link>
-          {l.domain && l.domain !== company ? <div className="truncate whitespace-pre text-xs/3.5 text-[#200D0D73]">{l.domain}</div> : null}
+          {l.domain && l.domain !== company ? <div className="truncate whitespace-pre text-xs/3.5 text-faint">{l.domain}</div> : null}
         </div>
       </td>
       <td className={col.contact}>
         {contact.primary ? (
           <div className="flex flex-col gap-0.5">
             <div className={cx("truncate text-[13px]/4 font-medium text-ink", !l.name && "text-xs/4")}>{contact.primary}</div>
-            {contact.secondary ? <div className="truncate text-xs/4 text-[#200D0D8C]">{contact.secondary}</div> : null}
+            {contact.secondary ? <div className="truncate text-xs/4 text-muted">{contact.secondary}</div> : null}
           </div>
         ) : (
-          <div className="text-[13px]/4 font-medium text-[#200D0D8C]">No contact yet</div>
+          <div className="text-[13px]/4 font-medium text-muted">No contact yet</div>
         )}
       </td>
       <td className={col.signal}>
         <div className="flex min-w-0 flex-col gap-0.5" title={l.rationale ?? undefined}>
-          <div className={cx("text-[13px]/4", detail ? "truncate" : "line-clamp-2", l.rationale ? "text-ink" : "text-[#200D0D73]")}>{headline}</div>
-          {detail ? <div className="truncate text-xs/4 text-[#200D0D8C]">{detail}</div> : null}
+          <div className={cx("text-[13px]/4", detail ? "truncate" : "line-clamp-2", l.rationale ? "text-ink" : "text-faint")}>{headline}</div>
+          {detail ? <div className="truncate text-xs/4 text-muted">{detail}</div> : null}
         </div>
       </td>
-      <td className={cx(col.fit, "text-[13px]/4 font-semibold tabular-nums", l.score === null ? "text-[#200D0D73]" : "text-ink")}>{l.score ?? "—"}</td>
+      <td className={cx(col.fit, "text-[13px]/4 font-semibold tabular-nums", l.score === null ? "text-faint" : "text-ink")}>{l.score ?? "—"}</td>
       <td className={col.stage}>
         <StageBadge stage={l.stage} size="sm" />
       </td>
-      <td className={cx(col.activity, "whitespace-nowrap text-[13px]/4 text-[#200D0D8C]")}>{timeAgo(l.updated_at)}</td>
+      <td className={cx(col.activity, "whitespace-nowrap text-[13px]/4 text-muted")}>{timeAgo(l.updated_at)}</td>
       <td className={cx(col.source, "truncate text-[13px]/4 text-ink")} title={l.source}>
         {sourceLabel(l.source)}
       </td>
@@ -676,7 +676,7 @@ function NoLeadsYet({ onImport, onAdd }: { onImport: () => void; onAdd: () => vo
   ];
   return (
     <Card className="overflow-clip">
-      <div className="flex h-9 items-center gap-3 bg-[#200D0D06] px-4 text-xs/4 font-medium text-[#200D0D80]">
+      <div className="flex h-9 items-center gap-3 bg-[#200D0D06] px-4 text-xs/4 font-medium text-faint">
         <span className="w-50">Company</span>
         <span className="w-40">Contact</span>
         <span className="grow">Signal · why now</span>
@@ -695,7 +695,7 @@ function NoLeadsYet({ onImport, onAdd }: { onImport: () => void; onAdd: () => vo
           </svg>
         </div>
         <h2 className="text-[15px]/5 font-semibold tracking-[-0.01em] text-ink">No leads yet</h2>
-        <p className="max-w-lg text-[13px]/5 font-medium text-[#200D0D8C]">
+        <p className="max-w-lg text-[13px]/5 font-medium text-muted">
           Every company your agents find lands here, grouped by what it needs: drafts waiting for you, research in progress,
           conversations and closed leads. Each one carries its signal, fit score and sources.
         </p>
@@ -707,7 +707,7 @@ function NoLeadsYet({ onImport, onAdd }: { onImport: () => void; onAdd: () => vo
               <span className="flex size-5 items-center justify-center rounded-md bg-lime text-[11px]/3 font-semibold tabular-nums text-ink">{i + 1}</span>
               <span className="text-[13px]/4 font-semibold text-ink">{w.title}</span>
             </div>
-            <p className="grow text-xs/4.5 font-medium text-[#200D0D8C]">{w.body}</p>
+            <p className="grow text-xs/4.5 font-medium text-muted">{w.body}</p>
             <div className="pt-1">{w.action}</div>
           </div>
         ))}

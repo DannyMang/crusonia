@@ -34,7 +34,7 @@ export function AuthHeading({ title, subtitle }: { title: ReactNode; subtitle: R
   return (
     <>
       <h1 className="pt-7 text-[32px]/9.25 font-bold tracking-[-0.04em] text-ink">{title}</h1>
-      <p className="pt-2 text-[15px]/4.5 font-[450] text-[#200D0D73]">{subtitle}</p>
+      <p className="pt-2 text-[15px]/4.5 font-[450] text-faint">{subtitle}</p>
     </>
   );
 }
@@ -84,7 +84,7 @@ export function OrDivider() {
   return (
     <div className="flex items-center gap-3" role="separator" aria-label="or">
       <span className="h-px grow basis-0 bg-[#200D0D14]" />
-      <span className="text-xs/4 font-[525] text-[#200D0D73]">or</span>
+      <span className="text-xs/4 font-[525] text-faint">or</span>
       <span className="h-px grow basis-0 bg-[#200D0D14]" />
     </div>
   );
@@ -138,7 +138,7 @@ export function FormError({ children }: { children: ReactNode }) {
 /** Calm note (e.g. "Sign-in is not configured in this build", "We sent a new code"). */
 export function FormNote({ children }: { children: ReactNode }) {
   return (
-    <div role="status" className="flex items-start gap-2.5 rounded-[10px] border border-panel-line bg-panel px-3.5 py-3 text-[13px]/4.5 font-[525] text-[#200D0D99]">
+    <div role="status" className="flex items-start gap-2.5 rounded-[10px] border border-panel-line bg-panel px-3.5 py-3 text-[13px]/4.5 font-[525] text-muted">
       <span className="mt-1.75 size-1.5 shrink-0 rounded-full bg-green" />
       <div>{children}</div>
     </div>
@@ -164,7 +164,7 @@ export function PrimaryButton({ children, loading, disabled, type = "submit", on
 export function SwitchLine({ text, to, label, className }: { text: string; to: string; label: string; className?: string }) {
   return (
     <div className={cx("flex flex-wrap gap-1 text-[13px]/4.5 font-[525]", className)}>
-      <span className="text-[#200D0D8C]">{text}</span>
+      <span className="text-muted">{text}</span>
       <Link to={to} className="text-ink underline decoration-1 [text-underline-position:from-font] hover:decoration-2">
         {label}
       </Link>

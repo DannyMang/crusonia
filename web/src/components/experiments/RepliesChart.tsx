@@ -76,14 +76,14 @@ export function RepliesChart({ e, daily }: { e: Experiment; daily: DailyPoint[] 
           {ARMS.map((k) => (
             <div key={k} className="flex min-w-0 items-center gap-1.5">
               <span className="size-2 shrink-0 rounded-full" style={{ background: ARM_COLOR[k].line }} />
-              <span className="max-w-40 truncate text-xs/4 font-medium text-[#200D0D8C]">
+              <span className="max-w-40 truncate text-xs/4 font-medium text-muted">
                 {k} · {armName(e, k)}:
               </span>
               <span className="text-xs/4 font-semibold tabular-nums text-ink">{arm(e, k).replies}</span>
             </div>
           ))}
         </div>
-        <div className="shrink-0 text-xs/4 font-medium tabular-nums text-[#200D0D8C]">
+        <div className="shrink-0 text-xs/4 font-medium tabular-nums text-muted">
           {range}
         </div>
       </div>
@@ -92,7 +92,7 @@ export function RepliesChart({ e, daily }: { e: Experiment; daily: DailyPoint[] 
         <Skeleton className="h-43 w-full" />
       ) : points.length === 0 ? (
         <div className="flex h-43 shrink-0 items-center justify-center border-b border-b-[#200D0D26]">
-          <p className="max-w-80 text-center text-xs/4 font-medium text-[#200D0D8C]">
+          <p className="max-w-80 text-center text-xs/4 font-medium text-muted">
             {live ? "Each arm's replies draw here day by day once approved emails go out." : "No daily history is available for this experiment."}
           </p>
         </div>
@@ -133,13 +133,13 @@ export function RepliesChart({ e, daily }: { e: Experiment; daily: DailyPoint[] 
 
             {/* y axis */}
             {[yMax, yMax / 2, 0].map((v, i) => (
-              <text key={i} x="30" y={[Y0, YM, Y1][i]! + 4} textAnchor="end" className="fill-[#200D0D8C] text-[11px] font-medium tabular-nums">
+              <text key={i} x="30" y={[Y0, YM, Y1][i]! + 4} textAnchor="end" className="fill-muted text-[11px] font-medium tabular-nums">
                 {v}
               </text>
             ))}
             {/* x axis */}
             {showDay1 ? (
-              <text x={X0} y={H - 5} className="fill-[#200D0D8C] text-[11px] font-medium">
+              <text x={X0} y={H - 5} className="fill-muted text-[11px] font-medium">
                 Day 1
               </text>
             ) : null}
@@ -171,7 +171,7 @@ export function RepliesChart({ e, daily }: { e: Experiment; daily: DailyPoint[] 
               </text>
             ))}
             {remaining && toGoNote && X1 - tx > 200 ? (
-              <text x={(tx + X1) / 2} y={YM + 4} textAnchor="middle" className="fill-[#200D0D8C] text-xs font-medium">
+              <text x={(tx + X1) / 2} y={YM + 4} textAnchor="middle" className="fill-muted text-xs font-medium">
                 {toGoNote}
               </text>
             ) : null}
@@ -192,7 +192,7 @@ export function RepliesChart({ e, daily }: { e: Experiment; daily: DailyPoint[] 
                 Day {hover + 1} · {shortDate(dateOf(h.date))}
               </span>
               {ARMS.map((k) => (
-                <span key={k} className="flex items-center gap-1.5 font-medium text-[#200D0D99]">
+                <span key={k} className="flex items-center gap-1.5 font-medium text-muted">
                   <span className="size-2 rounded-full" style={{ background: ARM_COLOR[k].line }} />
                   {k}: <span className="tabular-nums text-ink">{h[k]}</span> replies so far
                 </span>

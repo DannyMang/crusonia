@@ -116,7 +116,7 @@ export function SendDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
         {draft ? (
           <div className="flex shrink-0 flex-col rounded-[10px] border border-[#200D0D1A]">
             <div className="flex items-baseline gap-2.5 border-b border-b-[#200D0D14] px-3.5 py-2.5">
-              <label htmlFor={`subject-${a.code}`} className="w-13 shrink-0 text-xs/4 font-medium text-[#200D0D8C]">
+              <label htmlFor={`subject-${a.code}`} className="w-13 shrink-0 text-xs/4 font-medium text-muted">
                 Subject
               </label>
               {mode === "edit" ? (
@@ -153,7 +153,7 @@ export function SendDetail({ a, now, onDecided }: { a: ApprovalListItem; now: nu
             </div>
           </div>
         ) : (
-          <div className="rounded-[10px] border border-[#200D0D1A] px-3.5 py-3 text-[13px]/5 font-medium text-[#200D0D99]">
+          <div className="rounded-[10px] border border-[#200D0D1A] px-3.5 py-3 text-[13px]/5 font-medium text-muted">
             The draft for this approval is no longer available. {a.summary}
           </div>
         )}
@@ -230,7 +230,7 @@ function Consent({ has, full }: { has: boolean; full: LeadFull | undefined }) {
       <span className={cx("size-1.5 shrink-0 rounded-full", yes ? "bg-green" : "bg-[#B42318]")} />
       <span className="truncate font-medium text-ink">
         {yes ? (l?.consent_at ? `Opted in ${shortDate(l.consent_at)}` : "Opted in") : "No consent on file"}
-        {yes && l?.consent_text ? <span className="text-[#200D0D80]"> · {l.consent_text}</span> : null}
+        {yes && l?.consent_text ? <span className="text-faint"> · {l.consent_text}</span> : null}
       </span>
     </span>
   );
@@ -264,7 +264,7 @@ function WhyThisLead({ full, loading, failed, sessionId }: { full: LeadFull | un
         {l?.score !== null && l?.score !== undefined ? (
           <span className="flex h-5 shrink-0 items-center rounded-full bg-lime px-1.75 text-[11px]/3.5 font-semibold tabular-nums text-ink">score {l.score}</span>
         ) : null}
-        <span className="min-w-0 grow truncate text-xs/4 font-medium text-[#200D0D8C]">{meta}</span>
+        <span className="min-w-0 grow truncate text-xs/4 font-medium text-muted">{meta}</span>
         {l ? (
           <Link to={`/app/leads/${encodeURIComponent(l.id)}`} className="shrink-0 text-xs/4 font-medium text-ink underline decoration-1 underline-offset-[3px]">
             Open lead
@@ -283,7 +283,7 @@ function WhyThisLead({ full, loading, failed, sessionId }: { full: LeadFull | un
           <Skeleton className="h-7 w-full" />
         </div>
       ) : failed || !l ? (
-        <p className="text-[13px]/4.75 font-medium text-[#200D0D99]">The research for this lead could not be loaded. The draft above is exactly what will be sent.</p>
+        <p className="text-[13px]/4.75 font-medium text-muted">The research for this lead could not be loaded. The draft above is exactly what will be sent.</p>
       ) : (
         <>
           {l.rationale ? (
@@ -302,11 +302,11 @@ function WhyThisLead({ full, loading, failed, sessionId }: { full: LeadFull | un
                       {ev.claim}
                     </span>
                     {href ? (
-                      <a href={href} target="_blank" rel="noopener noreferrer" className="max-w-[45%] shrink-0 truncate text-[11px]/3.5 text-[#200D0D99] hover:text-ink hover:underline">
+                      <a href={href} target="_blank" rel="noopener noreferrer" className="max-w-[45%] shrink-0 truncate text-[11px]/3.5 text-muted hover:text-ink hover:underline">
                         {shortUrl(ev.source_url)}
                       </a>
                     ) : (
-                      <span className="max-w-[45%] shrink-0 truncate text-[11px]/3.5 text-[#200D0D99]">{shortUrl(ev.source_url)}</span>
+                      <span className="max-w-[45%] shrink-0 truncate text-[11px]/3.5 text-muted">{shortUrl(ev.source_url)}</span>
                     )}
                   </li>
                 );
@@ -314,7 +314,7 @@ function WhyThisLead({ full, loading, failed, sessionId }: { full: LeadFull | un
             </ol>
           ) : null}
           {!l.rationale && !evidence.length ? (
-            <p className="text-[13px]/4.75 font-medium text-[#200D0D99]">No research saved for this lead yet. Every claim in a draft should link to a source the agent saved.</p>
+            <p className="text-[13px]/4.75 font-medium text-muted">No research saved for this lead yet. Every claim in a draft should link to a source the agent saved.</p>
           ) : null}
         </>
       )}

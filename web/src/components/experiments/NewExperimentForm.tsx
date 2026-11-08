@@ -14,7 +14,7 @@ export type Enrollment = { enrolled: number; skipped: string[] };
 
 const input =
   "h-9 w-full rounded-lg border border-[#200D0D26] bg-white px-3 text-[13px]/4.5 font-medium text-ink placeholder:text-[#200D0D59] focus:border-ink focus:outline-none";
-const labelCls = "text-xs/4 font-medium text-[#200D0D99]";
+const labelCls = "text-xs/4 font-medium text-muted";
 
 function Field({ label, hint, children, htmlFor }: { label: string; hint?: string; children: ReactNode; htmlFor: string }) {
   return (
@@ -23,7 +23,7 @@ function Field({ label, hint, children, htmlFor }: { label: string; hint?: strin
         {label}
       </label>
       {children}
-      {hint ? <div className="text-[11px]/3.5 font-medium text-[#200D0D80]">{hint}</div> : null}
+      {hint ? <div className="text-[11px]/3.5 font-medium text-faint">{hint}</div> : null}
     </div>
   );
 }
@@ -88,7 +88,7 @@ export function NewExperimentForm({ onCancel, onCreated }: { onCancel: () => voi
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <h2 className="text-lg/6 font-semibold tracking-[-0.015em] text-ink">New experiment</h2>
-          <p className="max-w-130 text-[13px]/4.5 font-medium text-[#200D0D99]">
+          <p className="max-w-130 text-[13px]/4.5 font-medium text-muted">
             One hypothesis, two message variants. Each lead keeps its variant for the whole test, and every send still waits for your approval.
           </p>
         </div>
@@ -166,7 +166,7 @@ export function NewExperimentForm({ onCancel, onCreated }: { onCancel: () => voi
       <LeadPicker selected={leadIds} onChange={setLeadIds} />
 
       {err ? (
-        <p role="alert" className={cx("text-xs/4 font-medium", err.calm ? "text-[#200D0D99]" : "text-[#B42318]")}>
+        <p role="alert" className={cx("text-xs/4 font-medium", err.calm ? "text-muted" : "text-[#B42318]")}>
           {err.title}. {err.body}
         </p>
       ) : null}
@@ -178,7 +178,7 @@ export function NewExperimentForm({ onCancel, onCreated }: { onCancel: () => voi
         >
           {create.isPending ? "Creating…" : "Create experiment"}
         </button>
-        <span className="text-xs/4 font-medium text-[#200D0D80]">Creating it sends nothing.</span>
+        <span className="text-xs/4 font-medium text-faint">Creating it sends nothing.</span>
       </div>
     </form>
   );
@@ -212,7 +212,7 @@ function LeadPicker({ selected, onChange }: { selected: Set<string>; onChange: (
             <Skeleton className="h-4 w-1/2" />
           </div>
         ) : rows.length === 0 ? (
-          <div className="px-3.5 py-3 text-xs/4 font-medium text-[#200D0D80]">
+          <div className="px-3.5 py-3 text-xs/4 font-medium text-faint">
             {leads.isError ? errorCopy(leads.error, "Leads").body : "No leads yet. You can create the experiment now and enroll leads once your agents find some."}
           </div>
         ) : (
@@ -220,7 +220,7 @@ function LeadPicker({ selected, onChange }: { selected: Set<string>; onChange: (
             <label key={l.id} className="flex h-9 cursor-pointer items-center gap-2.5 border-b border-b-[#200D0D0F] px-3.5 last:border-b-0 hover:bg-[#200D0D05]">
               <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggle(l.id)} className="size-3.5 accent-[#200D0D]" />
               <span className="min-w-0 grow truncate text-[13px]/4 font-medium text-ink">{leadTitle(l)}</span>
-              <span className="truncate text-xs/4 font-medium text-[#200D0D80]">{l.email ?? l.domain ?? ""}</span>
+              <span className="truncate text-xs/4 font-medium text-faint">{l.email ?? l.domain ?? ""}</span>
               <span
                 className="flex size-5 shrink-0 items-center justify-center rounded-md text-[11px]/3 font-semibold"
                 style={{ background: ARM_COLOR[l.variant].badgeBg, color: ARM_COLOR[l.variant].text }}
@@ -232,7 +232,7 @@ function LeadPicker({ selected, onChange }: { selected: Set<string>; onChange: (
           ))
         )}
       </div>
-      <div className="text-[11px]/3.5 font-medium text-[#200D0D80]">Leads already in another running experiment are skipped.</div>
+      <div className="text-[11px]/3.5 font-medium text-faint">Leads already in another running experiment are skipped.</div>
     </div>
   );
 }

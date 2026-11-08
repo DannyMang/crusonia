@@ -20,13 +20,13 @@ function Row({ a, selected, now }: { a: ApprovalListItem; selected: boolean; now
     >
       <div className="flex items-center gap-1.5">
         <span className={cx("max-w-[60%] shrink-0 truncate text-[13px]/4 text-ink", selected ? "font-semibold" : "font-medium")}>{rowTitle(a)}</span>
-        <span className="min-w-0 grow truncate text-[13px]/4 font-medium text-[#200D0D8C]">{sub}</span>
+        <span className="min-w-0 grow truncate text-[13px]/4 font-medium text-muted">{sub}</span>
         <span className={cx("shrink-0 tabular-nums text-xs/4 font-medium", urgent ? "text-[#B42318]" : "text-ink")}>{timeLeft(a.expires_at, now)}</span>
       </div>
       <div className="flex items-center gap-2">
         <span className={cx("flex h-4.5 shrink-0 items-center rounded-full px-1.75 text-[11px]/3.5 font-medium text-ink", selected ? "bg-lime" : "bg-pill")}>{rowTag(a)}</span>
-        <span className="min-w-0 grow truncate text-xs/4 font-medium text-[#200D0D8C]">{rowContext(a)}</span>
-        <span className={cx("shrink-0 tabular-nums text-[11px]/3.5", selected ? "font-semibold text-ink" : "font-medium text-[#200D0D99]")}>{a.code}</span>
+        <span className="min-w-0 grow truncate text-xs/4 font-medium text-muted">{rowContext(a)}</span>
+        <span className={cx("shrink-0 tabular-nums text-[11px]/3.5", selected ? "font-semibold text-ink" : "font-medium text-muted")}>{a.code}</span>
       </div>
     </Link>
   );
@@ -36,7 +36,7 @@ function GroupHeader({ title, note }: { title: string; note: string }) {
   return (
     <div className="flex h-8.5 shrink-0 items-center gap-2 border-b border-b-[#200D0D1A] bg-[#200D0D08] px-4">
       <h3 className="text-xs/4 font-semibold text-ink">{title}</h3>
-      <span className="text-xs/4 font-medium text-[#200D0D8C]">· {note}</span>
+      <span className="text-xs/4 font-medium text-muted">· {note}</span>
     </div>
   );
 }
@@ -60,8 +60,8 @@ export function Queue({
   return (
     <div className="flex w-100 shrink-0 flex-col border-r border-r-[#200D0D1A]">
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-b-[#200D0D1A] bg-[#200D0D06] px-4">
-        <span className="text-xs/4 font-medium text-[#200D0D80]">Waiting for you</span>
-        <span className="text-xs/4 font-medium text-[#200D0D80]">Expires</span>
+        <span className="text-xs/4 font-medium text-faint">Waiting for you</span>
+        <span className="text-xs/4 font-medium text-faint">Expires</span>
       </div>
       <nav aria-label="Approvals waiting" className="flex min-h-0 grow flex-col overflow-y-auto">
         {loading ? (
@@ -99,7 +99,7 @@ export function Queue({
           <circle cx="12" cy="12" r="9" fill="none" stroke="rgb(32 13 13 / 55%)" strokeWidth="2" />
           <path d="M12 7v5l3 2" fill="none" stroke="rgb(32 13 13 / 55%)" strokeWidth="2" strokeLinecap="round" />
         </svg>
-        <p className="text-xs/4.25 font-medium text-[#200D0D8C]">
+        <p className="text-xs/4.25 font-medium text-muted">
           Each approval is bound to one recipient and one draft version, and expires{" "}
           {ttl ? `${ttl} min after it is requested` : "if nobody decides in time"}. Expired drafts go back to the agent.
         </p>

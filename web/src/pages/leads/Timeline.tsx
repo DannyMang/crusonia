@@ -73,7 +73,7 @@ function DataChips({ data }: { data: Record<string, unknown> }) {
     <div className="flex flex-wrap items-center gap-1.5">
       {entries.map(([k, v]) => (
         <span key={k} className="flex h-4.5 max-w-full items-center truncate rounded-md bg-pill px-1.75 text-[11px]/3.5 text-[#200D0DB3]">
-          <span className="text-[#200D0D80]">{k}</span>&nbsp;{v}
+          <span className="text-faint">{k}</span>&nbsp;{v}
         </span>
       ))}
     </div>
@@ -97,7 +97,7 @@ export function Timeline({ events, pending }: { events: TimelineEvent[]; pending
     <section className="flex flex-col gap-3">
       <div className="flex items-baseline gap-2.5">
         <h2 className="text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink">Agent timeline</h2>
-        <div className="text-[13px]/4 font-medium text-[#200D0D8C]">
+        <div className="text-[13px]/4 font-medium text-muted">
           {ordered.length ? [plural(ordered.length, "step"), span > 60_000 ? `over ${duration(span)}` : null].filter(Boolean).join(" · ") : "nothing yet"}
         </div>
       </div>
@@ -105,7 +105,7 @@ export function Timeline({ events, pending }: { events: TimelineEvent[]; pending
         {!ordered.length ? (
           <div className="flex flex-col gap-1 px-4 py-5">
             <div className="text-[13px]/4 font-semibold text-ink">No activity yet</div>
-            <div className="text-xs/4.5 font-medium text-[#200D0D8C]">
+            <div className="text-xs/4.5 font-medium text-muted">
               Every step the agent takes on this lead (research, scoring, drafting, sending, replies) is logged here with its time.
             </div>
           </div>
@@ -126,10 +126,10 @@ export function Timeline({ events, pending }: { events: TimelineEvent[]; pending
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-baseline gap-2">
-                  <span className="text-[11px]/3.5 font-medium tabular-nums text-[#200D0D66]">#{n}</span>
+                  <span className="text-[11px]/3.5 font-medium tabular-nums text-faint">#{n}</span>
                   <span className={cx("truncate text-xs/4 font-semibold", BAD.has(e.kind) ? "text-[#B42318]" : "text-ink")}>{eventTitle(e.kind)}</span>
                 </div>
-                <time dateTime={e.created_at} className="shrink-0 text-[11px]/3.5 font-medium tabular-nums text-[#200D0D66]">
+                <time dateTime={e.created_at} className="shrink-0 text-[11px]/3.5 font-medium tabular-nums text-faint">
                   {stamp(e.created_at)}
                   {cost !== null ? ` · ${usd(cost)}` : ""}
                 </time>
@@ -148,11 +148,11 @@ export function Timeline({ events, pending }: { events: TimelineEvent[]; pending
         })}
         {sendPending && ordered.length ? (
           <div className="flex flex-col gap-1 border-t border-t-[#200D0D14] px-4 pb-3 pt-2.5">
-            <div className="flex gap-2.5 text-[11px]/4 font-medium text-[#200D0D66]">
+            <div className="flex gap-2.5 text-[11px]/4 font-medium text-faint">
               <span className="w-5 shrink-0 tabular-nums">#{ordered.length + 1}</span>
               <span>Send · goes out after you approve the draft</span>
             </div>
-            <div className="flex gap-2.5 text-[11px]/4 font-medium text-[#200D0D66]">
+            <div className="flex gap-2.5 text-[11px]/4 font-medium text-faint">
               <span className="w-5 shrink-0 tabular-nums">#{ordered.length + 2}</span>
               <span>Reply · sorted into Interested, Not now or Unsubscribed</span>
             </div>

@@ -89,7 +89,7 @@ export default function Step1Company() {
               )}
             >
               <span className="sr-only">Your website</span>
-              <span aria-hidden className="text-sm/5 font-medium text-[#200D0D66]">
+              <span aria-hidden className="text-sm/5 font-medium text-faint">
                 https://
               </span>
               <input
@@ -149,7 +149,7 @@ export default function Step1Company() {
             }}
             className="flex items-center gap-2 self-start text-sm/4.5 font-medium text-ink underline decoration-[#200D0D4D] decoration-1 underline-offset-[3px] hover:decoration-ink"
           >
-            <PencilIcon size={14} className="text-[#200D0D99]" />
+            <PencilIcon size={14} className="text-muted" />
             {mode === "url" ? "or tell us what you're building" : "or use your website instead"}
           </button>
           <div className="h-px shrink-0 bg-[#200D0D14]" />
@@ -160,7 +160,7 @@ export default function Step1Company() {
             </svg>
             <div className="flex grow basis-0 flex-col gap-0.75">
               <div className="text-sm/4.5 font-medium text-ink">Connect your agent instead</div>
-              <div className="text-[13px]/4.5 font-medium text-[#200D0D99]">Already in Claude Code, Cursor or Codex? Set up from there over MCP.</div>
+              <div className="text-[13px]/4.5 font-medium text-muted">Already in Claude Code, Cursor or Codex? Set up from there over MCP.</div>
             </div>
             <ChevronRight className="self-center text-green" />
           </Link>
@@ -196,7 +196,7 @@ function SavedProfileCard({ profile }: { profile: Profile }) {
       </svg>
       <div className="flex grow basis-0 flex-col gap-0.75">
         <div className="text-sm/4.5 font-medium text-ink">Review your profile</div>
-        <div className="text-[13px]/4.5 font-medium text-[#200D0D99]">You already have one: {bits.join(" · ")}.</div>
+        <div className="text-[13px]/4.5 font-medium text-muted">You already have one: {bits.join(" · ")}.</div>
       </div>
       <ChevronRight className="self-center text-green" />
     </button>

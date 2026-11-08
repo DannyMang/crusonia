@@ -149,7 +149,7 @@ export function DraftCard({
         <div className="px-4 pb-3 pt-3.5 text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink">Draft</div>
         <div className="flex flex-col gap-1 border-t border-t-[#200D0D14] px-4 py-5">
           <div className="text-[13px]/4 font-semibold text-ink">No draft yet</div>
-          <div className="text-xs/4.5 font-medium text-[#200D0D8C]">
+          <div className="text-xs/4.5 font-medium text-muted">
             {lead.stage === "unsubscribed"
               ? "This lead unsubscribed, so no email is ever drafted or sent to them again."
               : lead.has_consent
@@ -171,7 +171,7 @@ export function DraftCard({
       <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-3.5">
         <div className="flex items-baseline gap-2.5">
           <h2 className="text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink">Draft</h2>
-          <div className="text-xs/4 tabular-nums text-[#200D0D8C]">
+          <div className="text-xs/4 tabular-nums text-muted">
             v{draft.version} · variant {draft.variant}
           </div>
         </div>
@@ -187,14 +187,14 @@ export function DraftCard({
           }}
         >
           <label className="flex flex-col gap-1">
-            <span className="text-xs/4 font-medium text-[#200D0D8C]">Subject</span>
+            <span className="text-xs/4 font-medium text-muted">Subject</span>
             <input value={subject} onChange={(e) => setSubject(e.target.value)} required className={inputClass} />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs/4 font-medium text-[#200D0D8C]">Body</span>
+            <span className="text-xs/4 font-medium text-muted">Body</span>
             <textarea value={body} onChange={(e) => setBody(e.target.value)} required rows={14} className={cx(textareaClass, "resize-y")} />
           </label>
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">
+          <div className="text-xs/4 font-medium text-muted">
             Saving creates v{draft.version + 1} with a new approval code. It still waits for you; nothing sends.
           </div>
           {edit.isError ? <QueryError error={edit.error} what="editing drafts" /> : null}
@@ -211,11 +211,11 @@ export function DraftCard({
         <>
           <div className="flex flex-col gap-1.5 border-t border-t-[#200D0D14] px-4 py-3">
             <div className="flex gap-2.5">
-              <div className="w-13 shrink-0 text-xs/4 font-medium text-[#200D0D8C]">To</div>
+              <div className="w-13 shrink-0 text-xs/4 font-medium text-muted">To</div>
               <div className="min-w-0 wrap-anywhere text-xs/4 text-ink">{to ?? "No email yet"}</div>
             </div>
             <div className="flex gap-2.5">
-              <div className="w-13 shrink-0 text-xs/4 font-medium text-[#200D0D8C]">Subject</div>
+              <div className="w-13 shrink-0 text-xs/4 font-medium text-muted">Subject</div>
               <div className="min-w-0 text-[13px]/4 font-semibold text-ink">{draft.subject}</div>
             </div>
           </div>
@@ -243,7 +243,7 @@ export function DraftCard({
               }}
             >
               <label className="flex flex-col gap-1">
-                <span className="text-xs/4 font-medium text-[#200D0D8C]">Why? Optional, the agent reads this for its next draft</span>
+                <span className="text-xs/4 font-medium text-muted">Why? Optional, the agent reads this for its next draft</span>
                 <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Too long; lead with the job post" autoFocus className={inputClass} />
               </label>
               {reject.isError ? <QueryError error={reject.error} what="rejecting drafts" /> : null}
@@ -288,7 +288,7 @@ export function DraftCard({
                   Reject
                 </button>
               </div>
-              <div className="text-xs/4 font-medium text-[#200D0D8C]">
+              <div className="text-xs/4 font-medium text-muted">
                 Approving sends this exact draft to {to ?? "the lead"} · code <span className="tabular-nums text-ink">{approval.code}</span> · expires in{" "}
                 {timeLeft(approval.expires_at)}
               </div>
@@ -299,18 +299,18 @@ export function DraftCard({
       ) : null}
 
       {edit.isSuccess && mode === "view" ? (
-        <div className="border-t border-t-[#200D0D14] px-4 py-2.5 text-xs/4 font-medium text-[#200D0D8C]">
+        <div className="border-t border-t-[#200D0D14] px-4 py-2.5 text-xs/4 font-medium text-muted">
           Saved as v{edit.data.draft?.version ?? draft.version + 1} · new code <span className="tabular-nums text-ink">{edit.data.approval.code}</span>
         </div>
       ) : null}
 
       {earlier.length ? (
         <div className="flex flex-col gap-1 border-t border-t-[#200D0D14] px-4 py-2.5">
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">Earlier versions</div>
+          <div className="text-xs/4 font-medium text-muted">Earlier versions</div>
           {earlier.slice(0, 4).map((d) => (
             <div key={d.id} className="flex flex-wrap items-center gap-1.5 text-xs/4 font-medium text-ink">
               <span className="tabular-nums">v{d.version}</span>
-              <span className="text-[#200D0D8C]">{(DRAFT_STATUS[d.status]?.label ?? d.status).toLowerCase()}</span>
+              <span className="text-muted">{(DRAFT_STATUS[d.status]?.label ?? d.status).toLowerCase()}</span>
               {d.error ? <span className="rounded-full bg-[#C4873B1F] px-2 text-[11px]/4.5 text-[#A16207]">{d.error}</span> : null}
             </div>
           ))}

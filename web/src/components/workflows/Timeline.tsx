@@ -93,7 +93,7 @@ function WhatHappened({ step, lead, name }: { step: RunStep; lead: RunLead | nul
       ) : null}
       <span className={cx("min-w-0 truncate text-[13px]/4 font-medium", step.is_error ? "text-[#B42318]" : "text-ink")} title={step.summary}>
         {text}
-        {source ? <span className="pl-1.5 text-[11px] text-[#200D0D8C]">{shortUrl(source)}</span> : null}
+        {source ? <span className="pl-1.5 text-[11px] text-muted">{shortUrl(source)}</span> : null}
       </span>
     </div>
   );
@@ -104,10 +104,10 @@ function Panel({ title, value }: { title: string; value: unknown }) {
   return (
     <div className="flex min-w-0 grow basis-0 flex-col overflow-clip rounded-lg border border-[#200D0D14] bg-white">
       <div className="flex h-6.5 shrink-0 items-center border-b border-b-[#200D0D14] bg-[#200D0D08] px-3">
-        <h4 className="text-[11px]/3.5 font-semibold tracking-[0.08em] text-[#200D0D66]">{title}</h4>
+        <h4 className="text-[11px]/3.5 font-semibold tracking-[0.08em] text-faint">{title}</h4>
       </div>
       <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words px-3 py-2.5 font-sans text-xs/4.5 font-medium tabular-nums text-ink">
-        {text || <span className="text-[#200D0D73]">Nothing recorded</span>}
+        {text || <span className="text-faint">Nothing recorded</span>}
       </pre>
     </div>
   );
@@ -142,7 +142,7 @@ export function Timeline({
       <div className="flex h-11 shrink-0 items-center justify-between gap-4 px-4">
         <div className="flex min-w-0 items-baseline gap-2.5">
           <h2 className="text-sm/4 font-semibold text-ink">Timeline</h2>
-          <span className="truncate text-xs/4 font-medium text-[#200D0D8C]">
+          <span className="truncate text-xs/4 font-medium text-muted">
             {steps.length ? `${steps.length} ${steps.length === 1 ? "step" : "steps"} · click a step to see its input and output` : "no steps yet"}
           </span>
         </div>
@@ -150,7 +150,7 @@ export function Timeline({
           {present.map((k) => (
             <span key={k} className="flex items-center gap-1.5">
               <span className="size-2 shrink-0 rounded-xs" style={{ background: CATS[k].color }} />
-              <span className="text-xs/4 font-medium text-[#200D0D8C]">{CATS[k].label}</span>
+              <span className="text-xs/4 font-medium text-muted">{CATS[k].label}</span>
             </span>
           ))}
         </div>
@@ -167,7 +167,7 @@ export function Timeline({
           <col className="w-8" />
         </colgroup>
         <thead>
-          <tr className="h-8 border-y border-y-[#200D0D14] bg-[#200D0D06] text-xs/4 text-[#200D0D80]">
+          <tr className="h-8 border-y border-y-[#200D0D14] bg-[#200D0D06] text-xs/4 text-faint">
             <th scope="col" className="pl-4 pr-3 font-medium">
               #
             </th>
@@ -209,10 +209,10 @@ export function Timeline({
                   onClick={() => setOpen(expanded ? null : step.seq)}
                   className={cx("h-11.5 cursor-pointer", expanded ? "bg-[#BDE6891A]" : "border-b border-b-[#200D0D14] hover:bg-[#200D0D04]")}
                 >
-                  <td className="pl-4 pr-3 align-middle text-[11px]/3.5 font-medium tabular-nums text-[#200D0D66]">{step.seq}</td>
+                  <td className="pl-4 pr-3 align-middle text-[11px]/3.5 font-medium tabular-nums text-faint">{step.seq}</td>
                   <td className="pr-3">
                     <div className="truncate text-xs/4 font-semibold text-ink">{c.name}</div>
-                    <div className="truncate text-[11px]/3.5 font-medium text-[#200D0D73]">{c.caption}</div>
+                    <div className="truncate text-[11px]/3.5 font-medium text-faint">{c.caption}</div>
                   </td>
                   <td className="pr-3">
                     <WhatHappened step={step} lead={lead} name={c.name} />
@@ -236,10 +236,10 @@ export function Timeline({
                       )}
                     </div>
                   </td>
-                  <td className={cx("pr-3 text-right text-xs/4 tabular-nums", pending ? "text-green" : "text-[#200D0D8C]")}>
+                  <td className={cx("pr-3 text-right text-xs/4 tabular-nums", pending ? "text-green" : "text-muted")}>
                     {step.duration_ms !== undefined ? duration(step.duration_ms) : pending ? duration(now - t!) : "—"}
                   </td>
-                  <td className={cx("pr-3 text-right text-xs/4 font-medium tabular-nums", step.cost_usd ? "text-ink" : "text-[#200D0D66]")}>
+                  <td className={cx("pr-3 text-right text-xs/4 font-medium tabular-nums", step.cost_usd ? "text-ink" : "text-faint")}>
                     {step.cost_usd !== undefined ? usd(step.cost_usd) : "—"}
                   </td>
                   <td className="pr-4 text-center">
@@ -277,7 +277,7 @@ export function Timeline({
             <tr>
               <td colSpan={7} className="px-4 py-10 text-center">
                 <div className="text-[13px]/4 font-semibold text-ink">No steps recorded yet</div>
-                <div className="mt-1 text-xs/4 font-medium text-[#200D0D8C]">Steps appear here as the agent works: every tool call, message and model request.</div>
+                <div className="mt-1 text-xs/4 font-medium text-muted">Steps appear here as the agent works: every tool call, message and model request.</div>
               </td>
             </tr>
           ) : null}
@@ -290,7 +290,7 @@ export function Timeline({
             <circle cx="12" cy="12" r="9" fill="none" stroke="rgb(32 13 13 / 55%)" strokeWidth="2" />
             <path d="M12 7v5l3 2" fill="none" stroke="rgb(32 13 13 / 55%)" strokeWidth="2" strokeLinecap="round" />
           </svg>
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">{footer}</div>
+          <div className="text-xs/4 font-medium text-muted">{footer}</div>
         </div>
       ) : null}
     </div>

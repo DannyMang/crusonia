@@ -135,7 +135,7 @@ export default function Approvals() {
       <div className="flex h-9 shrink-0 items-center justify-between gap-6">
         <div className="flex min-w-0 items-baseline gap-3">
           <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Approvals</h1>
-          <p className="truncate text-[13px]/4 font-medium text-[#200D0D8C]">Nothing is sent until someone approves the exact draft.</p>
+          <p className="truncate text-[13px]/4 font-medium text-muted">Nothing is sent until someone approves the exact draft.</p>
         </div>
         <SearchField inputRef={searchRef} value={search} onChange={setSearch} placeholder="Search recipient, company, code" className="h-8 w-65" />
       </div>
@@ -150,12 +150,12 @@ export default function Approvals() {
             <FilterChip label="Variant" value={variant} options={[{ value: "", label: "Any" }, ...variants.map((v) => ({ value: v, label: v }))]} onChange={setVariant} />
           ) : null}
           {filtering ? (
-            <button type="button" onClick={clearFilters} className="h-7.5 rounded-full px-2.5 text-[13px]/4 font-medium text-[#200D0D99] hover:bg-[#200D0D08] hover:text-ink">
+            <button type="button" onClick={clearFilters} className="h-7.5 rounded-full px-2.5 text-[13px]/4 font-medium text-muted hover:bg-[#200D0D08] hover:text-ink">
               Clear
             </button>
           ) : null}
         </div>
-        <div className="shrink-0 text-[13px]/4 tabular-nums text-[#200D0D73]" aria-live="polite">
+        <div className="shrink-0 text-[13px]/4 tabular-nums text-faint" aria-live="polite">
           {counts.join(" · ")}
         </div>
       </div>
@@ -195,7 +195,7 @@ export default function Approvals() {
             emptyNote={
               <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
                 <div className="text-[13px]/4 font-semibold text-ink">No approvals match</div>
-                <div className="text-xs/4 font-medium text-[#200D0D8C]">{all.length ? `${all.length} waiting outside these filters.` : "Nothing of this kind is waiting."}</div>
+                <div className="text-xs/4 font-medium text-muted">{all.length ? `${all.length} waiting outside these filters.` : "Nothing of this kind is waiting."}</div>
                 <Button variant="soft" onClick={clearFilters} className="mt-1">
                   Clear filters
                 </Button>

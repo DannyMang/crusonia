@@ -43,13 +43,13 @@ export default function Connect() {
           <div className="flex items-end justify-between gap-8">
             <div className="flex flex-col gap-2">
               <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Connect your agent</h1>
-              <p className="w-130 max-w-full text-[13px]/4.5 font-medium text-[#200D0D99]">
+              <p className="w-130 max-w-full text-[13px]/4.5 font-medium text-muted">
                 Run Crusonia from Claude Code, Cursor or Codex. Your agent gets the same tools the dashboard uses, over MCP, with sends still waiting for your
                 approval.
               </p>
             </div>
             <div className="flex shrink-0 flex-col gap-1.5">
-              <div className="text-xs/4 font-medium text-[#200D0D80]">MCP endpoint</div>
+              <div className="text-xs/4 font-medium text-faint">MCP endpoint</div>
               <div className="flex h-8.5 shrink-0 items-center gap-2.5 rounded-lg bg-[#200D0D0A] pl-3 pr-1.5">
                 <code className="text-xs/4 font-medium text-ink">{mcpUrl}</code>
                 <CopyChip text={mcpUrl} />
@@ -81,14 +81,14 @@ function ToolsCard() {
     <Card className="flex w-90 shrink-0 flex-col px-6 pb-2.5 pt-6">
       <div className="flex items-center gap-2 pb-1.5">
         <h2 className="text-[15px]/4.5 font-medium text-ink">Available tools</h2>
-        <span className="flex h-4.5 items-center rounded-full bg-[#200D0D14] px-1.5 text-xs/3 font-medium text-[#200D0D94]">{TOOL_COUNT}</span>
+        <span className="flex h-4.5 items-center rounded-full bg-[#200D0D14] px-1.5 text-xs/3 font-medium text-faint">{TOOL_COUNT}</span>
       </div>
-      <p className="pb-2.5 text-[13px]/4.5 font-medium text-[#200D0D99]">What your agent can call. Anything that sends waits in Approvals.</p>
+      <p className="pb-2.5 text-[13px]/4.5 font-medium text-muted">What your agent can call. Anything that sends waits in Approvals.</p>
       <ul className="flex flex-col">
         {TOOLS.map((t) => (
           <li key={t.name} className="flex flex-col gap-0.75 border-t border-t-[#200D0D0F] py-2.5">
             <code className="text-[13px]/4.5 font-medium text-ink">{t.name}</code>
-            <span className="text-xs/4 font-medium text-[#200D0D8C]">{t.description}</span>
+            <span className="text-xs/4 font-medium text-muted">{t.description}</span>
           </li>
         ))}
       </ul>

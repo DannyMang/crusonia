@@ -72,7 +72,7 @@ export function ApiKeysCard({ created, onCreated }: { created: CreatedKey | null
           <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-green" />
           <div>
             <div className="font-semibold text-ink">API keys are coming online</div>
-            <div className="font-medium text-[#200D0D99]">
+            <div className="font-medium text-muted">
               API keys come online with the next backend update; until then the owner token works (the Worker's{" "}
               <code className="text-xs text-ink">MCP_TOKEN</code>, see the README).
             </div>
@@ -137,7 +137,7 @@ function CreateKeyForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
           Cancel
         </button>
       </div>
-      <p className={cx("text-xs/4 font-medium", err && !err.calm ? "text-[#B42318]" : "text-[#200D0D80]")}>
+      <p className={cx("text-xs/4 font-medium", err && !err.calm ? "text-[#B42318]" : "text-faint")}>
         {err ? `${err.title}. ${err.body}` : "Name it after where it runs, so you know which one to revoke later."}
       </p>
     </form>
@@ -169,7 +169,7 @@ function NewKey({ k, onDone }: { k: CreatedKey; onDone: () => void }) {
 }
 
 function KeyTable({ rows }: { rows: ApiKey[] }) {
-  const th = "h-7 p-0 text-left text-xs/4 font-medium text-[#200D0D80]";
+  const th = "h-7 p-0 text-left text-xs/4 font-medium text-faint";
   return (
     <table className="w-full table-fixed border-collapse">
       <colgroup>
@@ -204,21 +204,21 @@ function KeyTable({ rows }: { rows: ApiKey[] }) {
           const recent = !revoked && k.last_used_at && Date.now() - new Date(k.last_used_at).getTime() < DAY;
           return (
             <tr key={k.id} className={cx(i < rows.length - 1 && "border-b border-b-[#200D0D1A]")}>
-              <td className={cx("h-14 truncate p-0 pr-3 text-sm/4.5 font-medium", revoked ? "text-[#200D0D80]" : "text-ink")} title={k.name}>
+              <td className={cx("h-14 truncate p-0 pr-3 text-sm/4.5 font-medium", revoked ? "text-faint" : "text-ink")} title={k.name}>
                 {k.name}
               </td>
-              <td className="truncate p-0 pr-3 text-xs/4 font-medium tabular-nums text-[#200D0D80]">{k.prefix}…</td>
-              <td className="p-0 text-xs/4 font-medium text-[#200D0D8C]">{longDate(k.created_at)}</td>
+              <td className="truncate p-0 pr-3 text-xs/4 font-medium tabular-nums text-faint">{k.prefix}…</td>
+              <td className="p-0 text-xs/4 font-medium text-muted">{longDate(k.created_at)}</td>
               <td className="p-0 text-xs/4 font-medium">
                 {revoked ? (
-                  <span className="text-[#200D0D8C]">{k.revoked_at ? `Revoked ${longDate(k.revoked_at)}` : "Revoked"}</span>
+                  <span className="text-muted">{k.revoked_at ? `Revoked ${longDate(k.revoked_at)}` : "Revoked"}</span>
                 ) : k.last_used_at ? (
-                  <span className={cx("inline-flex items-center gap-1.5", recent ? "text-ink" : "text-[#200D0D8C]")}>
+                  <span className={cx("inline-flex items-center gap-1.5", recent ? "text-ink" : "text-muted")}>
                     {recent ? <span className="size-1.5 shrink-0 rounded-full bg-green" /> : null}
                     {lastUsed(k.last_used_at)}
                   </span>
                 ) : (
-                  <span className="text-[#200D0D8C]">Never used</span>
+                  <span className="text-muted">Never used</span>
                 )}
               </td>
               <td className="p-0 text-right">

@@ -69,7 +69,7 @@ export default function Step4Leads() {
                   Researched {Math.min(researched, target)} of {target}
                 </div>
               </div>
-              <div className="flex items-center gap-3 text-[13px]/4 font-medium text-[#200D0D8C]">
+              <div className="flex items-center gap-3 text-[13px]/4 font-medium text-muted">
                 <span className="tabular-nums">
                   {[researching ? `${researching} in progress` : null, queued ? `${queued} queued` : null, !researching && !queued && !complete ? (leads.length ? "waiting for the next lead" : "waiting for the first lead") : null]
                     .filter(Boolean)
@@ -94,7 +94,7 @@ export default function Step4Leads() {
           <>
             <LeadsTable leads={shown} />
             <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
-              <div className="text-[13px]/4.5 font-medium text-[#200D0D8C]">
+              <div className="text-[13px]/4.5 font-medium text-muted">
                 Showing the latest {shown.length} · {researched} researched, {researching} in progress, {queued} queued. Drafts for the top leads will wait in
                 Approvals.
               </div>
@@ -117,7 +117,7 @@ function inRun(all: Lead[], startedAt: number | undefined) {
   return all.filter((l) => new Date(l.created_at).getTime() >= from).sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
-const th = "h-10 text-left text-xs/4 font-medium text-[#200D0D80]";
+const th = "h-10 text-left text-xs/4 font-medium text-faint";
 
 function LeadsTable({ leads }: { leads: Lead[] }) {
   return (
@@ -163,7 +163,7 @@ function Row({ l }: { l: Lead }) {
             </Link>
             {fresh ? <span className="flex h-4.5 shrink-0 items-center rounded-full bg-highlight px-1.75 text-[11px]/3.5 font-semibold text-ink">Just now</span> : null}
           </div>
-          {domain && domain !== leadTitle(l) ? <div className="truncate text-xs/4 font-medium text-[#200D0D80]">{domain}</div> : null}
+          {domain && domain !== leadTitle(l) ? <div className="truncate text-xs/4 font-medium text-faint">{domain}</div> : null}
         </div>
       </td>
       <td className="truncate pr-4 text-[13px]/4 font-medium text-ink">{sourceName(l.source)}</td>
@@ -173,9 +173,9 @@ function Row({ l }: { l: Lead }) {
             <span className="truncate">{l.rationale}</span>
           </span>
         ) : phase === "researching" ? (
-          <span className="text-[13px]/4 font-medium text-[#200D0D8C]">Looking for evidence…</span>
+          <span className="text-[13px]/4 font-medium text-muted">Looking for evidence…</span>
         ) : phase === "researched" ? (
-          <span className="text-[13px]/4 font-medium text-[#200D0D8C]">—</span>
+          <span className="text-[13px]/4 font-medium text-muted">—</span>
         ) : null}
       </td>
       <td>
@@ -202,7 +202,7 @@ const SHORT: Record<string, string> = { qualified: "Researched", awaiting_approv
 const DOT: Record<string, string> = { disqualified: "bg-[#200D0D4D]", needs_review: "bg-[#D97706]", unsubscribed: "bg-[#B42318]", not_interested: "bg-[#200D0D4D]" };
 
 function Status({ stage, phase }: { stage: string; phase: Phase }) {
-  if (phase === "queued") return <span className="text-[13px]/4 font-medium text-[#200D0D99]">Queued</span>;
+  if (phase === "queued") return <span className="text-[13px]/4 font-medium text-muted">Queued</span>;
   if (phase === "researching")
     return (
       <span className="flex items-center gap-2 text-[13px]/4 font-medium text-ink">
@@ -223,7 +223,7 @@ function Waiting({ running }: { running: boolean }) {
     <div className="flex flex-col items-center gap-2 rounded-xl border border-[#200D0D1A] bg-white px-6 py-14 text-center">
       {running ? <Ring size={18} /> : null}
       <div className="pt-1 text-[15px]/5 font-semibold tracking-[-0.01em] text-ink">{running ? "Looking for companies that match your profile" : "No leads yet"}</div>
-      <p className="max-w-md text-[13px]/5 font-medium text-[#200D0D8C]">
+      <p className="max-w-md text-[13px]/5 font-medium text-muted">
         {running
           ? "The agent searches for companies like your best customers, then researches each one. The first ones usually show up within a few minutes, and this page updates on its own."
           : "Start a search from your profile and your first leads show up here as the agent finds and researches them."}

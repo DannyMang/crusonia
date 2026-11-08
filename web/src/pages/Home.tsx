@@ -11,7 +11,7 @@ import { Button, ButtonLink, Card, EmptyState, LiveChip, Pill, QueryError, Reply
 import { cx, duration, greeting, hostOf, num, plural, shortDate, timeAgo, usd, weekdayDate } from "../lib/format.ts";
 import { keys, useApprovals, useLeads, usePause, useProfile, useSummary } from "../queries.ts";
 
-const label = "text-[13px]/4 font-medium text-[#200D0D8C]";
+const label = "text-[13px]/4 font-medium text-muted";
 const sectionTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
 
 export default function Home() {
@@ -93,7 +93,7 @@ function Header({ data }: { data: Summary | undefined }) {
           {greeting()}
           {first ? `, ${first}` : ""}
         </h1>
-        <p className="text-sm/5 font-medium text-[#200D0D99]">
+        <p className="text-sm/5 font-medium text-muted">
           {weekdayDate()} ·{" "}
           {!data ? (
             "Loading your pipeline…"
@@ -180,7 +180,7 @@ function Stat({ title, value, note, accent }: { title: string; value: string | u
       ) : (
         <div className={cx("tabular-nums text-[22px]/7 font-semibold tracking-[-0.02em]", accent ? "text-green" : "text-ink")}>{value}</div>
       )}
-      <div className="text-xs/4 font-medium text-[#200D0D8C]">{note}</div>
+      <div className="text-xs/4 font-medium text-muted">{note}</div>
     </div>
   );
 }
@@ -230,7 +230,7 @@ function PipelineStrip({ data, partial }: { data: Summary | undefined; partial: 
             )}
             {p && p.awaiting_approval > 0 ? <Pill tone="lime">needs you</Pill> : null}
           </div>
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">
+          <div className="text-xs/4 font-medium text-muted">
             {oldest !== null ? `oldest waiting ${duration(oldest)}` : data?.pending_approvals_total ? plural(data.pending_approvals_total, "open approval") : "nothing waiting"}
           </div>
         </div>
@@ -287,17 +287,17 @@ function WaitingRow({ a }: { a: SummaryApproval }) {
     <div className="flex items-center gap-3.5 border-t border-t-[#200D0D14] px-4.5 py-3.5">
       <div className="flex w-34 shrink-0 flex-col gap-0.5">
         <div className="truncate text-sm/4.5 font-medium text-ink">{company}</div>
-        <div className="truncate text-[11px]/3.5 text-[#200D0D8C]">{hostOf(domain)}</div>
+        <div className="truncate text-[11px]/3.5 text-muted">{hostOf(domain)}</div>
       </div>
       <div className="flex min-w-0 grow basis-0 flex-col gap-0.75">
         <div className="truncate text-[13px]/4 font-medium text-ink">{a.subject ? `“${a.subject}”` : a.summary}</div>
-        <div className="truncate text-xs/4 font-medium text-[#200D0D8C]">
+        <div className="truncate text-xs/4 font-medium text-muted">
           {[a.company ? a.lead_name : null, workflow ?? (a.draft ? `draft v${a.draft.version}` : a.kind)].filter(Boolean).join(" · ")}
         </div>
       </div>
       <div className="flex w-19 shrink-0 flex-col items-end gap-0.5">
         <div className="whitespace-pre text-[13px]/4 font-semibold text-ink tabular-nums">{a.code}</div>
-        <div className="whitespace-pre text-[11px]/3.5 font-medium text-[#200D0D8C]">waiting {duration(Date.now() - new Date(a.created_at).getTime())}</div>
+        <div className="whitespace-pre text-[11px]/3.5 font-medium text-muted">waiting {duration(Date.now() - new Date(a.created_at).getTime())}</div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
         <ButtonLink to={`/app/approvals/${a.code}`} variant="outline" size="sm">
@@ -345,7 +345,7 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
       )}
       {shown.length ? (
         <div className="flex items-center justify-between border-t border-t-[#200D0D14] bg-[#200D0D06] px-4.5 py-3">
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">
+          <div className="text-xs/4 font-medium text-muted">
             {rest ? (
               <Link to="/app/approvals" className="hover:text-ink hover:underline">
                 {rest} more in Approvals
@@ -354,7 +354,7 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
               "That's everything"
             )}
           </div>
-          <div className="text-xs/4 font-medium text-[#200D0D8C]">Every claim in a draft links to its source</div>
+          <div className="text-xs/4 font-medium text-muted">Every claim in a draft links to its source</div>
         </div>
       ) : null}
     </Card>
@@ -374,7 +374,7 @@ function WorkflowCard({ w }: { w: Workflow }) {
       <div className="flex items-center justify-between gap-3">
         <Link to={to} className="flex min-w-0 items-baseline gap-2.5 hover:underline">
           <span className="truncate text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink">{w.name}</span>
-          <span className="shrink-0 text-xs/4 text-[#200D0D7A]">{w.purpose}</span>
+          <span className="shrink-0 text-xs/4 text-faint">{w.purpose}</span>
         </Link>
         <div className="flex items-center gap-2.5">
           {w.status === "running" ? (
@@ -399,7 +399,7 @@ function WorkflowCard({ w }: { w: Workflow }) {
           </button>
         </div>
       </div>
-      <div className="text-[13px]/3.75 font-medium text-[#200D0D80]">
+      <div className="text-[13px]/3.75 font-medium text-faint">
         {plural(w.run_count, "run")} · {w.active_runs} active · started {shortDate(w.first_started_at)}
         {w.last_event_at ? ` · last activity ${timeAgo(w.last_event_at)}` : ""}
       </div>
@@ -418,7 +418,7 @@ function WorkflowCard({ w }: { w: Workflow }) {
 function WfStat({ title, value, first }: { title: string; value: string; first?: boolean }) {
   return (
     <div className={cx("flex w-37.5 shrink-0 flex-col gap-1", !first && "border-l border-l-[#200D0D1A] pl-4.75")}>
-      <div className="text-[13px]/4 font-medium text-[#200D0D80]">{title}</div>
+      <div className="text-[13px]/4 font-medium text-faint">{title}</div>
       <div className="tabular-nums text-sm/4.5 font-semibold text-ink">{value}</div>
     </div>
   );
@@ -447,8 +447,8 @@ function ActiveWorkflows({ workflows, loading, partial }: { workflows: Workflow[
                 onClick={() => setTab(t)}
                 className={cx("flex h-7 items-center gap-2 rounded-full pr-2", active ? "bg-lime pl-3.5" : "pl-3 hover:bg-[#200D0D08]")}
               >
-                <span className={cx("text-[13px]/4 font-medium", active ? "text-ink" : "text-[#200D0D94]")}>{t === "running" ? "Running" : "Paused"}</span>
-                <span className={cx("flex h-4 items-center rounded-full px-1.5 tabular-nums text-xs/3 font-medium", active ? "bg-[#BDE6893D] text-ink" : "bg-[#200D0D14] text-[#200D0D94]")}>
+                <span className={cx("text-[13px]/4 font-medium", active ? "text-ink" : "text-faint")}>{t === "running" ? "Running" : "Paused"}</span>
+                <span className={cx("flex h-4 items-center rounded-full px-1.5 tabular-nums text-xs/3 font-medium", active ? "bg-[#BDE6893D] text-ink" : "bg-[#200D0D14] text-faint")}>
                   {n}
                 </span>
               </button>
@@ -493,7 +493,7 @@ function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loadin
     <Card className="flex flex-col gap-3.5 px-4.5 pb-4.5 pt-4">
       <div className="flex items-baseline justify-between">
         <h2 className={sectionTitle}>Spend this week</h2>
-        <div className="text-xs/4 font-medium text-[#200D0D8C]">last 7 days</div>
+        <div className="text-xs/4 font-medium text-muted">last 7 days</div>
       </div>
       {loading ? (
         <Skeleton className="h-7.5 w-40" />
@@ -501,7 +501,7 @@ function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loadin
         <>
           <div className="flex items-baseline gap-2">
             <div className="text-[26px]/7.5 font-semibold tracking-[-0.03em] text-ink tabular-nums">{usd(used ?? 0)}</div>
-            <div className="text-[13px]/4 font-medium text-[#200D0D8C]">
+            <div className="text-[13px]/4 font-medium text-muted">
               {budget !== null ? (
                 <>
                   of <span className="text-ink tabular-nums">{usd(budget)}</span> budget
@@ -521,7 +521,7 @@ function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loadin
           >
             <div className="h-full bg-ink" style={{ width: `${share}%` }} />
           </div>
-          <div className="border-t border-t-[#200D0D14] pt-3 text-xs/4 font-medium text-[#200D0D8C]">
+          <div className="border-t border-t-[#200D0D14] pt-3 text-xs/4 font-medium text-muted">
             {used === null
               ? "Agent spend shows up here once Naive reports usage for a run."
               : budget !== null
@@ -541,11 +541,11 @@ function ReplyRow({ r }: { r: Reply }) {
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 truncate text-[13px]/4 font-medium text-ink">
           {who}
-          {r.lead?.company ? <span className="text-[#200D0D8C]"> · {r.lead.company}</span> : null}
+          {r.lead?.company ? <span className="text-muted"> · {r.lead.company}</span> : null}
         </div>
         <ReplyLabel label={r.label} />
       </div>
-      <div className="line-clamp-2 text-xs/4.25 font-medium text-[#200D0D99]">{r.preview ? `“${r.preview}”` : (r.subject ?? "")}</div>
+      <div className="line-clamp-2 text-xs/4.25 font-medium text-muted">{r.preview ? `“${r.preview}”` : (r.subject ?? "")}</div>
     </>
   );
   return r.lead_id ? (
@@ -562,7 +562,7 @@ function RecentReplies({ replies, loading, partial }: { replies: Reply[] | undef
     <Card className="flex flex-col overflow-clip">
       <div className="flex items-baseline justify-between px-4.5 pb-3 pt-4">
         <h2 className={sectionTitle}>Recent replies</h2>
-        <Link to="/app/replies" className="text-xs/4 font-medium text-[#200D0D8C] hover:text-ink">
+        <Link to="/app/replies" className="text-xs/4 font-medium text-muted hover:text-ink">
           sorted by agent
         </Link>
       </div>
@@ -578,7 +578,7 @@ function RecentReplies({ replies, loading, partial }: { replies: Reply[] | undef
       ) : (
         <div className="border-t border-t-[#200D0D14] px-4.5 py-6 text-center">
           <div className="text-[13px]/4 font-semibold text-ink">No replies yet</div>
-          <div className="mt-1 text-xs/4.25 font-medium text-[#200D0D8C]">
+          <div className="mt-1 text-xs/4.25 font-medium text-muted">
             {partial ? "Replies are not available on this deployment yet." : "Replies land here, sorted into Interested, Not now and Unsubscribed."}
           </div>
         </div>

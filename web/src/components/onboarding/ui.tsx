@@ -7,12 +7,12 @@ import { sourceLabel } from "./store.ts";
 export function StepTitle({ step, title, subtitle, icon }: { step: number; title: ReactNode; subtitle: ReactNode; icon?: ReactNode }) {
   return (
     <div className="flex flex-col">
-      <div className="pb-3.5 text-xs/4 font-medium uppercase tracking-[0.08em] text-[#200D0D8C]">Step {step} of 4</div>
+      <div className="pb-3.5 text-xs/4 font-medium uppercase tracking-[0.08em] text-muted">Step {step} of 4</div>
       <div className="flex items-center gap-3.5">
         {icon}
         <h1 className="text-[32px]/9.25 font-bold tracking-[-0.04em] text-ink">{title}</h1>
       </div>
-      <div className="pt-2 text-[15px]/5.5 font-[450] text-[#200D0D8C]">{subtitle}</div>
+      <div className="pt-2 text-[15px]/5.5 font-[450] text-muted">{subtitle}</div>
     </div>
   );
 }
@@ -74,11 +74,11 @@ function SourceLink({ url, site }: { url: string; site?: string }) {
   const label = sourceLabel(url, site);
   const safe = /^https?:\/\//i.test(url);
   return safe ? (
-    <a href={url} target="_blank" rel="noopener noreferrer" title={url} className="text-xs/4 font-medium text-[#200D0D80] hover:text-ink hover:underline">
+    <a href={url} target="_blank" rel="noopener noreferrer" title={url} className="text-xs/4 font-medium text-faint hover:text-ink hover:underline">
       {label}
     </a>
   ) : (
-    <span className="text-xs/4 font-medium text-[#200D0D80]">{label}</span>
+    <span className="text-xs/4 font-medium text-faint">{label}</span>
   );
 }
 
@@ -90,14 +90,14 @@ export function FromSources({ urls, site, className }: { urls: string[]; site?: 
   return (
     <div className={cx("flex min-w-0 shrink-0 items-center gap-1.5", className)}>
       <LinkGlyph />
-      <span className="text-xs/4 font-medium text-[#200D0D80]">From</span>
+      <span className="text-xs/4 font-medium text-faint">From</span>
       {shown.map((u, i) => (
         <span key={u} className="flex items-center gap-1.5">
-          {i > 0 ? <span className="text-xs/4 font-medium text-[#200D0D80]">and</span> : null}
+          {i > 0 ? <span className="text-xs/4 font-medium text-faint">and</span> : null}
           <SourceLink url={u} site={site} />
         </span>
       ))}
-      {unique.length > shown.length ? <span className="text-xs/4 font-medium text-[#200D0D80]">+{unique.length - shown.length}</span> : null}
+      {unique.length > shown.length ? <span className="text-xs/4 font-medium text-faint">+{unique.length - shown.length}</span> : null}
     </div>
   );
 }
@@ -107,7 +107,7 @@ export function SourceList({ urls, site }: { urls: string[]; site?: string }) {
   const unique = [...new Set(urls)];
   if (!unique.length) return null;
   return (
-    <div className="flex flex-wrap items-center gap-x-1.5 text-xs/4 font-medium text-[#200D0D80]">
+    <div className="flex flex-wrap items-center gap-x-1.5 text-xs/4 font-medium text-faint">
       {unique.map((u, i) => (
         <span key={u} className="flex items-center gap-1.5">
           {i > 0 ? <span aria-hidden>·</span> : null}
