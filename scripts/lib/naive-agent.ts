@@ -6,13 +6,9 @@
 // pass the pause switch, the caps and the credit check, and it carries lead ids, never free text.
 import { ALL_TOOLS, OPERATOR_TOOLS, RESEARCHER_TOOLS } from "../../src/mcp/toolsets.ts";
 
-// Apify's hosted MCP server, limited to the one tool the playbook uses: the single-page reader (charged per request,
-// starts no Actor run in the account). Apify adds the read-only run/dataset getters (and abort-actor-run) with it.
-// No `actors` toolset (call-actor, search-actors) and no crawler/search Actor tools: those start paid runs, and our
-// own read_website / search_web wrap them with page limits, a maxTotalChargeUsd cap and credit metering. Fewer
-// tool schemas also make the agent's cached prompt smaller.
-// The agent's mcp_servers[].url must equal this string exactly for Naive to inject the vault token: changing it
-// needs a vault credential for the new URL, which `bun run setup --agent` adds (ensureApifyCredential in setup.ts).
+// Apify's hosted MCP server. No agent uses it any more: one page through its reader put 10-85 KB into the conversation,
+// which Naive re-writes to the prompt cache on every resume. Agents read pages through our read_website (trimmed per page,
+// capped and metered). Kept for setup, which still knows the URL's vault credential.
 export const APIFY_MCP_URL = "https://mcp.apify.com?tools=apify/rag-web-browser";
 
 export const AGENT_NAME = "Crusonia Research";
@@ -22,17 +18,6 @@ export const OPERATOR_PLAYBOOK_PATH = "playbooks/operator.md";
 
 /** Every tool our MCP server registers (src/mcp/server.ts). A test checks this against tools/list. */
 export const CRUSONIA_TOOLS = ALL_TOOLS;
-
-// Apify tools that run without asking: the single-page reader the playbook uses (charged per request, starts
-// no run) and the free readers for run results. Anything else (abort-actor-run, or an Actor tool if the URL above
-// ever lists one) stays `ask`: the crusonia search_web and read_website tools wrap the Actors with page and time
-// limits and a cost cap.
-export const APIFY_ALLOWED_TOOLS = [
-  "apify--rag-web-browser",
-  "get-actor-run",
-  "get-dataset-items",
-  "get-key-value-store-record",
-] as const;
 
 export type BudgetPeriod = "day" | "week" | "month";
 export type Budget = { cap_micro_usd: number; max_task_micro_usd: number; period: BudgetPeriod };
@@ -118,8 +103,7 @@ export const researcherMcpUrl = (baseUrl: string) => `${baseUrl}/mcp?role=resear
 export const operatorMcpUrl = (baseUrl: string) => `${baseUrl}/mcp?role=operator`;
 
 /**
- * The research agent: our MCP server (its role's tools) and Apify's, the playbook as system prompt, and a toolset that
- * allows those, keeps ask_operator as ask (Naive never allows it), denies the operator's tools and anything that reaches
+ * The research agent: our MCP server (its role's tools), the playbook as system prompt, and a toolset that allows those, keeps ask_operator as ask (Naive never allows it), denies the operator's tools and anything that reaches
  * out, and asks for the rest. `handoffs: false`: a research session never starts other agents' sessions.
  */
 export function naiveAgentConfig(input: {
@@ -135,7 +119,6 @@ export function naiveAgentConfig(input: {
   const deny: ToolConfig = { enabled: false, permission: "deny" };
   const configs: Record<string, ToolConfig> = {};
   for (const tool of CRUSONIA_TOOLS) configs[`crusonia.${tool}`] = (RESEARCHER_TOOLS as readonly string[]).includes(tool) ? allow : deny;
-  for (const tool of APIFY_ALLOWED_TOOLS) configs[`apify.${tool}`] = allow;
   for (const tool of DENIED_BUILTINS) configs[tool] = deny;
   configs.ask_operator = { enabled: true, permission: "ask" };
   return {
@@ -151,7 +134,6 @@ export function naiveAgentConfig(input: {
     mcp_servers: [
       // Each url must equal the vault credential's mcp_server_url exactly (see setupNaive).
       { type: "url", name: "crusonia", url: researcherMcpUrl(input.baseUrl) },
-      { type: "url", name: "apify", url: APIFY_MCP_URL },
     ],
     handoffs: false,
     budget: input.budget,

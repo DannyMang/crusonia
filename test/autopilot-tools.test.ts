@@ -9,6 +9,7 @@ import type { Env } from "../src/env.ts";
 import { agentTextProblem, createMcpServer, operatorWorkflowProblem, type McpContext } from "../src/mcp/server.ts";
 import { ALL_TOOLS, OPERATOR_TOOLS, PIPELINE_READ_TOOLS, RESEARCHER_TOOLS, WEB_TOOLS, resolveRole, type McpRole } from "../src/mcp/toolsets.ts";
 import { DEFAULT_AUTO_CONFIRM_TOOLS, OPERATOR_AUTO_CONFIRM, isToolAllowed, parseToolAllowlist } from "../src/services/policy.ts";
+import { GOOGLE_SEARCH_MIN_CHARGE_USD, searchGoogle } from "../src/services/apify.ts";
 import { mergeProblem } from "../src/services/merge-leads.ts";
 import { DENIED_BUILTINS, OPERATOR_PLAYBOOK_PATH, naiveAgentConfig, operatorAgentConfig, parsePlaybook } from "../scripts/lib/naive-agent.ts";
 import { workspaceAgentConfig } from "../src/services/naive-agents.ts";
@@ -168,6 +169,21 @@ describe("Operator tool policy", () => {
     expect(operatorWorkflowProblem({ trigger: { kind: "schedule", every_hours: 1 }, capUsd: 5 }, limits)).toContain("6 hours");
     expect(operatorWorkflowProblem({ trigger: { kind: "schedule", every_hours: 6 }, capUsd: 6 }, limits)).toContain("$5");
     expect(operatorWorkflowProblem({ trigger: { kind: "schedule", every_hours: 6 } }, limits)).toContain("$5");
+  });
+});
+
+describe("web tools", () => {
+  test("a Google search run is capped at Apify's minimum at least, or Apify refuses it", async () => {
+    const urls: string[] = [];
+    const fetchFn = (async (input: unknown) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ error: { type: "stop", message: "stop" } }), { status: 400 });
+    }) as never;
+    await searchGoogle({ token: "t", maxChargeUsd: 0.25, fetchFn }, { query: "q", max_results: 10 }).catch(() => {});
+    expect(new URL(urls[0]!).searchParams.get("maxTotalChargeUsd")).toBe(String(GOOGLE_SEARCH_MIN_CHARGE_USD));
+    urls.length = 0;
+    await searchGoogle({ token: "t", maxChargeUsd: 2, fetchFn }, { query: "q", max_results: 10 }).catch(() => {});
+    expect(new URL(urls[0]!).searchParams.get("maxTotalChargeUsd")).toBe("2");
   });
 });
 
