@@ -1,8 +1,7 @@
 // Billing tiers, credit packs and the credit definition. Changing pricing is an edit to this one file plus
 // `bun run setup --stripe` (creates or updates the Stripe products and prices by lookup_key) and a deploy.
 //
-// TODO(owner): pending pricing decision. Every name, price and credit amount below is a placeholder (the owner's
-// Free / Pro $20 / Scale $100 structure on top of the "Pricing research" proposal in Notion); nothing is public yet.
+// The owner's pricing: Free $0, Pro $20 and Scale $100 a month, plus top-up packs.
 //
 // The credit
 // - credit_ledger.amount is in whole credits (signed bigint): + grants and purchases, - usage and refunds.
@@ -17,8 +16,7 @@
 //   then the unused rest expires (an `expire` ledger row, written by the minute cron). Usage spends the
 //   soonest-expiring credits first. Top-up packs and the free sample never expire.
 // - Plan changes in the Customer Portal apply without proration: the new plan's credits arrive with its next paid
-//   invoice (an upgrade can top up with a pack meanwhile). TODO(owner): prorated upgrades would need a rule for
-//   the credits granted mid-period.
+//   invoice (an upgrade can top up with a pack meanwhile).
 //
 // Stripe objects are found by `lookupKey` (prices) and by metadata `crusonia_key` + `crusonia_kind` (products and
 // prices), never by id, so no Stripe ids live in this repo. Changing an amount makes setup create a new price and

@@ -12,8 +12,9 @@
 //   - resuming after a pause (the kill switch: anyone may pull it, only an owner or admin may undo it)
 //   - changing a workflow's spend cap (the Operator can only lower one; REST must not be the way around that)
 // On top of that, members can't manage what belongs to the workspace as a whole: billing, API keys and integrations are
-// for owners and admins (and the team, in src/api/team.ts), as is turning autopilot on or off. Reading stays open: the credits pill and the names of the
-// keys behind notes are on every member's screen.
+// for owners and admins (and the team, in src/api/team.ts), as is turning autopilot on or off. So are granting or
+// removing consent and taking an address off the do-not-contact list: both decide who may be emailed. Reading stays
+// open: the credits pill and the names of the keys behind notes are on every member's screen.
 import type { Hono, MiddlewareHandler } from "hono";
 import type { AppEnv } from "../lib/context.ts";
 import { ApiError } from "../lib/errors.ts";
@@ -66,14 +67,30 @@ const spendGuard: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
 };
 
-/** Only the consent field is refused for API keys: an agent may still create and edit leads. */
-export const consentHumanOnly: MiddlewareHandler<AppEnv> = async (c, next) => {
-  if (c.get("principal")?.kind === "api_key") {
-    const body = await jsonBody(c);
-    if (body && "consent" in body) refuse("Granting or changing consent");
+/** Only the consent field is guarded: an agent or a member may still create and edit leads. */
+export const consentGuard: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const body = await jsonBody(c);
+  if (body && "consent" in body) {
+    if (c.get("principal")?.kind === "api_key") refuse("Granting or changing consent");
+    adminOnly(c, "Granting or changing consent");
   }
   await next();
 };
+
+/**
+ * A CSV import may add contacts, but consent only comes from a person with the admin role: a mapped consent column is
+ * refused for anyone else, and `allowConsent: false` makes the import ignore consent columns it would have guessed.
+ */
+export function importConsentRule(c: Parameters<MiddlewareHandler<AppEnv>>[0], mapping: Partial<Record<string, string | null>> | undefined): { allowConsent: boolean } {
+  const mapped = Boolean(mapping?.consent || mapping?.consent_at || mapping?.consent_text);
+  if (c.get("principal").kind === "api_key") {
+    if (mapped) refuse("Importing consent");
+    return { allowConsent: false };
+  }
+  if (mapped) adminOnly(c, "Importing consent");
+  const role = c.get("role");
+  return { allowConsent: Boolean(role && roleAtLeast(role, "admin")) };
+}
 
 const WRITE = ["POST", "PUT", "PATCH", "DELETE"];
 
@@ -81,9 +98,10 @@ const WRITE = ["POST", "PUT", "PATCH", "DELETE"];
 export function guardHumanRoutes(api: Hono<AppEnv>): void {
   api.on(WRITE, "/approvals/*", humanOnly("Deciding an approval"));
   api.on(WRITE, ["/keys", "/keys/*"], humanOnly("Creating or revoking API keys"));
-  api.on("POST", "/leads", consentHumanOnly);
-  api.on("PATCH", "/leads/:id", consentHumanOnly);
+  api.on("POST", "/leads", consentGuard);
+  api.on("PATCH", "/leads/:id", consentGuard);
   api.on("DELETE", "/suppressions/*", humanOnly("Removing a suppression"));
+  api.on("DELETE", "/suppressions/*", requireRole("admin"));
   api.on(WRITE, "/billing/*", humanOnly("Billing"));
   api.on(WRITE, "/autopilot", humanOnly("Turning autopilot on or off"));
   api.on(WRITE, "/autopilot", requireRole("admin"));

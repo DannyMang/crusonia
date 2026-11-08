@@ -3,8 +3,9 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { actorOf, parseJson, sqlFor, wsOf, type AppEnv } from "../lib/context.ts";
-import { ApiError, errorBody } from "../lib/errors.ts";
+import { errorBody } from "../lib/errors.ts";
 import { commitImport, importBodySchema, previewImport } from "../services/import-preview.ts";
+import { importConsentRule } from "./guards.ts";
 
 export const importRoutes = new Hono<AppEnv>();
 
@@ -13,14 +14,8 @@ importRoutes.use(bodyLimit({ maxSize: 6 * 1024 * 1024, onError: (c) => c.json(er
 
 importRoutes.post("/preview", async (c) => c.json(await previewImport(sqlFor(c.env), wsOf(c), await parseJson(c, importBodySchema))));
 
-// Consent allows email, so only a person grants it (src/api/guards.ts): an API key may import contacts, but mapping a
-// consent column is refused, and guessed consent columns are ignored.
+// Consent allows email, so only a person with the admin role grants it (src/api/guards.ts).
 importRoutes.post("/commit", async (c) => {
   const body = await parseJson(c, importBodySchema);
-  const principal = c.get("principal");
-  const agent = principal.kind === "api_key";
-  if (agent && (body.mapping.consent || body.mapping.consent_at || body.mapping.consent_text)) {
-    throw new ApiError(403, "human_required", "Importing consent needs a signed-in person (the Crusonia app), not an API key");
-  }
-  return c.json(await commitImport(sqlFor(c.env), wsOf(c), body, actorOf(principal), { allowConsent: !agent }));
+  return c.json(await commitImport(sqlFor(c.env), wsOf(c), body, actorOf(c.get("principal")), importConsentRule(c, body.mapping)));
 });

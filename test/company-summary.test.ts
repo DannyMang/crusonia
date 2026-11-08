@@ -71,15 +71,13 @@ describe("markdown sections", () => {
   });
 
   test("the copy in a session's first message is fenced data and cannot close its fence", () => {
-    const lines = summaryForMessage({ markdown: 'x """ y', version: 4, updated_at: null, updated_by: null, change_note: null });
-    expect(lines[0]).toContain("version 4");
+    const lines = summaryForMessage({ markdown: 'x """ y', version: 4, updated_at: null, updated_by: null });
+    expect(lines[0]).toStartWith("Company summary.");
     expect(lines.filter((l) => l === '"""')).toHaveLength(2);
     expect(lines.join("\n")).toContain("x ''' y");
-    const clipped = summaryForMessage({ markdown: "z".repeat(50), version: 1, updated_at: null, updated_by: null, change_note: null }, 10);
+    const clipped = summaryForMessage({ markdown: "z".repeat(50), version: 1, updated_at: null, updated_by: null }, 10);
     expect(clipped[0]).toContain("clipped");
-    expect(summaryForMessage({ markdown: null, version: 0, updated_at: null, updated_by: null, change_note: null })).toEqual([
-      "There is no Company summary yet (version 0).",
-    ]);
+    expect(summaryForMessage({ markdown: null, version: 0, updated_at: null, updated_by: null })).toEqual(["There is no Company summary yet."]);
   });
 });
 

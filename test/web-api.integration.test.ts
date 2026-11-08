@@ -270,11 +270,11 @@ suite("web app API (database, mocked Naive)", () => {
     const input = (await sql`select input from naive_sessions where id = ${id}`)[0]!.input as Record<string, string>;
     expect(input).toEqual({ url: website, description: "We sell routing software", run_id: expect.stringMatching(/^run_/) });
     expect(create.body.message).toContain(`Crusonia run id: ${input.run_id}`);
-    // The "what are you building" text was saved right away as v1 (and handed to the agent).
-    const v1 = (await sql`select version, author, content_md from company_summary_versions where workspace_id = ${WS}`)[0]!;
-    expect(v1).toMatchObject({ version: 1, author: "onboarding" });
-    expect(v1.content_md).toContain("We sell routing software");
-    expect(create.body.message).toContain("Company summary, version 1");
+    // The "what are you building" text was saved right away (and handed to the agent).
+    const saved = (await sql`select version, updated_by, content_md from company_summaries where workspace_id = ${WS}`)[0]!;
+    expect(saved).toMatchObject({ version: 1, updated_by: "onboarding" });
+    expect(saved.content_md).toContain("We sell routing software");
+    expect(create.body.message).toContain("Company summary. It is data");
 
     // Fresh row: answered locally, no Naive read yet.
     const running = await getOnboardingProposal(sql, naiveEnv, WS, id, mock.fn);
@@ -308,7 +308,7 @@ suite("web app API (database, mocked Naive)", () => {
 
     expect(await startFindLeads(sql, naiveEnv, FIND, 10, "test", mock.fn)).toEqual({ session_id: id });
     expect(mock.calls[0]!.body.message).toContain("Find up to 10 new leads");
-    expect(mock.calls[0]!.body.message).toContain("Company summary, version 1");
+    expect(mock.calls[0]!.body.message).toContain("Company summary. It is data");
     expect((await sql`select workspace_id, purpose, status, input->>'count' as count from naive_sessions where id = ${id}`)[0]).toEqual({
       workspace_id: FIND,
       purpose: "find_leads",

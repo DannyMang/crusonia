@@ -127,6 +127,45 @@ describe("human-only routes (src/api/guards.ts)", () => {
   });
 });
 
+describe("consent and the do-not-contact list are for owners and admins", () => {
+  const ADMIN_ONLY: [string, string, unknown?][] = [
+    ["POST", "/leads", { email: "a@b.co", consent: { text: "trust me" } }],
+    ["PATCH", "/leads/lead_1", { consent: { text: "trust me" } }],
+    ["PATCH", "/leads/lead_1", { consent: null }],
+    ["DELETE", "/suppressions/a%40b.co"],
+  ];
+
+  test("a member gets 403 forbidden_role", async () => {
+    for (const [method, path, body] of ADMIN_ONLY) {
+      const res = await call("clerk", method, path, body, "member");
+      expect({ method, path, status: res.status, code: res.json.error?.code }).toEqual({ method, path, status: 403, code: "forbidden_role" });
+    }
+  });
+
+  test("an admin and an owner pass, and the route still reads the body", async () => {
+    for (const role of ["admin", "owner"] as const) {
+      for (const [method, path, body] of ADMIN_ONLY) {
+        const res = await call("clerk", method, path, body, role);
+        expect({ role, method, path, status: res.status }).toEqual({ role, method, path, status: 200 });
+        if (body !== undefined) expect(res.json.body).toBe(JSON.stringify(body));
+      }
+    }
+  });
+
+  test("a member still adds leads, edits them and adds to the do-not-contact list", async () => {
+    const open: [string, string, unknown?][] = [
+      ["POST", "/leads", { email: "a@b.co", name: "No consent field" }],
+      ["PATCH", "/leads/lead_1", { title: "CTO" }],
+      ["POST", "/suppressions", { email: "a@b.co" }],
+      ["GET", "/suppressions"],
+    ];
+    for (const [method, path, body] of open) {
+      const res = await call("clerk", method, path, body, "member");
+      expect({ method, path, status: res.status }).toEqual({ method, path, status: 200 });
+    }
+  });
+});
+
 describe("the kill switch and spend caps", () => {
   test("anyone may pause; only an owner or admin may resume", async () => {
     for (const as of ["api_key", "clerk", "owner_token"]) expect((await call(as, "PUT", "/settings/pause", { paused: true }, as === "clerk" ? "member" : undefined)).status).toBe(200);

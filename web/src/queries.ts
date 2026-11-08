@@ -34,7 +34,6 @@ export const keys = {
   suppressions: (q?: string) => ["suppressions", q ?? ""] as const,
   billing: ["billing"] as const,
   companySummary: ["company-summary"] as const,
-  summaryVersions: ["company-summary", "versions"] as const,
   findRun: (id: string) => ["find-run", id] as const,
   tasks: (status: string) => ["tasks", status] as const,
   trace: (id: string) => ["trace", id] as const,
@@ -50,7 +49,7 @@ export function useWorkspaces() {
   return useQuery({ queryKey: keys.workspaces, queryFn: () => api.workspaces(), staleTime: 60_000 });
 }
 
-/** The caller's role in the current workspace. `canManage`: billing, API keys and the team. False until it's known. */
+/** The caller's role in the current workspace. `canManage`: billing, API keys, the team, consent and removing from the do-not-contact list. False until it's known. */
 export function useRole() {
   const list = useWorkspaces();
   const role = list.data?.data.find((w) => w.id === list.data?.current)?.role;
@@ -164,11 +163,6 @@ export function useBilling({ enabled = true, poll }: { enabled?: boolean; poll?:
 export function useCompanySummary() {
   const api = useApi();
   return useQuery({ queryKey: keys.companySummary, queryFn: () => api.companySummary() });
-}
-
-export function useSummaryVersions() {
-  const api = useApi();
-  return useQuery({ queryKey: keys.summaryVersions, queryFn: () => api.summaryVersions({ limit: 50 }) });
 }
 
 // ---------- leads v2 ----------

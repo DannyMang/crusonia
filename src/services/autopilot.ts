@@ -313,7 +313,7 @@ async function provisionNew(sql: Sql, env: Env): Promise<string[]> {
   const rows = await sql`
     select w.id from workspaces w
     where w.autopilot_provisioned_at is null
-      and exists (select 1 from company_summary_versions v where v.workspace_id = w.id)
+      and exists (select 1 from company_summaries v where v.workspace_id = w.id)
       and not exists (select 1 from naive_sessions s where s.workspace_id = w.id and s.purpose = 'onboarding' and s.status in ('running', 'idle'))
     limit ${MAX_WORKSPACES_PER_TICK}`;
   const done: string[] = [];
@@ -692,7 +692,7 @@ async function runOperators(sql: Sql, env: Env, fetchFn?: FetchFn) {
               and (e.kind in ('workflow_run_finished', 'email_received') or (e.kind = 'note_added' and e.data->>'author' like 'user:%'))) as changed
     from workspaces w
     where w.autopilot and not w.paused
-      and exists (select 1 from company_summary_versions v where v.workspace_id = w.id)
+      and exists (select 1 from company_summaries v where v.workspace_id = w.id)
     limit ${MAX_WORKSPACES_PER_TICK}`) as {
     id: string;
     next_at: Date | string | null;

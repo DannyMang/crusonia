@@ -2,10 +2,11 @@
 // Skipped unless TEST_DATABASE_URL is set:
 //   TEST_DATABASE_URL=<dev branch url> bun test test/workspaces.integration.test.ts
 // Covers: the migration's backfill and per-workspace uniqueness, workspace creation on first sign-in, isolation of
-// every /api route and MCP tool between two workspaces, the Company summary (versions, sections, revert, the
+// every /api route and MCP tool between two workspaces, the Company summary (overwrites, sections, the migration, the
 // /api/profile alias), credits and limits for workspaces other than the owner's, the billing merge, platform-admin
 // reads, and the per-workspace Naive agent. Everything runs in throwaway workspaces that are deleted afterwards.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { Client } from "@neondatabase/serverless";
 import { addLedgerRow, getBalance } from "../src/billing/accounts.ts";
 import { getSql, type Sql } from "../src/db.ts";
 import type { Env } from "../src/env.ts";
@@ -123,7 +124,7 @@ suite("workspaces (database, faked Naive)", () => {
     await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${b.session}, ${B}, ${b.lead}, 'research', 'done')`;
     await sql`insert into messages (workspace_id, lead_id, direction, provider_message_id, thread_id, from_addr, subject, body, label)
               values (${B}, ${b.lead}, 'in', ${`ws-${run}-reply`}, ${`thr_ws_${run}_b`}, ${b.email}, 'Re: Hi', 'Yes please', 'interested')`;
-    await call(keyB, "PUT", "/api/company-summary", { markdown: "# B Corp\n\n## What we sell\n\nB things", note: "B v1" });
+    await call(keyB, "PUT", "/api/company-summary", { markdown: "# B Corp\n\n## What we sell\n\nB things" });
     await addLedgerRow(sql, { workspaceId: B, amount: 777, reason: "adjustment", source: `adjustment:ws-it-${run}-b` });
   });
 
@@ -136,9 +137,69 @@ suite("workspaces (database, faked Naive)", () => {
   // ---------- the migration ----------
 
   describe("migration", () => {
+    test("the Company summary keeps each workspace's latest row and drops the older versions; a rerun changes nothing", async () => {
+      // The statements from src/schema.sql, in a schema of their own: nothing here reaches the shared tables.
+      const file = await Bun.file(new URL("../src/schema.sql", import.meta.url)).text();
+      const block = /create table if not exists company_summaries[\s\S]*?\nend\n\$\$;/.exec(file)![0];
+      const schema = `it_summary_${run}`;
+      const client = new Client(url);
+      await client.connect();
+      try {
+        await client.query(`
+          create schema ${schema};
+          set local search_path to ${schema};
+          create table workspaces (id text primary key);
+          insert into workspaces values ('w1'), ('w2'), ('w3');
+          create table company_summary_versions (
+            id bigserial primary key, workspace_id text not null references workspaces(id), version int not null, content_md text not null,
+            author text not null, change_note text, created_at timestamptz not null default now(), unique (workspace_id, version));
+          insert into company_summary_versions (workspace_id, version, content_md, author, change_note, created_at) values
+            ('w1', 1, 'old one', 'onboarding', 'first', '2026-11-01'),
+            ('w1', 7, 'latest one', 'agent:ses_1', 'second', '2026-11-03'),
+            ('w1', 5, 'old two', 'user:u', null, '2026-11-02'),
+            ('w2', 1, 'only', 'user:u', null, '2026-11-04');
+          ${block}`);
+        const rows = async () =>
+          (await client.query(`select workspace_id, content_md, version, updated_by, updated_at from ${schema}.company_summaries order by workspace_id`)).rows.map((r: any) => ({
+            ...r,
+            updated_at: new Date(r.updated_at).toISOString().slice(0, 10),
+          }));
+        const want = [
+          { workspace_id: "w1", content_md: "latest one", version: 7, updated_by: "agent:ses_1", updated_at: "2026-11-03" },
+          { workspace_id: "w2", content_md: "only", version: 1, updated_by: "user:u", updated_at: "2026-11-04" },
+        ];
+        expect(await rows()).toEqual(want);
+        const gone = async () => (await client.query(`select to_regclass('${schema}.company_summary_versions') as t`)).rows[0].t;
+        expect(await gone()).toBeNull();
+
+        // Again: nothing to do, and later saves stay.
+        await client.query(`
+          set local search_path to ${schema};
+          update company_summaries set content_md = 'saved since', version = 8 where workspace_id = 'w1';
+          ${block}`);
+        expect((await rows())[0]).toMatchObject({ content_md: "saved since", version: 8 });
+
+        // An older checkout's migration brought the table back: what's current wins, and it goes again.
+        await client.query(`
+          set local search_path to ${schema};
+          create table company_summary_versions (workspace_id text, version int, content_md text, author text, created_at timestamptz);
+          insert into company_summary_versions values ('w1', 1, 'stale', 'onboarding', now()), ('w3', 1, 'new here', 'onboarding', '2026-11-05');
+          ${block}`);
+        expect(await rows()).toEqual([
+          { ...want[0]!, content_md: "saved since", version: 8 },
+          want[1]!,
+          { workspace_id: "w3", content_md: "new here", version: 1, updated_by: "onboarding", updated_at: "2026-11-05" },
+        ]);
+        expect(await gone()).toBeNull();
+      } finally {
+        await client.query(`drop schema if exists ${schema} cascade`);
+        await client.end();
+      }
+    });
+
     test("every tenant table has a NOT NULL workspace_id with no unassigned rows; the owner workspace exists", async () => {
       const tables = ["leads", "evidence", "lookalikes", "drafts", "approvals", "messages", "naive_sessions", "naive_session_events", "events",
-        "suppressions", "api_keys", "billing_accounts", "credit_ledger", "crm_sync_queue", "company_summary_versions"];
+        "suppressions", "api_keys", "billing_accounts", "credit_ledger", "crm_sync_queue", "company_summaries"];
       const cols = await sql`select table_name, is_nullable from information_schema.columns
                              where table_schema = 'public' and column_name = 'workspace_id' and table_name = any(${tables}::text[])`;
       expect(cols.map((c) => c.table_name).sort()).toEqual([...tables].sort());
@@ -321,7 +382,11 @@ suite("workspaces (database, faked Naive)", () => {
       expect((await call(keyB, "DELETE", `/api/suppressions/${encodeURIComponent(b.suppressed)}`)).status).toBe(403);
       expect((await call(keyA, "PUT", "/api/settings/pause", { paused: true })).body).toEqual({ paused: true });
       expect((await call(keyB, "GET", "/api/settings/pause")).body).toEqual({ paused: false });
-      expect((await call(keyA, "PUT", "/api/settings/pause", { paused: false })).body).toEqual({ paused: false });
+      // Resuming takes a person (src/api/guards.ts): a key is refused and the workspace stays paused.
+      const refused = await call(keyA, "PUT", "/api/settings/pause", { paused: false });
+      expect([refused.status, refused.body.error.code]).toEqual([403, "human_required"]);
+      expect((await call(keyA, "GET", "/api/settings/pause")).body).toEqual({ paused: true });
+      expect((await call(await clerkToken(`user_it_${run}_a`), "PUT", "/api/settings/pause", { paused: false })).body).toEqual({ paused: false });
       expect((await call(keyB, "GET", "/api/suppressions")).body.data.map((s: any) => s.email)).toContain(b.suppressed);
     });
 
@@ -338,9 +403,6 @@ suite("workspaces (database, faked Naive)", () => {
       const a = await call(keyA, "GET", "/api/company-summary");
       expect(a.body).toMatchObject({ markdown: null, version: 0 });
       expect(a.body.template).toContain("## What we sell");
-      expect((await call(keyA, "GET", "/api/company-summary/versions")).body.data).toEqual([]);
-      expect((await call(keyA, "GET", "/api/company-summary/versions/1")).status).toBe(404);
-      expect((await call(keyA, "POST", "/api/company-summary/revert", { version: 1 })).status).toBe(404);
       expect((await call(keyA, "GET", "/api/profile")).body).toEqual({ profile: null });
       expect((await call(keyB, "GET", "/api/company-summary")).body).toMatchObject({ version: 1, markdown: expect.stringContaining("B things") });
     });
@@ -397,7 +459,7 @@ suite("workspaces (database, faked Naive)", () => {
       expect(statusA.database.pending_approvals).toBe(0);
       expect(statusB.database.pending_approvals).toBe(1);
       expect((await tool(keyA, "get_company_summary")).data).toMatchObject({ version: 0, markdown: null });
-      const write = (await tool(keyA, "update_company_summary", { markdown: "# A Inc\n\n## Avoid\n\nAgencies", note: "first" })).data;
+      const write = (await tool(keyA, "update_company_summary", { markdown: "# A Inc\n\n## Avoid\n\nAgencies" })).data;
       expect(write).toMatchObject({ version: 1, updated_by: expect.stringMatching(/^agent:api_key:/), unchanged: false });
       expect((await tool(keyB, "get_company_summary")).data).toMatchObject({ version: 1, markdown: expect.stringContaining("B things") });
       const profile = (await tool(keyA, "get_profile")).data;
@@ -446,47 +508,53 @@ suite("workspaces (database, faked Naive)", () => {
   // ---------- the Company summary ----------
 
   describe("Company summary", () => {
-    test("versions, unchanged saves, sections, conflicts, the size cap, history without bodies, and revert", async () => {
+    test("a save overwrites: unchanged saves, sections, conflicts, the size cap, and no history", async () => {
       const ws = await createTestWorkspace(sql, `sum_${run}`, { clerkUserId: `user_it_${run}_sum` });
       created.push(ws);
       const user = await clerkToken(`user_it_${run}_sum`);
-      const v1 = await call(user, "PUT", "/api/company-summary", { markdown: "# Sum Co\n\n## What we sell\n\nSoftware\n\n## Avoid\n", note: "first" });
-      expect(v1.body).toMatchObject({ version: 1, updated_by: `user:user_it_${run}_sum`, change_note: "first", unchanged: false });
-      const same = await call(user, "PUT", "/api/company-summary", { markdown: "# Sum Co\n\n## What we sell\n\nSoftware\n\n## Avoid", note: "again" });
+      const first = await call(user, "PUT", "/api/company-summary", { markdown: "# Sum Co\n\n## What we sell\n\nSoftware\n\n## Avoid\n", base_version: 0 });
+      expect(first.body).toMatchObject({ version: 1, updated_by: `user:user_it_${run}_sum`, unchanged: false });
+      expect(first.body.updated_at).toEqual(expect.any(String));
+      const same = await call(user, "PUT", "/api/company-summary", { markdown: "# Sum Co\n\n## What we sell\n\nSoftware\n\n## Avoid", base_version: 1 });
       expect(same.body).toMatchObject({ version: 1, unchanged: true });
 
       // An agent replaces one section: the rest of the document stays.
       const key = await testKey(sql, ws, "agent");
-      const sec = (await tool(key, "update_company_summary", { section: "Avoid", markdown: "- Agencies\n- Companies over 500 people", note: "4 of 5 agencies were disqualified" })).data;
+      const sec = (await tool(key, "update_company_summary", { section: "Avoid", markdown: "- Agencies\n- Companies over 500 people" })).data;
       expect(sec.version).toBe(2);
-      const v2 = await call(user, "GET", "/api/company-summary");
-      expect(v2.body.markdown).toBe("# Sum Co\n\n## What we sell\n\nSoftware\n\n## Avoid\n\n- Agencies\n- Companies over 500 people");
-      expect(v2.body.updated_by).toMatch(/^agent:api_key:key_/);
-      // A missing section is appended.
+      const second = await call(user, "GET", "/api/company-summary");
+      expect(second.body.markdown).toBe("# Sum Co\n\n## What we sell\n\nSoftware\n\n## Avoid\n\n- Agencies\n- Companies over 500 people");
+      expect(second.body.updated_by).toMatch(/^agent:api_key:key_/);
+      // A missing section is appended. An agent on an older playbook may still send a note: it is dropped, not stored.
       await tool(key, "update_company_summary", { section: "Proof points", markdown: "Used by Acme", note: "new customer" });
       expect((await call(user, "GET", "/api/company-summary")).body.markdown).toEndWith("## Proof points\n\nUsed by Acme");
 
-      // Optimistic concurrency and the size cap.
-      expect((await call(user, "PUT", "/api/company-summary", { markdown: "stale", base_version: 1 })).body.error.code).toBe("version_conflict");
+      // The stale-write check (also before there is a row) and the size cap.
+      const stale = await call(user, "PUT", "/api/company-summary", { markdown: "stale", base_version: 1 });
+      expect([stale.status, stale.body.error.code, stale.body.error.details.current_version]).toEqual([409, "version_conflict", 3]);
       expect((await call(user, "PUT", "/api/company-summary", { markdown: "x".repeat(20_001) })).status).toBe(413);
+      const empty = await createTestWorkspace(sql, `sum2_${run}`);
+      created.push(empty);
+      expect((await call(await testKey(sql, empty), "PUT", "/api/company-summary", { markdown: "# New", base_version: 2 })).status).toBe(409);
 
-      const versions = (await call(user, "GET", "/api/company-summary/versions")).body.data;
-      expect(versions.map((v: any) => [v.version, v.change_note])).toEqual([
-        [3, "new customer"],
-        [2, "4 of 5 agencies were disqualified"],
-        [1, "first"],
-      ]);
-      expect(Object.keys(versions[0])).not.toContain("markdown");
-      expect((await call(user, "GET", "/api/company-summary/versions/1")).body.markdown).toContain("Software");
+      // Of two saves from the same version, one lands.
+      const raced = await Promise.all(["# One", "# Two"].map((markdown) => call(user, "PUT", "/api/company-summary", { markdown, base_version: 3 })));
+      expect(raced.map((r) => r.status).sort()).toEqual([200, 409]);
 
-      // Revert = a new version copied from the old one.
-      const reverted = await call(user, "POST", "/api/company-summary/revert", { version: 1 });
-      expect(reverted.body).toMatchObject({ version: 4, change_note: "Reverted to v1", updated_by: `user:user_it_${run}_sum` });
-      expect(reverted.body.markdown).toBe((await call(user, "GET", "/api/company-summary/versions/1")).body.markdown);
-      expect((await sql`select count(*)::int as n from events where workspace_id = ${ws} and kind = 'company_summary_updated'`)[0]!.n).toBe(4);
+      // One row, however many saves: no history, and the old routes are gone.
+      expect((await sql`select count(*)::int as n from company_summaries where workspace_id = ${ws}`)[0]!.n).toBe(1);
+      for (const [method, path] of [["GET", "/api/company-summary/versions"], ["GET", "/api/company-summary/versions/1"], ["POST", "/api/company-summary/revert"]] as const) {
+        expect({ path, status: (await call(user, method, path, method === "POST" ? { version: 1 } : undefined)).status }).toEqual({ path, status: 404 });
+      }
+      expect((await tool(key, "list_summary_versions")).error).toContain("list_summary_versions");
+      // The feed logs that it changed, without the text.
+      const logged = await sql`select data from events where workspace_id = ${ws} and kind = 'company_summary_updated'`;
+      expect(logged).toHaveLength(4);
+      expect(logged.some((e) => (e.data as { author?: string }).author?.startsWith("agent:"))).toBe(true);
+      expect(logged.some((e) => "note" in (e.data as object))).toBe(false);
 
       // /api/profile maps both ways and keeps the sections a profile has no field for.
-      await tool(key, "update_company_summary", { section: "Voice", markdown: "Plain, short, no hype.", note: "voice" });
+      await tool(key, "update_company_summary", { section: "Voice", markdown: "Plain, short, no hype." });
       const put = await call(user, "PUT", "/api/profile", {
         company: "Sum Co",
         website: "sum.example",
@@ -518,10 +586,10 @@ suite("workspaces (database, faked Naive)", () => {
       await sql`insert into naive_sessions (id, workspace_id, purpose, status, input) values
         (${`ses_ws_${run}_r1`}, ${ws}, 'research', 'running', ${JSON.stringify({ run_id: `run_${run}_1` })}::jsonb),
         (${`ses_ws_${run}_o1`}, ${ws}, 'onboarding', 'running', ${JSON.stringify({ run_id: `run_${run}_2` })}::jsonb)`;
-      expect((await tool(key, "update_company_summary", { markdown: "# X", note: "n", run_id: `run_${run}_1` })).data.updated_by).toBe(`agent:ses_ws_${run}_r1`);
-      expect((await tool(key, "update_company_summary", { markdown: "# Y", note: "n", run_id: `run_${run}_2` })).data.updated_by).toBe("onboarding");
+      expect((await tool(key, "update_company_summary", { markdown: "# X", run_id: `run_${run}_1` })).data.updated_by).toBe(`agent:ses_ws_${run}_r1`);
+      expect((await tool(key, "update_company_summary", { markdown: "# Y", run_id: `run_${run}_2` })).data.updated_by).toBe("onboarding");
       // A run id of another workspace means nothing here.
-      expect((await tool(key, "update_company_summary", { markdown: "# Z", note: "n", run_id: "run_unknown" })).data.updated_by).toMatch(/^agent:api_key:/);
+      expect((await tool(key, "update_company_summary", { markdown: "# Z", run_id: "run_unknown" })).data.updated_by).toMatch(/^agent:api_key:/);
     });
   });
 

@@ -594,6 +594,49 @@ suite("organizations (database, faked Clerk and AgentMail)", () => {
       expect((await call(memberT, "POST", "/api/leads", { ws, body: { email: mail("by-member") } })).status).toBe(201);
     });
 
+    test("a member can't decide consent or take an address off the do-not-contact list; an admin and an owner can", async () => {
+      const email = mail("consent-lead");
+      const lead = (await call(memberT, "POST", "/api/leads", { ws, body: { email } })).body.lead;
+      expect(lead.has_consent).toBe(false);
+      const csv = `Email,Opted in\n${mail("csv-lead")},yes\n`;
+      const refused: [string, string, unknown?][] = [
+        ["POST", "/api/leads", { email: mail("granted-by-member"), consent: { text: "said yes" } }],
+        ["PATCH", `/api/leads/${lead.id}`, { consent: { text: "said yes" } }],
+        ["PATCH", `/api/leads/${lead.id}`, { consent: null }],
+        ["POST", "/api/leads/import", { csv, mapping: { email: "Email", consent: "Opted in" } }],
+        ["POST", "/api/import/commit", { csv, mapping: { email: "Email", consent: "Opted in" }, source: "members" }],
+      ];
+      for (const [method, path, body] of refused) {
+        const r = await call(memberT, method, path, { ws, body });
+        expect({ method, path, status: r.status, code: r.body?.error?.code }).toEqual({ method, path, status: 403, code: "forbidden_role" });
+      }
+      // What's left of a member's import: the contacts, without consent, even if a consent column would have been guessed.
+      expect((await call(memberT, "PATCH", `/api/leads/${lead.id}`, { ws, body: { title: "CTO" } })).body.lead).toMatchObject({ title: "CTO", has_consent: false });
+      expect((await call(memberT, "POST", "/api/leads/import", { ws, body: { csv } })).status).toBe(200);
+      expect((await sql`select consent_at from leads where workspace_id = ${ws} and email = ${mail("csv-lead")}`)[0]!.consent_at).toBeNull();
+
+      for (const [role, token] of [["admin", adminT], ["owner", ownerT]] as const) {
+        const granted = await call(token, "PATCH", `/api/leads/${lead.id}`, { ws, body: { consent: { text: `from the ${role}` } } });
+        expect({ role, has_consent: granted.body.lead?.has_consent }).toEqual({ role, has_consent: true });
+        const removed = await call(token, "PATCH", `/api/leads/${lead.id}`, { ws, body: { consent: null } });
+        expect({ role, has_consent: removed.body.lead?.has_consent }).toEqual({ role, has_consent: false });
+        expect((await call(token, "POST", "/api/leads", { ws, body: { email: mail(`by-${role}`), consent: { text: "said yes" } } })).body.lead.has_consent).toBe(true);
+        const imported = await call(token, "POST", "/api/import/commit", { ws, body: { csv: `Email,Opted in\n${mail(`csv-${role}`)},yes\n`, mapping: { email: "Email", consent: "Opted in" }, source: role } });
+        expect({ role, status: imported.status }).toEqual({ role, status: 200 });
+        expect((await sql`select consent_at from leads where workspace_id = ${ws} and email = ${mail(`csv-${role}`)}`)[0]!.consent_at).not.toBeNull();
+      }
+
+      // Anyone may add to the do-not-contact list; only an admin or an owner takes someone off it.
+      const dnc = encodeURIComponent(mail("dnc"));
+      for (const token of [adminT, ownerT]) {
+        expect((await call(memberT, "POST", "/api/suppressions", { ws, body: { email: mail("dnc") } })).status).toBe(201);
+        const r = await call(memberT, "DELETE", `/api/suppressions/${dnc}`, { ws });
+        expect([r.status, r.body.error.code]).toEqual([403, "forbidden_role"]);
+        expect((await call(memberT, "GET", "/api/suppressions", { ws })).body.data.map((s: { email: string }) => s.email)).toContain(mail("dnc"));
+        expect((await call(token, "DELETE", `/api/suppressions/${dnc}`, { ws })).status).toBe(204);
+      }
+    });
+
     test("an admin runs the team but can't touch an owner or make one", async () => {
       const { id } = await invite(adminT, ws, mail("from-admin"));
       expect((await call(adminT, "DELETE", `/api/team/invites/${id}`, { ws })).status).toBe(204);
