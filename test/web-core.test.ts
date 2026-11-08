@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { describeAuthor } from "../web/src/lib/authors.ts";
 import { citeBody, citedParts, sourceLabel } from "../web/src/lib/citations.ts";
+import { sourceLabel as leadSource } from "../web/src/pages/leads/shared.ts";
 import { parseInline, parseMarkdown, safeHref } from "../web/src/lib/markdown-parse.ts";
 
 describe("parseMarkdown", () => {
@@ -98,5 +99,18 @@ describe("citeBody", () => {
       { t: "cite", n: 2, url: "https://x.com/a" },
       { t: "text", v: "." },
     ]);
+  });
+});
+
+describe("a lead's source label", () => {
+  test("known sources get their name", () => {
+    expect(leadSource("google_search")).toBe("Google");
+    expect(leadSource("hubspot")).toBe("HubSpot");
+  });
+  test("a cohort someone named stays as typed", () => {
+    expect(leadSource("Launch sign-ups Nov 8")).toBe("Launch sign-ups Nov 8");
+  });
+  test("a slug is tidied", () => {
+    expect(leadSource("event_list")).toBe("Event list");
   });
 });

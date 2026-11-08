@@ -41,6 +41,8 @@ export function sourceLabel(source: string | null | undefined): string {
   if (SOURCES[key]) return SOURCES[key];
   const head = key.split(/[:/]/)[0]!;
   if (SOURCES[head]) return SOURCES[head];
+  // A cohort someone named ("Launch sign-ups Nov 8") stays as typed; only a slug ("event_list") gets tidied.
+  if (/[A-Z ]/.test(source)) return source;
   const words = head.replace(/[_-]+/g, " ").trim();
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : source;
 }

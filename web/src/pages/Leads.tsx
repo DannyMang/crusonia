@@ -370,7 +370,7 @@ function FilterBar({
               Any source
             </MenuItem>
             {sources.map((s) => (
-              <MenuItem key={s} checked={filters.source === s} onSelect={() => pick({ source: s })} hint={sourceLabel(s) !== s ? s : undefined}>
+              <MenuItem key={s} checked={filters.source === s} onSelect={() => pick({ source: s })}>
                 {sourceLabel(s)}
               </MenuItem>
             ))}
