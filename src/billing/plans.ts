@@ -40,6 +40,12 @@ export const USAGE_MARKUP_BPS = 20_000;
 export const FREE_SAMPLE_CREDITS = 300;
 
 /**
+ * About what one lead costs end to end with the hosted agent (found, researched with sources, scored, drafted).
+ * Display only: /pricing turns credit amounts into "about N researched leads". Usage is metered, not this.
+ */
+export const TYPICAL_LEAD_CREDITS = 60;
+
+/**
  * How long unused included plan credits carry over after the billing period they were granted for: 1 = credits
  * for March can still be spent in April and expire at the end of April. null = they never expire.
  */

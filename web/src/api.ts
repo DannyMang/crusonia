@@ -2,6 +2,9 @@
 // Clerk session token per request). Errors come back as { error: { code, message, details? } } and are
 // thrown as ApiError so screens can tell "not set up yet" (503 not_configured) from real failures.
 
+// The price list types are shared with the Worker (src/billing/catalog.ts), so the API and /pricing cannot drift.
+import type { CatalogPack, CatalogPlan, CreditFacts } from "../../src/billing/catalog.ts";
+
 // ---------- shared ----------
 
 export type ApiErrorBody = { error: { code: string; message: string; details?: unknown } };
@@ -462,6 +465,43 @@ export type ApiKey = {
   status: "active" | "revoked";
 };
 
+// ---------- billing (src/billing/overview.ts; mocked with MSW in `bun run dev:mock`) ----------
+
+export type { CatalogPack, CatalogPlan, CreditFacts };
+
+export type LedgerReason = "grant" | "pack" | "plan" | "usage" | "refund" | "expire" | "adjustment";
+
+export type LedgerEntry = {
+  id: string;
+  /** Whole credits: + grants and purchases, - usage, refunds and expiry. */
+  amount: number;
+  reason: LedgerReason | (string & {});
+  source: string;
+  session_id: string | null;
+  data: Record<string, unknown>;
+  created_at: string;
+};
+
+export type Billing = {
+  owner_id: string;
+  /** `configured`: Stripe is set up on this deployment, so Checkout and the portal work. */
+  billing: { configured: boolean; webhook_configured: boolean; mode: "test" | "live" | null; enforced: boolean };
+  plan: { key: string; name: string; status: string | null; current_period_end: string | null; cancel_at_period_end: boolean };
+  /** A Stripe customer exists, so the Customer Portal can open. */
+  has_customer: boolean;
+  balance: number;
+  balance_usd: number;
+  /** Included plan credit still unspent, soonest expiry first. */
+  expiring: { credits: number; expires_at: string }[];
+  /** The 20 newest ledger rows, newest first. */
+  ledger: LedgerEntry[];
+  plans: (CatalogPlan & { current: boolean })[];
+  packs: CatalogPack[];
+  credit: CreditFacts;
+};
+
+export type CheckoutInput = { plan: string } | { pack: string };
+
 // ---------- client ----------
 
 export type TokenGetter = () => Promise<string | null>;
@@ -591,6 +631,13 @@ export function createApi(getToken: TokenGetter, base = "") {
     stopExperiment: (experimentId: string) => patch<{ experiment: Experiment }>(`/api/experiments/${id(experimentId)}`, { status: "stopped" }),
     enrollLeads: (experimentId: string, leadIds: string[]) =>
       post<{ enrolled: number; skipped: string[] }>(`/api/experiments/${id(experimentId)}/leads`, { lead_ids: leadIds }),
+
+    // billing
+    billing: () => get<Billing>("/api/billing"),
+    /** -> Stripe Checkout URL. 409 already_subscribed for a plan while subscribed; 503 not_configured without Stripe. */
+    checkout: (input: CheckoutInput) => post<{ url: string }>("/api/billing/checkout", input),
+    /** -> Stripe Customer Portal URL. 409 no_billing_account before the first purchase. */
+    billingPortal: () => post<{ url: string }>("/api/billing/portal"),
 
     // API keys (for MCP clients)
     keys: () => list<ApiKey>("/api/keys"),

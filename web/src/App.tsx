@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
 import { AuthProvider, RedirectIfSignedIn, RequireAuth } from "./auth.tsx";
 import { AppShell } from "./components/AppShell.tsx";
 import Landing from "./landing/Landing.tsx";
+import Pricing from "./landing/Pricing.tsx";
 import Approvals from "./pages/Approvals.tsx";
 import SignIn from "./pages/auth/SignIn.tsx";
 import SignUp from "./pages/auth/SignUp.tsx";
@@ -21,6 +22,7 @@ import Step3Customer from "./pages/onboarding/Step3Customer.tsx";
 import Step4Leads from "./pages/onboarding/Step4Leads.tsx";
 import Replies from "./pages/Replies.tsx";
 import Settings from "./pages/Settings.tsx";
+import Billing from "./pages/settings/Billing.tsx";
 import WorkflowRun from "./pages/WorkflowRun.tsx";
 import Workflows from "./pages/Workflows.tsx";
 import { queryClient } from "./queries.ts";
@@ -39,6 +41,8 @@ export function App() {
           <Routes>
             {/* Public landing page (web/src/landing/); it sends signed-in visitors to /app. */}
             <Route index element={<Landing />} />
+            {/* Public pricing (web/src/landing/Pricing.tsx); tiers come from src/billing/catalog.ts. */}
+            <Route path="pricing" element={<Pricing />} />
 
             <Route path="sign-in/*" element={<RedirectIfSignedIn><SignIn /></RedirectIfSignedIn>} />
             <Route path="sign-up/*" element={<RedirectIfSignedIn fallback="/onboarding/1"><SignUp /></RedirectIfSignedIn>} />
@@ -67,6 +71,8 @@ export function App() {
                 <Route path="integrations" element={<Integrations />} />
                 <Route path="connect" element={<Connect />} />
                 <Route path="settings" element={<Settings />} />
+                {/* Stripe Checkout success/cancel and the portal return here (src/billing/constants.ts BILLING_APP_PATH). */}
+                <Route path="settings/billing" element={<Billing />} />
                 <Route path="*" element={<NotFound />} />
               </Route>
             </Route>

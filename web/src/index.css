@@ -67,3 +67,63 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Landing S3 "Add to …" buttons (Paper: "Landing S3 · Add-to button states"). Unlayered on purpose, so these win
+   over the Tailwind utilities on the same element (bg-white, hover border).
+   - Press: scale to 0.96 in 100ms ease-out. Release: spring back with a slight overshoot (bounce ~0.2, 420ms;
+     cubic-bezier fallback where linear() is unsupported).
+   - Copied (data-copied): lime at once, "Copied" and the check fade in over 120ms ease-out; on revert the lime and
+     the label fade back over 150ms. Reduced motion: instant swaps and no scale. */
+.agent-button {
+  transition-property: transform, background-color, border-color;
+  transition-duration: 420ms, 150ms, 150ms;
+  transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1), ease-out, ease-out;
+  transition-timing-function:
+    linear(0, 0.084 5%, 0.289 10%, 0.543 15%, 0.791 20%, 0.996 25%, 1.139 30%, 1.215 35%, 1.233 40%, 1.209 45%, 1.159 50%,
+      1.099 55%, 1.042 60%, 0.996 65%, 0.964 70%, 0.949 75%, 0.946 80%, 0.952 85%, 0.965 90%, 0.979 95%, 1),
+    ease-out, ease-out;
+}
+.agent-button:active {
+  transform: scale(0.96);
+  transition-duration: 100ms, 150ms, 150ms;
+  transition-timing-function: ease-out;
+}
+.agent-button[data-copied] {
+  background-color: var(--color-lime);
+  border-color: var(--color-lime);
+  transition-duration: 420ms, 0ms, 0ms;
+}
+.agent-button[data-copied]:active {
+  transition-duration: 100ms, 0ms, 0ms;
+  transition-timing-function: ease-out;
+}
+.agent-face {
+  transition: opacity 150ms ease-out, transform 150ms ease-out;
+}
+.agent-face-copied {
+  opacity: 0;
+  transform: translateY(3px);
+}
+.agent-button[data-copied] .agent-face-idle {
+  opacity: 0;
+  transition-duration: 80ms;
+}
+.agent-button[data-copied] .agent-face-copied {
+  opacity: 1;
+  transform: none;
+  transition-duration: 120ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-button,
+  .agent-button:active,
+  .agent-button[data-copied],
+  .agent-face {
+    transition: none;
+  }
+  .agent-button:active {
+    transform: none;
+  }
+  .agent-face-copied {
+    transform: none;
+  }
+}
