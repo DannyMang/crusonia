@@ -9,7 +9,7 @@ import worker from "../src/index.ts";
 import { ApiError } from "../src/lib/errors.ts";
 import type { FetchFn } from "../src/providers/http.ts";
 import { sendApprovalTtlMinutes } from "../src/services/approval-ttl.ts";
-import { answerQuestion, expireStaleApprovals, getApproval, resolveTool, type Deps } from "../src/services/approvals.ts";
+import { answerQuestion, createAgentApproval, expireStaleApprovals, getApproval, resolveTool, type Deps } from "../src/services/approvals.ts";
 import { createLead } from "../src/services/crm.ts";
 import { createDraft } from "../src/services/drafts.ts";
 import { handleAgentMailEvent } from "../src/services/inbound.ts";
@@ -245,6 +245,23 @@ suite("database integration (mocked providers)", () => {
 
     await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
     expect(nv.calls).toHaveLength(1);
+  });
+
+  test("the cron answers an onboarding question that was already waiting, and closes its card", async () => {
+    const sessionId = `ses_it_${run}_onboard_old`;
+    await sql`insert into naive_sessions (id, workspace_id, purpose, status, stop_reason, updated_at)
+              values (${sessionId}, ${WS}, 'onboarding', 'idle', 'awaiting_answer', now() - interval '30 days')`;
+    const action = { kind: "question" as const, tool_call_id: "q2", name: "ask_operator", question: { prompt: "Who buys?", fields: [{ key: "buyer" }] } };
+    const code = (await createAgentApproval(sql, { workspaceId: WS, sessionId, leadId: null, action, ttlMinutes: 60 }))!;
+    const nv = provider([
+      (c) => (c.method === "POST" ? ok({}, 202) : undefined),
+      (c) => (c.url.includes("/events") ? ok({ data: [], has_more: false, next_cursor: null }) : undefined),
+      (c) => (c.url.endsWith(`/sessions/${sessionId}`) ? ok({ id: sessionId, status: "idle", stop_reason: "awaiting_answer", pending_actions: [action] }) : undefined),
+    ]);
+    await reconcileSessions(sql, env, nv.fn);
+    expect(nv.calls.filter((c) => c.url.endsWith(`/sessions/${sessionId}/answers`))).toHaveLength(1);
+    expect(await getApproval(sql, WS, code)).toMatchObject({ status: "answered", decided_via: "auto" });
+    expect((await sql`select status from naive_sessions where id = ${sessionId}`)[0]!.status).toBe("running");
   });
 
   test("paused: nothing is auto-allowed", async () => {
