@@ -573,7 +573,9 @@ workspace (see [Workspaces](#workspaces)). Note: while an uploaded version is ne
 
 ## iMessage approvals (Photon)
 
-The owner can approve drafts and agent requests from their phone. Off until `IMESSAGE_ENABLED=true`.
+The owner can approve drafts and agent requests from their phone. No notices go out until `IMESSAGE_ENABLED=true`.
+Switching it off stops new notices but not the phone: a 👍 or 👎 on a notice already delivered is still applied. To stop
+that too, stop the bridge.
 
 ```
 Worker  <── signed polls and tapbacks ──  bridge (bridge/, one small box)  ── gRPC ──  Photon Spectrum  ──  owner's iPhone

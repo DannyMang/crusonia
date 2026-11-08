@@ -219,12 +219,8 @@ describe("/webhooks/photon routes (no database)", () => {
     expect((await call(await signed("/webhooks/photon/poll", { ...poll, bridge: { ...poll.bridge, phone: "+1555" } }))).status).toBe(400);
   });
 
-  test("switched off: a tapback gets a polite reply, polls get nothing and a slower interval, no database touched", async () => {
+  test("switched off: polls get no notices and a slower interval, without touching the database when there are no acks", async () => {
     const off = env({ IMESSAGE_ENABLED: undefined });
-    expect((await call(await signed("/webhooks/photon", command), off)).body).toEqual({
-      ok: false,
-      reply: "iMessage approvals are switched off in Crusonia (IMESSAGE_ENABLED). Use the app for now.",
-    });
     expect((await call(await signed("/webhooks/photon/poll", poll), off)).body).toEqual({ ok: true, enabled: false, notices: [], poll_after_ms: 60_000 });
   });
 
