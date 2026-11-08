@@ -5,8 +5,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { getSql, type Sql } from "../src/db.ts";
 import type { Env } from "../src/env.ts";
+import worker from "../src/index.ts";
 import { ApiError } from "../src/lib/errors.ts";
 import type { FetchFn } from "../src/providers/http.ts";
+import { sendApprovalTtlMinutes } from "../src/services/approval-ttl.ts";
 import { answerQuestion, expireStaleApprovals, getApproval, resolveTool, type Deps } from "../src/services/approvals.ts";
 import { createLead } from "../src/services/crm.ts";
 import { createDraft } from "../src/services/drafts.ts";
@@ -51,7 +53,7 @@ async function newLead(name: string) {
   return createLead(sql, { email: email(name), name, source: "it_test", consent: { text: "integration test opt-in" } }, "test");
 }
 async function newApproval(leadId: string, subject = "Hello") {
-  const { approval, draft } = await createDraft(sql, { lead_id: leadId, subject, body: "Body" }, { ttlMinutes: 30, via: "api", actor: "test" });
+  const { approval, draft } = await createDraft(sql, { lead_id: leadId, subject, body: "Body" }, { ttlMinutes: sendApprovalTtlMinutes(env), via: "api", actor: "test" });
   return { code: approval.code, draftId: draft.id };
 }
 async function failure(p: Promise<unknown>) {
@@ -138,7 +140,7 @@ suite("database integration (mocked providers)", () => {
     expect(await failure(approveAndSend({ sql, env, actor: "test", fetch: bad.fn }, code))).toBe("502 send_failed");
     expect((await sql`select status from drafts where id = ${draftId}`)[0]!.status).toBe("send_failed");
     const { editApproval } = await import("../src/services/approvals.ts");
-    const deps: Deps = { sql, env, actor: "test", ttlMinutes: 30 };
+    const deps: Deps = { sql, env, actor: "test", sendTtlMinutes: sendApprovalTtlMinutes(env) };
     const retry = await editApproval(deps, code, {});
     expect(retry.draft.version).toBe(2);
     expect(retry.approval.status).toBe("pending");
@@ -214,7 +216,7 @@ suite("database integration (mocked providers)", () => {
     expect(again.approvals).toHaveLength(0);
     expect(nv.calls).toHaveLength(1);
 
-    const deps: Deps = { sql, env, actor: "test", ttlMinutes: 30, fetch: nv.fn };
+    const deps: Deps = { sql, env, actor: "test", sendTtlMinutes: sendApprovalTtlMinutes(env), fetch: nv.fn };
     const [toolCode, questionCode] = first.approvals as [string, string];
     const tool = await getApproval(sql, toolCode);
     expect(tool).toMatchObject({ kind: "tool", tool_call_id: "c2", payload: { name: "gmail.send" } });
@@ -286,5 +288,125 @@ suite("database integration (mocked providers)", () => {
     const second = await startResearch(sql, env, { lead_ids: [lead.id] }, "test", nv.fn);
     expect(second.skipped).toEqual([{ lead_id: lead.id, reason: "session_open" }]);
     expect(nv.calls).toHaveLength(1);
+  });
+
+  describe("approval lifetimes", () => {
+    const HOUR = 3600;
+    // The owner-token check (src/auth.ts) uses a Workers-only Web Crypto method that Bun lacks.
+    beforeAll(() => {
+      if (typeof crypto.subtle.timingSafeEqual === "function") return;
+      Object.defineProperty(crypto.subtle, "timingSafeEqual", {
+        configurable: true,
+        value: (a: ArrayBuffer, b: ArrayBuffer) => {
+          const x = new Uint8Array(a);
+          const y = new Uint8Array(b);
+          let diff = x.length ^ y.length;
+          for (let i = 0; i < Math.min(x.length, y.length); i++) diff |= x[i]! ^ y[i]!;
+          return diff === 0;
+        },
+      });
+    });
+    const lifetime = async (code: string) =>
+      Number((await sql`select extract(epoch from expires_at - created_at) as s from approvals where code = ${code}`)[0]!.s);
+    /** The real Worker routes (MCP tools/call, REST), with this database and an owner token. */
+    const callWorker = (path: string, body: unknown, over: Partial<Env> = {}) =>
+      worker.fetch(
+        new Request(`https://example.test${path}`, {
+          method: "POST",
+          headers: { Authorization: "Bearer it-owner", "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+          body: JSON.stringify(body),
+        }),
+        { ...env, DATABASE_URL: url, MCP_TOKEN: "it-owner", ...over },
+        {} as ExecutionContext,
+      );
+    const mcpDraft = async (leadId: string, over: Partial<Env> = {}) => {
+      const res = await callWorker(
+        "/mcp",
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_draft", arguments: { lead_id: leadId, subject: "Hi", body: "Body" } } },
+        over,
+      );
+      const rpc = (await res.json()) as { result: { isError?: boolean; content: { text: string }[] } };
+      expect(rpc.result.isError).toBeFalsy();
+      return JSON.parse(rpc.result.content[0]!.text).approval.code as string;
+    };
+
+    test("send approvals last 7 days by default, from MCP create_draft and from the REST API", async () => {
+      const lead = await newLead("ttl-send");
+      expect(await lifetime(await mcpDraft(lead.id))).toBe(168 * HOUR);
+
+      const res = await callWorker(`/api/leads/${lead.id}/drafts`, { subject: "Hi again", body: "Body" });
+      expect(res.status).toBe(201);
+      const restCode = ((await res.json()) as { approval: { code: string } }).approval.code;
+      expect(await lifetime(restCode)).toBe(168 * HOUR);
+
+      // SEND_APPROVAL_TTL_HOURS overrides both paths.
+      expect(await lifetime(await mcpDraft(lead.id, { SEND_APPROVAL_TTL_HOURS: "24" }))).toBe(24 * HOUR);
+    });
+
+    test("agent tool and question approvals last 1 hour by default", async () => {
+      const lead = await newLead("ttl-tool");
+      const sessionId = `ses_it_${run}_ttl`;
+      await sql`insert into naive_sessions (id, lead_id, purpose, status) values (${sessionId}, ${lead.id}, 'research', 'running')`;
+      const nv = provider([() => ok({}, 202)]);
+      const res = await handleSessionIdle(
+        sql,
+        env,
+        {
+          sessionId,
+          stopReason: "awaiting_approval",
+          pendingActions: [
+            { tool_call_id: "t1", name: "shell.exec", args: {} },
+            { kind: "question", tool_call_id: "q1", name: "ask_operator", question: { prompt: "Which one?", fields: [{ key: "pick" }] } },
+          ],
+        },
+        nv.fn,
+      );
+      expect(res.approvals).toHaveLength(2);
+      for (const code of res.approvals) expect(await lifetime(code)).toBe(HOUR);
+
+      const sessionId2 = `ses_it_${run}_ttl2`;
+      await sql`insert into naive_sessions (id, lead_id, purpose, status) values (${sessionId2}, ${lead.id}, 'research', 'running')`;
+      const custom = await handleSessionIdle(
+        sql,
+        { ...env, TOOL_APPROVAL_TTL_MINUTES: "5" },
+        { sessionId: sessionId2, stopReason: "awaiting_approval", pendingActions: [{ tool_call_id: "t2", name: "shell.exec" }] },
+        nv.fn,
+      );
+      expect(await lifetime(custom.approvals[0]!)).toBe(5 * 60);
+    });
+
+    test("after an hour the cron denies a tool approval to Naive; a send approval from the same moment stays open", async () => {
+      const lead = await newLead("ttl-cron");
+      const sessionId = `ses_it_${run}_ttlc`;
+      await sql`insert into naive_sessions (id, lead_id, purpose, status) values (${sessionId}, ${lead.id}, 'research', 'running')`;
+      const nv = provider([() => ok({}, 202)]);
+      const idle = await handleSessionIdle(
+        sql,
+        env,
+        { sessionId, stopReason: "awaiting_approval", pendingActions: [{ tool_call_id: "tc1", name: "shell.exec" }] },
+        nv.fn,
+      );
+      const toolCode = idle.approvals[0]!;
+      const send = await newApproval(lead.id);
+
+      // Move both approvals 61 minutes into the past, as if an hour went by with no decision.
+      await sql`update approvals set created_at = created_at - interval '61 minutes', expires_at = expires_at - interval '61 minutes'
+                where code = any(${[toolCode, send.code]}::text[])`;
+      expect(await expireStaleApprovals(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
+      expect((await getApproval(sql, toolCode)).status).toBe("expired");
+      expect(nv.calls.at(-1)).toMatchObject({
+        url: `https://api.vetta.sh/v1/sessions/${sessionId}/tool_confirmations`,
+        body: { tool_call_id: "tc1", decision: "deny" },
+      });
+      expect((await getApproval(sql, send.code)).status).toBe("pending");
+
+      // Past 7 days the send approval expires too, and its draft goes back to 'draft' (nothing to deny).
+      const calls = nv.calls.length;
+      await sql`update approvals set created_at = created_at - interval '7 days', expires_at = expires_at - interval '7 days' where code = ${send.code}`;
+      expect(await expireStaleApprovals(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
+      expect((await getApproval(sql, send.code)).status).toBe("expired");
+      expect((await sql`select status from drafts where id = ${send.draftId}`)[0]!.status).toBe("draft");
+      expect(nv.calls).toHaveLength(calls);
+    });
   });
 });

@@ -1,4 +1,4 @@
-// Shared request plumbing: Hono env type, the audit actor, database access, zod parsing, approval TTL.
+// Shared request plumbing: Hono env type, the audit actor, database access, zod parsing.
 import type { Context } from "hono";
 import { z } from "zod";
 import { getSql, type Sql } from "../db.ts";
@@ -40,9 +40,4 @@ export function parseQuery<T extends z.ZodType>(c: Context, schema: T): z.infer<
   const parsed = schema.safeParse(c.req.query());
   if (!parsed.success) throw invalidRequest(parsed.error);
   return parsed.data;
-}
-
-export function approvalTtlMinutes(env: Env): number {
-  const n = Number(env.APPROVAL_TTL_MINUTES);
-  return Number.isFinite(n) && n > 0 ? n : 30;
 }

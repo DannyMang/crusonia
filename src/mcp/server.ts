@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getSql, type Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { searchGoogle, searchInputSchema } from "../services/apify.ts";
+import { describeMinutes, sendApprovalTtlMinutes } from "../services/approval-ttl.ts";
 import { createDraft, draftInputSchema, listPendingApprovals } from "../services/drafts.ts";
 import { ServiceError, describeError, missingKey } from "../services/errors.ts";
 import {
@@ -54,6 +55,7 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
 export function createMcpServer(env: Env, deps: Deps = {}): McpServer {
   const db = deps.sql ?? (() => getSql(env.DATABASE_URL));
   const server = new McpServer(SERVER_INFO, { instructions: INSTRUCTIONS });
+  const sendTtlMinutes = sendApprovalTtlMinutes(env);
 
   server.registerTool(
     "get_status",
@@ -182,11 +184,11 @@ export function createMcpServer(env: Env, deps: Deps = {}): McpServer {
     {
       title: "Create an email draft",
       description:
-        "Saves an email draft for an opted-in lead (has_consent: true) and opens a pending send approval with a short code that expires in 48 hours. Drafts are immutable: calling again creates a new version and supersedes the older open draft and its approval. This does NOT send anything; a human must approve first. Fails for leads without consent, without an email, or who unsubscribed.",
+        `Saves an email draft for an opted-in lead (has_consent: true) and opens a pending send approval with a short code that expires in ${describeMinutes(sendTtlMinutes)}. Drafts are immutable: calling again creates a new version and supersedes the older open draft and its approval. This does NOT send anything; a human must approve first. Fails for leads without consent, without an email, or who unsubscribed.`,
       inputSchema: draftInputSchema,
       annotations: WRITE,
     },
-    (args) => run(() => createDraft(db(), args)),
+    (args) => run(() => createDraft(db(), args, { ttlMinutes: sendTtlMinutes })),
   );
 
   server.registerTool(
