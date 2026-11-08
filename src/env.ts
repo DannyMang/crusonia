@@ -29,6 +29,8 @@ export interface Env {
   SIGNUPS_OPEN?: string;
   // Clerk user ids refused with 403 (comma list).
   BLOCKED_USER_IDS?: string;
+  /** Comma list of Clerk user ids allowed to sign up while SIGNUPS_OPEN=false. */
+  SIGNUP_ALLOWED_USER_IDS?: string;
   // Workspace ids besides the owner's that may send email (comma list). All of them send from AGENTMAIL_INBOX_ID,
   // the owner's inbox, so other workspaces can draft but not send until they are listed here.
   SEND_WORKSPACE_IDS?: string;
@@ -105,6 +107,11 @@ export interface Env {
   IMESSAGE_ENABLED?: string;
   // Shared HMAC secret signing the bridge's calls to /webhooks/photon and /webhooks/photon/poll. `openssl rand -hex 32`.
   BRIDGE_SECRET?: string;
+  // "true" also texts approvals that belong to integration-test fixtures (leads with an it_* source, reserved example
+  // domains, ses_it_* sessions). Off by default so test suites on a shared database never text the owner.
+  IMESSAGE_INCLUDE_TEST_DATA?: string;
+  // Send cap: notices texted per 10 minutes before the rest collapse into one "+N more" text (default 6).
+  IMESSAGE_NOTICE_CAP?: string;
   // Owner's phone in E.164. Optional on the Worker: when set, /webhooks/photon also refuses any other sender
   // (the bridge already filters; this is defense in depth).
   OWNER_PHONE?: string;

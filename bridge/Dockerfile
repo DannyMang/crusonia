@@ -13,6 +13,8 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 
 COPY tsconfig.json ./
 COPY src ./src
+# Readable by the unprivileged runtime user whatever umask the files were checked out with.
+RUN chmod -R a+rX /app
 
 ENV PORT=8080
 USER bun

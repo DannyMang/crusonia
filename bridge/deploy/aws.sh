@@ -17,7 +17,7 @@
 #   GIT_REF             commit to run (a full SHA pushed to GitHub); required for up/recreate
 #   CREDS_FILE          file with SPECTRUM_PROJECT_ID=, SPECTRUM_PROJECT_SECRET=, OWNER_PHONE= lines
 #   BRIDGE_SECRET_FILE  file with a BRIDGE_SECRET= line (the same value goes on the Worker)
-#   SEND_TEST_MESSAGE   1 = after the bridge connects, text OWNER_PHONE once: "Crusonia is connected. Reply help for commands."
+#   SEND_TEST_MESSAGE   1 = after the bridge connects, text OWNER_PHONE once: "Crusonia is connected."
 #   WORKER_URL          default https://crusonia.veri-web.workers.dev
 #   AWS_PROFILE / AWS_REGION (default us-east-1), AZ (default us-east-1a), INSTANCE (default crusonia-bridge)
 #
@@ -36,7 +36,7 @@ BLUEPRINT="${BLUEPRINT:-ubuntu_24_04}"
 WORKER_URL="${WORKER_URL:-https://crusonia.veri-web.workers.dev}"
 REPO_URL="${REPO_URL:-https://github.com/DannyMang/crusonia.git}"
 REPO_API="${REPO_API:-https://api.github.com/repos/DannyMang/crusonia}"
-TEST_TEXT="Crusonia is connected. Reply help for commands."
+TEST_TEXT="Crusonia is connected."
 
 ls_() { aws lightsail --region "$REGION" "$@"; }
 say() { printf '%s\n' "$*" >&2; }
@@ -62,14 +62,22 @@ check_inputs() {
 env_lines() { # exactly the five settings the bridge needs, plus non-secret config
   grep -E '^(SPECTRUM_PROJECT_ID|SPECTRUM_PROJECT_SECRET|OWNER_PHONE)=' "$CREDS_FILE"
   grep -E '^BRIDGE_SECRET=' "$BRIDGE_SECRET_FILE" | head -n 1
-  printf 'WORKER_URL=%s\nSPECTRUM_MODE=live\nBRIDGE_VERSION=%s\n' "$WORKER_URL" "${GIT_REF:0:12}"
+  # PORT: the loopback health server, on an uncommon port since the container shares the host's network.
+  printf 'WORKER_URL=%s\nSPECTRUM_MODE=live\nBRIDGE_VERSION=%s\nPORT=18733\n' "$WORKER_URL" "${GIT_REF:0:12}"
 }
 
 bootstrap_body() { # the first-boot script (bash, as root). Never echoes the env file. Validated by deploy/test-bootstrap.sh.
   cat <<EOF
 set -euo pipefail
+export HOME=/root # cloud-init runs launch scripts without HOME; git and docker want one
+umask 077 # secrets stay private; only the code checkout below is made world-readable
 log() { echo "\$(date -u +%FT%TZ) \$*"; }
+# Progress beacons: unsigned POSTs the target Worker answers 401 but logs with the query string, so first boot can be
+# followed in \`wrangler tail\` without SSH. They carry step names only.
+beacon() { curl -fsS -m 10 -o /dev/null -X POST "$WORKER_URL/webhooks/photon/poll?bootstrap=\$1&v=${GIT_REF:0:7}" >/dev/null 2>&1 || true; }
+trap 'beacon "failed_line_\$LINENO"' ERR
 log "bootstrap start (commit ${GIT_REF:0:12})"
+beacon start
 if [ ! -f /swapfile ]; then # 512 MB box: swap for the image build
   { fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile &&
     echo '/swapfile none swap sw 0 0' >> /etc/fstab && log "swap on"; } || log "no swap (continuing)"
@@ -78,11 +86,12 @@ export DEBIAN_FRONTEND=noninteractive
 # First boot races unattended-upgrades for the apt lock: wait for it instead of failing.
 APT="apt-get -o DPkg::Lock::Timeout=600 -o Acquire::Retries=3"
 \$APT update -y
-\$APT install -y --no-install-recommends docker.io git ca-certificates
+\$APT install -y --no-install-recommends docker.io git ca-certificates curl
 # Recent docker CLIs refuse 'docker build' without the buildx plugin; the legacy builder is the fallback below.
 \$APT install -y --no-install-recommends docker-buildx || log "docker-buildx not available; using the legacy builder"
 systemctl enable --now docker
 log "docker \$(docker version --format '{{.Server.Version}}')"
+beacon docker_ready
 install -d -m 700 -o root -g root /opt/crusonia-bridge
 # Root-only env file: dockerd (root) reads it; the bridge inside the container runs as the unprivileged bun user.
 ( umask 077; cat > /opt/crusonia-bridge/bridge.env <<'ENVEOF'
@@ -90,16 +99,22 @@ $(env_lines)
 ENVEOF
 )
 chmod 600 /opt/crusonia-bridge/bridge.env
-rm -rf /opt/crusonia-bridge/repo
-git clone --quiet "$REPO_URL" /opt/crusonia-bridge/repo
-git -C /opt/crusonia-bridge/repo checkout --quiet --detach "$GIT_REF"
+# The code (and only the code) must be readable by the container's unprivileged user.
+( umask 022
+  rm -rf /opt/crusonia-bridge/repo
+  git clone --quiet "$REPO_URL" /opt/crusonia-bridge/repo
+  git -C /opt/crusonia-bridge/repo checkout --quiet --detach "$GIT_REF" )
+beacon cloned
 IMAGE="crusonia-bridge:${GIT_REF:0:12}"
-docker build -q -t "\$IMAGE" /opt/crusonia-bridge/repo/bridge >/dev/null ||
-  DOCKER_BUILDKIT=0 docker build -q -t "\$IMAGE" /opt/crusonia-bridge/repo/bridge >/dev/null
+# Host networking for the build and the container: the bridge only dials out (and its health server listens on
+# 127.0.0.1), so this skips Docker's NAT and DNS entirely. Legacy builder first; BuildKit as the fallback.
+DOCKER_BUILDKIT=0 docker build --network host -q -t "\$IMAGE" /opt/crusonia-bridge/repo/bridge >/dev/null ||
+  docker build --network host -q -t "\$IMAGE" /opt/crusonia-bridge/repo/bridge >/dev/null
 log "image built"
+beacon image_built
 run() {
   docker rm -f crusonia-bridge >/dev/null 2>&1 || true
-  docker run -d --name crusonia-bridge --restart always --env-file /opt/crusonia-bridge/bridge.env \\
+  docker run -d --name crusonia-bridge --restart always --network host --env-file /opt/crusonia-bridge/bridge.env \\
     --cap-drop ALL --security-opt no-new-privileges --memory 300m --pids-limit 200 \\
     --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 "\$@" "\$IMAGE" >/dev/null
 }
@@ -114,19 +129,27 @@ connected() {
   return 1
 }
 run --read-only --tmpfs /tmp:rw,size=64m
-if connected; then log "bridge connected (read-only root filesystem)"; else
+if connected; then log "bridge connected (read-only root filesystem)"; beacon connected_ro; else
   log "not connected with a read-only root filesystem; retrying writable"
+  beacon retry_writable
   run
-  if connected; then log "bridge connected"; else log "bridge NOT connected; see: docker logs crusonia-bridge"; fi
+  if connected; then log "bridge connected"; beacon connected_rw; else
+    log "bridge NOT connected; see: docker logs crusonia-bridge"
+    beacon not_connected
+    # Why, as URL-safe text (long digit runs masked): container state, then its last log lines.
+    beacon "state_\$(docker inspect -f '{{.State.Status}}-exit{{.State.ExitCode}}-oom{{.State.OOMKilled}}-restarts{{.RestartCount}}' crusonia-bridge 2>&1 | tr -c 'A-Za-z0-9_.-' '_' | head -c 120)"
+    beacon "log_\$(docker logs --tail 3 crusonia-bridge 2>&1 | sed -E 's/[0-9]{7,}/N/g' | tr -c 'A-Za-z0-9_.:-' '_' | head -c 600)"
+  fi
 fi
 if [ "${SEND_TEST_MESSAGE:-0}" = "1" ] && [ ! -f /opt/crusonia-bridge/.test-message-sent ]; then
   out="\$(docker exec crusonia-bridge bun src/cli.ts notify test:connected "$TEST_TEXT" 2>&1 || true)"
   case "\$out" in
-    "200 "*) touch /opt/crusonia-bridge/.test-message-sent; log "test message sent" ;;
-    *) log "test message FAILED: \$(printf '%s' "\$out" | head -c 300)" ;;
+    "200 "*) touch /opt/crusonia-bridge/.test-message-sent; log "test message sent"; beacon test_sent ;;
+    *) log "test message FAILED: \$(printf '%s' "\$out" | head -c 300)"; beacon "test_failed_\$(printf '%s' "\$out" | head -c 3)" ;;
   esac
 fi
 log "bootstrap done"
+beacon done
 EOF
 }
 

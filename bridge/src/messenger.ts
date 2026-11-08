@@ -16,6 +16,8 @@ export type InboundMessage = {
   contentType: string;
   /** A tapback (content type "reaction"): its emoji and the id of the message it was put on. */
   reaction?: { emoji: string; targetId: string | undefined };
+  /** Sent by our own line (an echo). Never acted on or answered. */
+  fromSelf?: boolean;
   /** False for group chats. */
   isDirect: boolean;
   receivedAt: Date;
@@ -231,6 +233,7 @@ export class MockMessenger implements Messenger {
     contentType?: string;
     isDirect?: boolean;
     reaction?: { emoji: string; targetId: string | undefined };
+    fromSelf?: boolean;
   }): Promise<void> {
     if (!this.handler) throw new Error("MockMessenger.start() was not called");
     const from = input.from;
@@ -240,6 +243,7 @@ export class MockMessenger implements Messenger {
       text: input.text,
       contentType: input.contentType ?? (input.reaction ? "reaction" : input.text === undefined ? "attachment" : "text"),
       ...(input.reaction ? { reaction: input.reaction } : {}),
+      ...(input.fromSelf ? { fromSelf: true } : {}),
       isDirect: input.isDirect ?? true,
       receivedAt: new Date(),
       reply: async (text) => {

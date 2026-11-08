@@ -2,7 +2,7 @@
 // published: the Docker healthcheck and the operator CLI (`docker exec ... bun src/cli.ts`) use it from inside.
 //   GET  /health        liveness, Spectrum connection and poll state (no secrets, no phone numbers)
 //   POST /notify        signed with BRIDGE_SECRET: text the owner once (operator test message; the Worker never calls it)
-//   POST /mock/inbound  SPECTRUM_MODE=mock only, signed: simulate an owner iMessage, returns the replies
+//   POST /mock/inbound  SPECTRUM_MODE=mock only, signed: simulate an inbound event (a tapback), returns the replies
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { z } from "zod";
 import { NOTIFY_PATH, type Bridge, type HttpResult } from "./bridge.ts";
@@ -46,7 +46,13 @@ const header = (req: IncomingMessage) => ({
   },
 });
 
-const MockInbound = z.object({ from: z.string().min(1).max(320), text: z.string().max(12_000).optional(), id: z.string().max(200).optional() });
+const MockInbound = z.object({
+  from: z.string().min(1).max(320),
+  text: z.string().max(12_000).optional(),
+  id: z.string().max(200).optional(),
+  contentType: z.string().max(40).optional(),
+  reaction: z.object({ emoji: z.string().max(40), targetId: z.string().max(200).optional() }).optional(),
+});
 
 export function buildServer(opts: { bridge: Bridge; secret: string; mock?: MockMessenger; health?: () => HttpResult }): Server {
   const { bridge, secret, mock } = opts;
@@ -67,7 +73,8 @@ export function buildServer(opts: { bridge: Bridge; secret: string; mock?: MockM
         const input = MockInbound.safeParse(JSON.parse(raw));
         if (!input.success) return send(res, { status: 400, body: { error: { code: "invalid_payload", message: input.error.message } } });
         const before = mock.outbox.length;
-        await mock.inject(input.data);
+        const { reaction, ...rest } = input.data;
+        await mock.inject({ ...rest, ...(reaction ? { reaction: { emoji: reaction.emoji, targetId: reaction.targetId } } : {}) });
         return send(res, { status: 200, body: { ok: true, replies: mock.outbox.slice(before) } });
       }
       return send(res, { status: 404, body: { error: { code: "not_found", message: `No route for ${req.method} ${path}` } } });

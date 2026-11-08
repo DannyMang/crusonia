@@ -1,9 +1,9 @@
 // The bridge's logic, independent of HTTP and of the iMessage transport:
-//   inbound  owner's iMessage -> parse -> signed POST /webhooks/photon on the Worker -> reply with its answer
+//   inbound  owner's 👍 / 👎 on a notice -> signed POST /webhooks/photon on the Worker -> at most one confirmation per 10 min
 //   outbound notices come from the Worker through the poller (poller.ts); handleNotify serves the local operator
 //            endpoint (test message). Either way only OWNER_PHONE is ever texted.
 import { z } from "zod";
-import { HELP_TEXT, parseCommand, tapbackDecision, type Command } from "./commands.ts";
+import { tapbackDecision } from "./commands.ts";
 import type { Config } from "./config.ts";
 import { SeenIds, SIGNATURE_HEADER, TIMESTAMP_HEADER, verify } from "./hmac.ts";
 import { describeError, log } from "./log.ts";
@@ -22,14 +22,18 @@ const NotifySchema = z.object({
 
 export type HttpResult = { status: number; body: Record<string, unknown> };
 
+/** Hard loop guard: at most one text that is not a notice (a tapback's confirmation) per this window. */
+export const REPLY_WINDOW_MS = 10 * 60 * 1000;
+
 export class Bridge {
   private readonly config: Config;
   private readonly messenger: Messenger;
   private readonly fetchFn: FetchFn | undefined;
   private readonly notifyIds = new SeenIds();
-  // Spectrum delivers at least once (reconnect catch-up): answer each inbound message once.
+  // Spectrum delivers at least once (reconnect catch-up): act on each tapback once.
   private readonly inboundIds = new SeenIds(60 * 60 * 1000);
   private readonly workerRetryDelaysMs: number[] | undefined;
+  private lastReplyAt = Number.NEGATIVE_INFINITY;
 
   constructor(opts: { config: Config; messenger: Messenger; fetch?: FetchFn; workerRetryDelaysMs?: number[] }) {
     this.config = opts.config;
@@ -38,54 +42,49 @@ export class Bridge {
     this.workerRetryDelaysMs = opts.workerRetryDelaysMs;
   }
 
-  /** Every inbound iMessage lands here. Anything not from the owner is dropped and logged (masked). */
-  async handleInbound(m: InboundMessage): Promise<void> {
+  /**
+   * Every inbound event lands here, and only one kind does anything: the owner's 👍 or 👎 on a specific bubble, in a
+   * direct message. Texts, read receipts, typing, attachments, other tapbacks and our own messages are dropped without
+   * a word. Never answer those: read receipts arrive with the owner as sender, so a reply to one is read, which sends
+   * another receipt, which would be answered again. That loop texted the owner repeatedly.
+   */
+  async handleInbound(m: InboundMessage, now = Date.now()): Promise<void> {
+    if (m.fromSelf) return;
     if (!isOwner(m.sender, this.config.ownerHandles)) {
-      log.info("ignored message from non-owner", { from: maskHandle(m.sender), content: m.contentType });
+      log.info("ignored event from non-owner", { from: maskHandle(m.sender), content: m.contentType });
       return;
     }
-    if (!m.isDirect) {
-      log.info("ignored owner message in a group chat", { content: m.contentType });
+    const decision = m.contentType === "reaction" && m.isDirect ? tapbackDecision(m.reaction?.emoji) : undefined;
+    const target = m.reaction?.targetId;
+    if (!decision || !target) {
+      log.debug("ignored owner event", { content: m.contentType });
       return;
     }
-    if (!this.inboundIds.claim(m.id)) {
-      log.debug("duplicate inbound delivery", { id: m.id });
+    if (!this.inboundIds.claim(m.id, now)) {
+      log.debug("duplicate tapback delivery", { id: m.id });
       return;
     }
-    const reply = await this.answer(m);
-    if (!reply) return; // e.g. a tapback on a message that is not one of our notices
-    try {
-      await m.reply(reply);
-    } catch (err) {
-      log.error("reply to owner failed", { error: describeError(err) });
-    }
-  }
-
-  private async answer(m: InboundMessage): Promise<string> {
-    let command: Command;
-    if (m.contentType === "reaction") {
-      // Only 👍 / 👎 on a specific bubble mean something; other tapbacks (❤️ on "Approved.") are left alone.
-      const decision = tapbackDecision(m.reaction?.emoji);
-      if (!decision || !m.reaction?.targetId) return "";
-      command = { action: "react", reaction: decision, message_id: m.reaction.targetId };
-    } else {
-      if (m.text === undefined) return "I can only read text messages. Text help for commands.";
-      const parsed = parseCommand(m.text);
-      if (!parsed.ok) return parsed.reply;
-      if (parsed.command.action === "help") return HELP_TEXT;
-      command = parsed.command;
-    }
-    log.info("owner command", { action: command.action, id: m.id });
+    log.info("owner tapback", { reaction: decision, id: m.id });
     const result = await postCommand(
       {
         id: m.id,
         from: normalizeHandle(m.sender) ?? this.config.ownerPhone,
         received_at: m.receivedAt.toISOString(),
-        command,
+        command: { action: "react", reaction: decision, message_id: target },
       },
       { workerUrl: this.config.workerUrl, secret: this.config.bridgeSecret, fetch: this.fetchFn, retryDelaysMs: this.workerRetryDelaysMs },
     );
-    return result.reply;
+    if (!result.reply) return; // a tapback on a bubble that is not a notice
+    if (now - this.lastReplyAt < REPLY_WINDOW_MS) {
+      log.info("confirmation not texted (one per 10 minutes)", { id: m.id });
+      return;
+    }
+    this.lastReplyAt = now;
+    try {
+      await m.reply(result.reply);
+    } catch (err) {
+      log.error("reply to owner failed", { error: describeError(err) });
+    }
   }
 
   /** POST /notify from the Worker: verify, dedupe, text the owner. */

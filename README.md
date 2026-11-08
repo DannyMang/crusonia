@@ -263,7 +263,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/webhooks/agentmail` | Svix-signed. `message.received` (match by thread, then sender; classify; stop follow-ups; unsubscribe suppresses), `message.bounced` (permanent: suppress), `message.complained`, `message.delivered` |
 | POST | `/webhooks/naive` | `Vetta-Signature`-signed. `session.idle`: allowlisted tools (`AUTO_CONFIRM_TOOLS`) are allowed (claimed in one statement, confirmed in parallel; a call another handler already claimed counts as allowed, so the session stays `running`), other tools and `ask_operator` questions become approvals |
 | POST | `/webhooks/photon/poll` | iMessage bridge, `X-Crusonia-Signature`-signed (`BRIDGE_SECRET`): delivery acks + bridge status in, notices to text the owner out |
-| POST | `/webhooks/photon` | iMessage bridge, signed: one owner command (approve, reject, edit, answer, tapback, status, pause, resume); answers with the reply text |
+| POST | `/webhooks/photon` | iMessage bridge, signed: one owner tapback (👍 / 👎 on a notice); answers with the confirmation text, or none |
 | POST | `/webhooks/stripe` | `Stripe-Signature`-signed (`STRIPE_WEBHOOK_SECRET`; no secret, no processing). Credits packs and monthly plans, tracks subscriptions, claws back refunds; see [Billing](#billing-stripe) |
 
 Rules enforced in code: the agent never sends; manual-channel drafts get no approval and the send path only accepts
@@ -531,7 +531,7 @@ workspace (see [Workspaces](#workspaces)). Note: while an uploaded version is ne
 The owner can approve drafts and agent requests from their phone. Off until `IMESSAGE_ENABLED=true`.
 
 ```
-Worker  <── signed polls and commands ──  bridge (bridge/, one small box)  ── gRPC ──  Photon Spectrum  ──  owner's iPhone
+Worker  <── signed polls and tapbacks ──  bridge (bridge/, one small box)  ── gRPC ──  Photon Spectrum  ──  owner's iPhone
 ```
 
 Photon's Stable SDK sends iMessages over gRPC from Node or Bun; it has no HTTP send API, and a Worker cannot hold the
@@ -542,36 +542,46 @@ so its box has no open port, no TLS certificate and no inbound firewall rule.
   the last 24 hours, plus one reminder when an approval is in the last quarter of its life (at most its last 12 hours). It
   leases up to 5 notices at a time with their text, and records the bridge's delivery acks, including the iMessage id of
   each delivered bubble (`imessage_outbox`). A lease that is never acked is retried after 2 minutes, 5 attempts at most.
-- **Replies.** The bridge parses each owner message and posts it to `POST /webhooks/photon`. The Worker applies it through
-  the same services as the REST API and answers with the text the bridge sends back.
+- **Guards.** At most 6 notices go out per 10 minutes (`IMESSAGE_NOTICE_CAP`). Notices beyond the cap are not texted one
+  by one: they collapse into a single `+N more approvals waiting: open Crusonia (…).` text, sent at most
+  once per window. Approvals that belong to integration-test fixtures are never texted, so suites on a shared database
+  can't flood the phone (`IMESSAGE_INCLUDE_TEST_DATA=true` turns that off). Fixtures are leads with an `it_*` source,
+  recipients on reserved example domains (`example.com`, `*.test`, `*.example`, …) and `ses_it_*` agent sessions.
+- **Tapbacks.** The bridge posts the owner's 👍 or 👎 on a notice to `POST /webhooks/photon`. The Worker applies it through
+  the same services as the REST API and answers with a confirmation, which the bridge texts back (at most one per 10
+  minutes).
 
 What the owner sees:
 
 ```
-Draft to Dana Okafor (Fieldnote) <dana@fieldnote.example>:
+Request 7KXM · draft v1 to Dana Okafor (Fieldnote) <dana@fieldnote.example>:
 "Quick question about Fieldnote"
 
 Hi Dana, ...
 
-Tap 👍 on this message to send it, 👎 to reject. Or reply A 7KXM, R 7KXM, or E 7KXM <new text>. Expires in 7d.
+Tap 👍 to send, 👎 to reject.
 ```
 
-Tool requests read `Agent wants to run apify.run_actor (lead: ...)` with `Args: ...`, and questions read
-`Agent asks (lead: ...): "..."` with `Reply 9PQR <your answer>`.
+The first line names the request (the approval's code) and the exact draft version. When a draft the owner was already
+texted about gets a new version, its old request closes and the new notice opens with
+`That draft changed; here's the new one (v1 is closed).` Tool requests read
+`Request 9PQR · agent wants to run apify.run_actor (lead: ...).` with `Args: ...` and `Tap 👍 to allow, 👎 to deny.`
+Questions read `Request 9PQR · agent asks (lead: ...): "..."` and `Answer it in the app.`
+
+**Thumbs only.** A 👍 or 👎 on a notice is the only input:
 
 | Owner does | Effect |
 | --- | --- |
-| 👍 tapback on a notice | Approves exactly that approval and draft version (sends the email, or allows the tool call) |
-| 👎 tapback on a notice | Rejects the draft, or denies the tool call |
-| `A <code>` | Approve (exactly this, nothing after the code) |
-| `R <code> [reason]` | Reject / deny |
-| `E <code> <new text>` | A new draft version with this body. The old code closes and the new version gets its own notice to approve |
-| `<code> <answer>` | Answer an agent question. Several fields: `9PQR role: CTO; budget: 5k` |
-| `status` | Paused or running, and the 5 approvals expiring soonest |
-| `pause` / `resume` | The global kill switch (`/api/settings/pause`) |
-| `help` | The list above (answered by the bridge) |
+| 👍 on a notice | Approves exactly that request and draft version (sends the email, or allows the tool call) |
+| 👎 on a notice | Rejects the draft, or denies the tool call |
+| Anything else | Nothing, and no reply: texts, other tapbacks, read receipts, typing, attachments |
 
-Codes are the approvals' 4-character short codes, and case doesn't matter. Other tapbacks (❤️, 😂) do nothing.
+Editing, answering questions and pausing happen in the app.
+
+**Never answer anything but a thumb.** The SDK delivers read receipts as messages with content type `read`, the owner as
+sender and a new id each time. A reply to one gets read, which sends another receipt: that loop once texted the owner over
+and over. So the bridge drops everything except the owner's 👍 / 👎, and as a hard stop it texts at most one non-notice
+message per 10 minutes.
 
 ### Security model
 
@@ -582,19 +592,18 @@ Codes are the approvals' 4-character short codes, and case doesn't matter. Other
 - **Signed calls.** Every bridge call is signed with HMAC-SHA256 over `<timestamp>.<path>.<raw body>`, using `BRIDGE_SECRET`:
   - Headers: `X-Crusonia-Timestamp` and `X-Crusonia-Signature: v1=<hex>`.
   - The 5-minute window rejects replays.
-  - The signed path binds a signature to its route, so a poll signature is not valid for a command.
-  - Commands are deduped by iMessage message id in `webhook_events`; a retried delivery gets the first reply and acts
-    only once.
+  - The signed path binds a signature to its route, so a poll signature is not valid for a tapback.
+  - Tapbacks are deduped by iMessage event id in `webhook_events`; a retried delivery gets the first reply and acts only
+    once.
 - **Same rules as the app.** Decisions go through the approval services: expiry, single use, latest draft version, same
   recipient, consent, suppression and pause are all re-checked when the decision is applied. Each is recorded with
   `decided_via = 'imessage'` and an `events` row.
 - **Tapbacks are bound to the bubble.** Each notice stores the iMessage id of its bubble and the draft version it showed.
   A 👍 on an older version's bubble hits a closed approval and sends nothing. Plain text replies can't be tied to a bubble
-  (Photon), so they need the code.
-- **No ambiguous approvals.** "yes", "ok" or "approve" never decide anything, and approving needs exactly `A <code>`.
+  (Photon), which is why text decides nothing.
 - **Untrusted text.** Agent-written tool arguments and questions, and lead fields from CSVs or scraping, are flattened to
   one line, capped and labeled ("Agent asks").
-- **A leaked box can do only what the bridge does:** text the owner, and send owner commands for codes it knows. The box
+- **A leaked box can do only what the bridge does:** text the owner, and send tapbacks on bubbles it knows. The box
   holds no database URL, no API key and no Worker secret other than `BRIDGE_SECRET`, and the Photon credentials live
   nowhere else. To rotate: set a new `BRIDGE_SECRET` on the Worker, then recreate the box.
 - **Photon limits.** 5,000 messages per server per day, and 50 new conversations per line per day. On Free and Pro
@@ -642,7 +651,7 @@ Locally, without Photon:
 ```sh
 cd bridge && bun install && bun test
 SPECTRUM_MODE=mock OWNER_PHONE=+15550001111 BRIDGE_SECRET=<32+ chars> WORKER_URL=http://localhost:8787 bun src/index.ts
-BRIDGE_SECRET=<same> bun src/cli.ts inbound +15550001111 status   # simulate an owner text; prints the reply
+BRIDGE_SECRET=<same> bun src/cli.ts tap +15550001111 <bubble id> 👍   # simulate a tapback; prints the reply
 ```
 
 ## Day to day

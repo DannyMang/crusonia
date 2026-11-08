@@ -1,6 +1,6 @@
 // Thin Naive (vetta.sh) REST client: sessions, events, tool confirmations and answers.
-// Every POST carries an Idempotency-Key; an ambiguous failure is retried once with the same key, which
-// the provider replays instead of acting twice.
+// Every POST carries an Idempotency-Key; a 429 or an ambiguous failure is retried (up to NAIVE_POST_ATTEMPTS) with the
+// same key, which the provider replays instead of acting twice.
 import { defaultFetch, ProviderError, requestJson, type FetchFn } from "./http.ts";
 
 export const NAIVE_BASE = "https://api.vetta.sh";
@@ -61,11 +61,16 @@ export type NaiveAgent = {
 };
 export type EventPage = { data: NaiveEvent[]; has_more: boolean; next_cursor: string | null };
 
+/** POSTs: per-attempt timeout and attempts (429 "at capacity" and ambiguous failures are retried). */
+export const NAIVE_POST_TIMEOUT_MS = 30_000;
+export const NAIVE_POST_ATTEMPTS = 3;
+
 export class NaiveClient {
   constructor(
     private readonly apiKey: string,
     private readonly fetchFn: FetchFn = defaultFetch,
     private readonly baseUrl = NAIVE_BASE,
+    private readonly retryDelayMs = 2_000,
   ) {}
 
   /** `idempotencyKey`: a stable key makes a retried create return the first result (default: random per call). */
@@ -79,13 +84,16 @@ export class NaiveClient {
       },
       body: JSON.stringify(body),
     };
-    try {
-      return await requestJson<T>("naive", this.fetchFn, `${this.baseUrl}${path}`, init);
-    } catch (err) {
-      if (err instanceof ProviderError && err.ambiguous) {
-        return requestJson<T>("naive", this.fetchFn, `${this.baseUrl}${path}`, init);
+    // At capacity Naive answers 429 after ~15 seconds, so wait longer than the default and retry 429s as well as
+    // ambiguous failures, with the same key (a replay never acts twice).
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await requestJson<T>("naive", this.fetchFn, `${this.baseUrl}${path}`, { ...init, timeoutMs: NAIVE_POST_TIMEOUT_MS });
+      } catch (err) {
+        const retryable = err instanceof ProviderError && (err.ambiguous || err.status === 429);
+        if (!retryable || attempt >= NAIVE_POST_ATTEMPTS) throw err;
+        await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs));
       }
-      throw err;
     }
   }
 
