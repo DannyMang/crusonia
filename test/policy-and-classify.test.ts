@@ -58,6 +58,7 @@ describe("reply classification", () => {
     ["Re: hi", "No thanks, we're all set with our current tool.", "not_interested"],
     ["Re: hi", "Not a fit for us right now.", "not_interested"],
     ["Re: hi", "Interested! Let's chat next week.", "interested"],
+    ["Re: hi", "Can we talk next week?", "interested"],
     ["Re: hi", "Sounds great, can we book a call? Here is my calendly.com/ada link.", "interested"],
     ["Re: hi", "Tell me more about pricing.", "interested"],
     ["Re: hi", "Who are you and how did you get my address?", "other"],

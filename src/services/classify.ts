@@ -59,6 +59,7 @@ const RULES: ReadonlyArray<[ReplyLabel, RegExp[]]> = [
       /\binterested\b/,
       /\b(?:let'?s|happy to|glad to|love to|would like to|keen to) (?:chat|talk|connect|meet|hop on|learn more|see|try)\b/,
       /\b(?:book|schedule|set up|grab) (?:a )?(?:call|meeting|time|demo|chat)\b/,
+      /\b(?:can|could|shall|should) we (?:chat|talk|connect|meet|speak|hop on)\b/,
       /\btell me more\b/,
       /\bsounds (?:good|great|interesting)\b/,
       /\bsend (?:me )?(?:more )?(?:info|details|a link|the deck)\b/,
