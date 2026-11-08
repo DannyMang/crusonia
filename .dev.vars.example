@@ -59,6 +59,9 @@ OWNER_CLERK_USER_ID=
 # SIGNUPS_OPEN=true
 # Clerk user ids refused with 403 (comma list).
 # BLOCKED_USER_IDS=
+# Workspaces besides the owner's that may send email (comma list of workspace ids). Every workspace sends from
+# AGENTMAIL_INBOX_ID, the owner's inbox, so the others can draft but not send until they are listed here.
+# SEND_WORKSPACE_IDS=
 # Clerk user ids of the instance's operators: read-only, audited access to every workspace's agent runs and traces
 # (/api/admin). The owner is always one.
 # PLATFORM_ADMIN_USER_IDS=

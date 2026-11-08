@@ -295,7 +295,13 @@ Anyone can sign up: a new Clerk user gets their own private workspace on first s
 with its own Company summary, leads, approvals, runs, budget and credits, plus the free sample credits once.
 `SIGNUPS_OPEN=false` closes sign-up (existing members still get in), `BLOCKED_USER_IDS` refuses accounts. The instance
 owner's workspace (`ws_owner`) holds everything from before workspaces; `OWNER_CLERK_USER_ID` and `MCP_TOKEN` resolve
-to it.
+to it. Every workspace sends from the one `AGENTMAIL_INBOX_ID` (the owner's address), so only the owner's workspace
+sends email; list other workspace ids in `SEND_WORKSPACE_IDS` to let them send too (otherwise approving their email
+draft answers 403 `sending_not_enabled`).
+
+API keys go to agents, so the REST routes that make a person's decisions refuse them with 403 `human_required`:
+deciding approvals, creating or revoking keys, setting a lead's consent, removing a suppression, and billing
+(`src/api/guards.ts`). A Clerk session (the app) or `MCP_TOKEN` can do all of these.
 
 | Caller | Workspace |
 | --- | --- |

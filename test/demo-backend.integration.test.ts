@@ -12,6 +12,7 @@ import type { FetchFn } from "../src/providers/http.ts";
 import { createLead } from "../src/services/crm.ts";
 import { createDraft } from "../src/services/drafts.ts";
 import { createFollowUp, sendDueFollowUps } from "../src/services/followups.ts";
+import { commitImport } from "../src/services/import-preview.ts";
 import { handleAgentMailEvent } from "../src/services/inbound.ts";
 import { saveResearch } from "../src/services/leads.ts";
 import { approveAndSend } from "../src/services/send.ts";
@@ -35,6 +36,8 @@ const env: Env = {
   AGENTMAIL_API_KEY: "am_test",
   AGENTMAIL_INBOX_ID: "crusonia@agentmail.to",
 };
+// The throwaway workspace may send (src/services/workspaces.ts canSendEmail); set once it exists.
+const sendEnv = () => ({ ...env, SEND_WORKSPACE_IDS: WS });
 const ctx = { waitUntil() {}, passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
 let sql: Sql;
 
@@ -127,11 +130,17 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     expect(company).toMatchObject({ status: "new", email: null, domain: domain("company"), consent: false, source: cohort });
     expect(again).toMatchObject({ status: "duplicate", reason: "duplicate of an earlier row in this file" });
     // A preview writes nothing.
-    expect((await sql`select count(*)::int as n from leads where cohort = ${cohort}`)[0]!.n).toBe(0);
+    expect((await sql`select count(*)::int as n from leads where workspace_id = ${WS} and cohort = ${cohort}`)[0]!.n).toBe(0);
 
-    const { json: committed } = await api("POST", "/api/import/commit", body);
+    // Consent allows email: an API key (an agent) can't import it. A person can (the web app; here the service).
+    const refused = await api("POST", "/api/import/commit", body);
+    expect(refused.status).toBe(403);
+    expect(refused.json.error.code).toBe("human_required");
+    expect((await sql`select count(*)::int as n from leads where workspace_id = ${WS} and cohort = ${cohort}`)[0]!.n).toBe(0);
+    const committed = await commitImport(sql, WS, body, "test");
     expect(committed).toMatchObject({ created: 2, updated: 1, skipped: 2, cohort });
-    const leads = await sql`select id, email, domain, stage, cohort, source, consent_text, consent_at, import_meta from leads where cohort = ${cohort} order by email nulls last`;
+    const leads = await sql`select id, email, domain, stage, cohort, source, consent_text, consent_at, import_meta from leads
+                            where workspace_id = ${WS} and cohort = ${cohort} order by email nulls last`;
     expect(leads).toHaveLength(2);
     const [a, c] = leads;
     adaId = a!.id as string;
@@ -189,7 +198,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
       name: `IT demo ${run} bad`,
       steps: [{ id: "a", kind: "research", title: "Research", next: ["nowhere"] }],
     });
-    expect(bad.status).toBe(400);
+    expect(bad.status).toBe(422);
 
     const off = (await api("PATCH", `/api/workflow-definitions/${workflowId}`, { enabled: false, cap_usd: 3 })).json;
     expect(off.workflow).toMatchObject({ enabled: false, status: "off", spend: { cap_usd: 3, period: "week" } });
@@ -262,12 +271,12 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
       c.url.endsWith("/messages/send") ? Response.json({ message_id: `<m${++sends}-itdemo_${run}@agentmail.to>`, thread_id: `thr_itdemo_${run}_${sends}` }) : undefined,
     );
     const [approval] = await sql`select code from approvals where lead_id = ${adaId} and kind = 'send' and status = 'pending'`;
-    const sent = await approveAndSend({ sql, ws: WS, env, fetch: am.fn, actor: "test" }, approval!.code as string);
+    const sent = await approveAndSend({ sql, ws: WS, env: sendEnv(), fetch: am.fn, actor: "test" }, approval!.code as string);
     expect(sent.status).toBe("sent");
 
     const follow = await createFollowUp(sql, WS, adaId, { body: "Following up on the SDR role.", send_after_days: 3 }, { ttlMinutes: 60, actor: "test" });
     expect(follow.draft).toMatchObject({ status: "pending_approval", subject: "Re: Your SDR hire" });
-    const scheduled = await approveAndSend({ sql, ws: WS, env, fetch: am.fn, actor: "test" }, follow.approval.code as string);
+    const scheduled = await approveAndSend({ sql, ws: WS, env: sendEnv(), fetch: am.fn, actor: "test" }, follow.approval.code as string);
     expect(scheduled.status).toBe("scheduled");
     expect(sends).toBe(1); // nothing sent yet
     expect((await sql`select status from drafts where id = ${follow.draft.id}`)[0]!.status).toBe("scheduled");
@@ -295,7 +304,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     expect(["replied", "interested"]).toContain((await sql`select stage from leads where id = ${adaId}`)[0]!.stage as string);
     expect((await sql`select status from drafts where id = ${follow.draft.id}`)[0]!.status).toBe("cancelled");
     await sql`update drafts set scheduled_for = now() - interval '1 minute' where id = ${follow.draft.id}`;
-    expect((await sendDueFollowUps(sql, env, am.fn)).sent).toBe(0);
+    expect((await sendDueFollowUps(sql, sendEnv(), am.fn)).sent).toBe(0);
     expect(sends).toBe(1);
 
     const history = await listRuns(sql, WS, workflowId);

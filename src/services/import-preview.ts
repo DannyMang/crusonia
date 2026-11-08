@@ -57,7 +57,8 @@ const REASONS: Record<string, string> = {
 
 type Parsed = { header: string[]; candidates: ImportCandidate[]; rowSource: Map<number, string> };
 
-function parse(body: ImportBody, importedAt: string): Parsed {
+/** `allowConsent: false` (an API key): consent columns are not read, so an agent's import never grants consent. */
+function parse(body: ImportBody, importedAt: string, opts: { allowConsent?: boolean } = {}): Parsed {
   let rows: string[][];
   try {
     rows = parseCsv(body.csv);
@@ -76,6 +77,11 @@ function parse(body: ImportBody, importedAt: string): Parsed {
   } catch (err) {
     if (err instanceof CsvError) throw new ApiError(400, "invalid_mapping", err.message);
     throw err;
+  }
+  if (opts.allowConsent === false) {
+    delete map.consent;
+    delete map.consent_at;
+    delete map.consent_text;
   }
   if (map.email === undefined && map.domain === undefined && map.website === undefined) {
     throw new ApiError(400, "invalid_mapping", "Map an email or a company domain column", { columns: header });
@@ -187,9 +193,9 @@ export async function previewImport(sql: Sql, ws: string, body: ImportBody) {
  * POST /api/import/commit: creates the new rows (cohort = `source`), fills blank fields and grants consent on matching
  * leads (never overwrites), skips invalid and suppressed rows.
  */
-export async function commitImport(sql: Sql, ws: string, body: ImportBody, actor: string) {
+export async function commitImport(sql: Sql, ws: string, body: ImportBody, actor: string, opts: { allowConsent?: boolean } = {}) {
   const now = new Date().toISOString();
-  const { candidates, rowSource } = parse(body, now);
+  const { candidates, rowSource } = parse(body, now, opts);
   const batch = newId("imp");
   // The import's source is the cohort of the leads it creates.
   const results = await applyImportCandidates(sql, ws, candidates, { source: body.source, actor, via: "csv_import", cohort: body.source });

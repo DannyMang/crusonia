@@ -29,6 +29,9 @@ export interface Env {
   SIGNUPS_OPEN?: string;
   // Clerk user ids refused with 403 (comma list).
   BLOCKED_USER_IDS?: string;
+  // Workspace ids besides the owner's that may send email (comma list). All of them send from AGENTMAIL_INBOX_ID,
+  // the owner's inbox, so other workspaces can draft but not send until they are listed here.
+  SEND_WORKSPACE_IDS?: string;
   // Clerk user ids of the instance's operators (comma list; OWNER_CLERK_USER_ID is always one): read-only access to
   // every workspace's agent runs and traces under /api/admin, each read recorded in that workspace's audit trail.
   PLATFORM_ADMIN_USER_IDS?: string;

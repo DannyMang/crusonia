@@ -29,6 +29,12 @@ const list = (raw: string | undefined) =>
 export const signupsOpen = (env: Env) => !/^(0|false|no|off)$/i.test(env.SIGNUPS_OPEN?.trim() ?? "");
 export const isBlockedUser = (env: Env, userId: string) => list(env.BLOCKED_USER_IDS).includes(userId);
 export const isOwnerUser = (env: Env, userId: string) => Boolean(userId) && env.OWNER_CLERK_USER_ID?.trim() === userId;
+/**
+ * Every workspace sends from this instance's one AgentMail inbox (AGENTMAIL_INBOX_ID: the owner's address and domain),
+ * so only the owner workspace and the ones listed in SEND_WORKSPACE_IDS may send email. Otherwise anyone who signs up
+ * could type a consent note on a lead, approve their own draft and email anyone from the owner's address.
+ */
+export const canSendEmail = (env: Env, workspaceId: string) => isOwnerWorkspace(workspaceId) || list(env.SEND_WORKSPACE_IDS).includes(workspaceId);
 
 // Per-isolate cache of user -> workspace (memberships never move, so a short TTL is only about memory).
 const CACHE_TTL_MS = 5 * 60_000;
