@@ -1,4 +1,5 @@
-// The Settings sub-navigation (Paper: "Settings · Company summary" > Settings tabs): General, Company summary, Billing.
+// The Settings sub-navigation (Paper: "Settings · Company summary" > Settings tabs): General, Company summary, Billing, API keys
+// (Paper: "Final · Connect agent popover" > Manage keys).
 import { NavLink } from "react-router";
 import { cx } from "../../lib/format.ts";
 
@@ -6,6 +7,7 @@ const TABS = [
   { to: "/app/settings", label: "General", end: true },
   { to: "/app/settings/company", label: "Company summary", end: false },
   { to: "/app/settings/billing", label: "Billing", end: false },
+  { to: "/app/settings/keys", label: "API keys", end: false },
 ] as const;
 
 export function SettingsTabs() {

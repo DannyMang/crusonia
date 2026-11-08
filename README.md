@@ -75,11 +75,11 @@ stores staging's inbound replies, as unmatched messages.
 Endpoint: `https://crusonia.veri-web.workers.dev/mcp` (MCP Streamable HTTP; locally `http://localhost:8787/mcp` with
 `bun run dev`). Every request needs `Authorization: Bearer <token>`: an API key, or the `MCP_TOKEN` secret (owner).
 
-API keys: create one per agent with `POST /api/keys {"name": "Claude Code"}` (the web app's "Connect your agent"
-screen does this). The response shows the full key (`crs_live_` + 64 hex characters) once; only its SHA-256 hash is
-stored. `GET /api/keys` lists keys without secrets, `DELETE /api/keys/:id` revokes one immediately. A key acts on
-`/mcp` and `/api` for the workspace it was made in, and only that one; `MCP_TOKEN` is the owner workspace. Keep the token
-in an environment variable, not in files you commit:
+API keys: create one per agent with `POST /api/keys {"name": "Claude Code"}` (the web app's Settings › API keys, or
+"Create key" in the Connect your agent popover). The response shows the full key (`crs_live_` + 64 hex characters)
+once; only its SHA-256 hash is stored. `GET /api/keys` lists keys without secrets, `DELETE /api/keys/:id` revokes one
+immediately. A key acts on `/mcp` and `/api` for the workspace it was made in, and only that one; `MCP_TOKEN` is the
+owner workspace. Keep the token in an environment variable, not in files you commit:
 
 ```sh
 export CRUSONIA_MCP_TOKEN='crs_live_...'   # an API key (or MCP_TOKEN), e.g. in ~/.zshrc
@@ -506,7 +506,9 @@ Clerk). Designs are in Paper (approved before code). The Worker serves `web/dist
 | `/app/leads`, `/app/leads/:id` | Leads (filters, CSV import, add) and lead detail (evidence, timeline, draft) |
 | `/app/approvals[/:code]` | Approve, edit or reject the exact draft |
 | `/app/workflows`, `/app/workflows/runs/:id` | Agent runs and their step-by-step timeline |
-| `/app/integrations`, `/app/connect` | Provider status; MCP setup for Claude Code, Cursor and Codex, API keys |
+| `/app/integrations` | Provider status |
+| Connect your agent (popover on every `/app` page; `/app/connect` and `?connect=1` open it) | Add to Cursor, Claude Code or Codex in one click, create an API key |
+| `/app/settings/keys` | API keys: create, copy once, revoke, last used |
 | `/app/replies`, `/app/settings` | Inbound replies; pause switch, do-not-contact list, account |
 
 ```sh
