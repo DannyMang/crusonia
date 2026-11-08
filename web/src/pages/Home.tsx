@@ -1,13 +1,13 @@
 // Dashboard · Home (Paper artboard "Dashboard · Home"): pipeline strip, drafts waiting for approval,
 // active workflows, spend and recent replies. Real data from /api/summary; calm empty states when empty.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { isApiError, type ApprovalListItem, type Lead, type Pipeline, type Reply, type Summary, type SummaryApproval, type Workflow } from "../api.ts";
 import { useApi, useSession } from "../auth.tsx";
 import { Page } from "../components/AppShell.tsx";
 import { ChevronRight, XIcon } from "../components/icons.tsx";
-import { Button, ButtonLink, Card, EmptyState, LiveChip, Pill, QueryError, ReplyLabel, Skeleton } from "../components/ui.tsx";
+import { Button, ButtonLink, Card, EmptyState, LiveChip, Pill, QueryError, ReplyLabel, Skeleton, tabListKeys } from "../components/ui.tsx";
 import { cx, duration, greeting, hostOf, num, plural, shortDate, timeAgo, usd, weekdayDate } from "../lib/format.ts";
 import { keys, useApprovals, useLeads, usePause, useProfile, useSummary } from "../queries.ts";
 
@@ -36,12 +36,13 @@ export default function Home() {
         </div>
       ) : null}
       <PipelineStrip data={data} partial={missing} />
-      <div className="flex items-start gap-6">
+      {/* Below 1280px the side column (spend, replies) moves under the main one so neither gets squeezed. */}
+      <div className="flex flex-col gap-7 xl:flex-row xl:items-start xl:gap-6">
         <div className="flex min-w-0 grow basis-0 flex-col gap-7">
           <WaitingForYou approvals={data?.pending_approvals} total={data?.pending_approvals_total ?? 0} loading={!data && !summary.isError} />
           <ActiveWorkflows workflows={data?.active_workflows} loading={!data && !summary.isError} partial={missing} />
         </div>
-        <div className="flex w-90 shrink-0 flex-col gap-6">
+        <div className="flex w-full shrink-0 flex-col gap-6 min-[1280px]:w-80 min-[1440px]:w-90">
           <Spend spend={data?.spend} loading={!data && !summary.isError} />
           <RecentReplies replies={data?.recent_replies} loading={!data && !summary.isError} partial={missing} />
         </div>
@@ -81,11 +82,31 @@ function fallbackSummary(leads: Lead[], approvals: ApprovalListItem[], paused: b
 
 // ---------- header ----------
 
+/** "6 drafts and 2 agent requests need your OK." */
+function WaitingOnYou({ drafts, others }: { drafts: number; others: number }) {
+  const parts = [drafts ? (drafts === 1 ? "1 draft" : `${drafts} drafts`) : null, others ? (others === 1 ? "1 agent request" : `${others} agent requests`) : null].filter(
+    (p): p is string => p !== null,
+  );
+  return (
+    <>
+      {parts.map((p, i) => (
+        <Fragment key={p}>
+          {i ? " and " : null}
+          <span className="text-ink">{p}</span>
+        </Fragment>
+      ))}{" "}
+      {drafts + others === 1 ? "needs" : "need"} your OK.
+    </>
+  );
+}
+
 function Header({ data }: { data: Summary | undefined }) {
   const { user } = useSession();
   const first = user?.name?.split(" ")[0];
   const total = data?.total_leads ?? 0;
   const waiting = data?.pending_approvals_total ?? 0;
+  // Only send approvals are drafts; tool calls and agent questions are counted separately.
+  const drafts = Math.min(waiting, data?.pending_sends_total ?? data?.pending_approvals.filter((a) => a.kind === "send").length ?? 0);
   return (
     <div className="flex items-start justify-between gap-6">
       <div className="flex flex-col gap-1.5">
@@ -99,19 +120,11 @@ function Header({ data }: { data: Summary | undefined }) {
             "Loading your pipeline…"
           ) : total > 0 ? (
             <>
-              You have <span className="text-ink">{total === 1 ? "1 lead" : `${num(total)} leads`}</span> and{" "}
-              {waiting ? (
-                <>
-                  <span className="text-ink">{waiting === 1 ? "1 draft" : `${waiting} drafts`}</span> {waiting === 1 ? "needs" : "need"} your OK.
-                </>
-              ) : (
-                <>nothing is waiting on you.</>
-              )}
+              You have <span className="text-ink">{total === 1 ? "1 lead" : `${num(total)} leads`}</span>.{" "}
+              {waiting ? <WaitingOnYou drafts={drafts} others={waiting - drafts} /> : "Nothing is waiting on you."}
             </>
           ) : waiting ? (
-            <>
-              <span className="text-ink">{waiting === 1 ? "1 draft" : `${waiting} drafts`}</span> need your OK.
-            </>
+            <WaitingOnYou drafts={drafts} others={waiting - drafts} />
           ) : (
             "No leads yet. Tell Crusonia about your company and your agents start finding them."
           )}
@@ -314,13 +327,13 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
   const rest = Math.max(0, total - shown.length);
   return (
     <Card className="flex w-full flex-col overflow-clip">
-      <div className="flex items-center justify-between px-4.5 pb-3.5 pt-4">
-        <div className="flex items-center gap-2.5">
-          <h2 className={sectionTitle}>Waiting for you</h2>
+      <div className="flex items-center justify-between gap-4 px-4.5 pb-3.5 pt-4">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <h2 className={cx(sectionTitle, "shrink-0 whitespace-nowrap")}>Waiting for you</h2>
           {total ? <Pill tone="lime" mono>{total}</Pill> : null}
-          <div className={label}>drafts held until you approve · nothing sends on its own</div>
+          <div className={cx(label, "min-w-0")}>drafts held until you approve · nothing sends on its own</div>
         </div>
-        <Link to="/app/approvals" className="flex items-center gap-1 text-[13px]/4 font-medium text-ink hover:underline">
+        <Link to="/app/approvals" className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[13px]/4 font-medium text-ink hover:underline">
           All approvals
           <ChevronRight className="text-green" />
         </Link>
@@ -364,6 +377,7 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
 // ---------- active workflows ----------
 
 const RUNNING = new Set(["running", "idle"]);
+const WORKFLOW_TABS = ["running", "paused"] as const;
 
 function WorkflowCard({ w }: { w: Workflow }) {
   const [open, setOpen] = useState(true);
@@ -417,7 +431,7 @@ function WorkflowCard({ w }: { w: Workflow }) {
 
 function WfStat({ title, value, first }: { title: string; value: string; first?: boolean }) {
   return (
-    <div className={cx("flex w-37.5 shrink-0 flex-col gap-1", !first && "border-l border-l-[#200D0D1A] pl-4.75")}>
+    <div className={cx("flex w-37.5 min-w-0 flex-col gap-1", !first && "border-l border-l-[#200D0D1A] pl-4.75")}>
       <div className="text-[13px]/4 font-medium text-faint">{title}</div>
       <div className="tabular-nums text-sm/4.5 font-semibold text-ink">{value}</div>
     </div>
@@ -434,8 +448,13 @@ function ActiveWorkflows({ workflows, loading, partial }: { workflows: Workflow[
     <section className="flex flex-col gap-3.5">
       <div className="flex items-center justify-between">
         <h2 className={sectionTitle}>Active workflows</h2>
-        <div className="flex items-center gap-1 rounded-full border border-[#200D0D1A] bg-[#200D0D0A] p-1" role="tablist">
-          {(["running", "paused"] as const).map((t) => {
+        <div
+          className="flex items-center gap-1 rounded-full border border-[#200D0D1A] bg-[#200D0D0A] p-1"
+          role="tablist"
+          aria-label="Workflows"
+          onKeyDown={tabListKeys(WORKFLOW_TABS, tab, setTab)}
+        >
+          {WORKFLOW_TABS.map((t) => {
             const active = tab === t;
             const n = t === "running" ? running.length : paused.length;
             return (
@@ -444,6 +463,7 @@ function ActiveWorkflows({ workflows, loading, partial }: { workflows: Workflow[
                 type="button"
                 role="tab"
                 aria-selected={active}
+                tabIndex={active ? 0 : -1}
                 onClick={() => setTab(t)}
                 className={cx("flex h-7 items-center gap-2 rounded-full pr-2", active ? "bg-lime pl-3.5" : "pl-3 hover:bg-[#200D0D08]")}
               >
@@ -523,7 +543,7 @@ function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loadin
           </div>
           <div className="border-t border-t-[#200D0D14] pt-3 text-xs/4 font-medium text-muted">
             {used === null
-              ? "Agent spend shows up here once Naive reports usage for a run."
+              ? "No agent spend recorded this week yet."
               : budget !== null
                 ? `${usd(Math.max(0, budget - used))} left of this week's budget`
                 : "Naive usage across every run active this week"}

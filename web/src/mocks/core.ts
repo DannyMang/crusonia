@@ -38,6 +38,7 @@ function summary(): Summary {
     total_leads: leads.length,
     pending_approvals: approvals.slice(0, 5).map((a) => ({ ...a, lead_name: a.lead?.name ?? null, company: a.lead?.company ?? null, subject: a.draft?.subject ?? null })),
     pending_approvals_total: approvals.length,
+    pending_sends_total: approvals.filter((a) => a.kind === "send").length,
     active_workflows: workflows,
     recent_replies: repliesData().slice(0, 5),
     spend: isEmpty() ? { week_usd: null, budget_usd: null } : { week_usd: 86.4, budget_usd: 150 },

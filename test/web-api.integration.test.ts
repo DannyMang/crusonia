@@ -143,6 +143,7 @@ suite("web app API (database, mocked Naive)", () => {
     const delta = (k: keyof typeof after.pipeline) => after.pipeline[k] - before.pipeline[k];
     expect([delta("found"), delta("meetings"), delta("awaiting_approval"), delta("drafted")]).toEqual([1, 1, 1, 1]);
     expect(after.pending_approvals_total - before.pending_approvals_total).toBe(1);
+    expect(after.pending_sends_total - before.pending_sends_total).toBe(1);
     const mine = after.pending_approvals.find((a) => a.lead_id === awaiting.id);
     expect(mine).toMatchObject({ kind: "send", lead_name: "awaiting", company: "Co awaiting", subject: `Hello ${run}` });
     expect(after.spend.budget_usd).toBe(20);

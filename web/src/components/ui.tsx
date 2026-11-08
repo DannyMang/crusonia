@@ -1,5 +1,5 @@
 // Shared building blocks in the veri style. Values come from the Paper designs (Dashboard · Home etc.).
-import { useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Link, type LinkProps } from "react-router";
 import { isApiError } from "../api.ts";
 import { useSession } from "../auth.tsx";
@@ -253,6 +253,25 @@ export function QueryError({ error, what, onRetry, className }: { error: unknown
       ) : null}
     </div>
   );
+}
+
+// ---------- tabs ----------
+
+/**
+ * onKeyDown for a role="tablist" of buttons: Left / Right (wrapping), Home and End select the neighbouring tab
+ * and move focus to it. Give the selected tab tabIndex 0 and the others -1, so Tab enters the list once.
+ */
+export function tabListKeys<T extends string>(ids: readonly T[], current: T, select: (id: T) => void) {
+  return (e: ReactKeyboardEvent<HTMLElement>) => {
+    const i = ids.indexOf(current);
+    const n = ids.length;
+    const next =
+      e.key === "ArrowRight" ? ids[(i + 1) % n] : e.key === "ArrowLeft" ? ids[(i - 1 + n) % n] : e.key === "Home" ? ids[0] : e.key === "End" ? ids[n - 1] : undefined;
+    if (next === undefined) return;
+    e.preventDefault();
+    select(next);
+    e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[ids.indexOf(next)]?.focus();
+  };
 }
 
 // ---------- misc ----------

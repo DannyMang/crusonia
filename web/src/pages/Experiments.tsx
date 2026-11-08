@@ -9,7 +9,7 @@ import { arm, dayLabel, isLive, sendProgress } from "../components/experiments/d
 import { ExperimentDetail } from "../components/experiments/ExperimentDetail.tsx";
 import { NewExperimentForm, type Enrollment } from "../components/experiments/NewExperimentForm.tsx";
 import { PlusIcon, SearchIcon, XIcon } from "../components/icons.tsx";
-import { QueryError, Skeleton } from "../components/ui.tsx";
+import { EmptyState, QueryError, Skeleton } from "../components/ui.tsx";
 import { cx, shortDate } from "../lib/format.ts";
 import { useExperiment, useExperiments } from "../queries.ts";
 
@@ -82,7 +82,7 @@ export default function Experiments() {
         <EmptyExplainer missing={missing} error={list.error} onCreate={canCreate ? startCreating : undefined} />
       ) : (
         <div className="flex min-h-0 grow overflow-clip rounded-xl border border-[#200D0D1A]">
-          <div className="flex w-90 shrink-0 flex-col overflow-y-auto border-r border-r-[#200D0D1A]">
+          <div className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-r-[#200D0D1A] xl:w-90">
             <div className="sticky top-0 z-10 flex h-9 shrink-0 items-center justify-between border-b border-b-[#200D0D1A] bg-[#FAF9F9] px-4">
               <div className="text-xs/4 font-medium text-faint">Experiment</div>
               <div className="text-xs/4 font-medium text-faint">Sends</div>
@@ -129,7 +129,12 @@ export default function Experiments() {
               </>
             ) : detail.isError ? (
               <div className="p-5">
-                <QueryError error={detail.error} what="This experiment" onRetry={() => void detail.refetch()} />
+                {isApiError(detail.error) && detail.error.status === 404 && !detail.error.missingRoute ? (
+                  // An id that does not exist: retrying cannot help, so no Retry button.
+                  <EmptyState title="No such experiment" body="The link may be wrong, or the experiment was deleted. Pick one from the list." />
+                ) : (
+                  <QueryError error={detail.error} what="This experiment" onRetry={() => void detail.refetch()} />
+                )}
               </div>
             ) : list.isPending || detail.isPending ? (
               <DetailSkeleton />

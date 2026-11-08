@@ -281,6 +281,8 @@ export type Summary = {
   /** The 5 newest pending approvals; `pending_approvals_total` counts all of them. */
   pending_approvals: SummaryApproval[];
   pending_approvals_total: number;
+  /** Pending send approvals (email drafts) among them. Optional: older deployments do not send it. */
+  pending_sends_total?: number;
   /** Workflows with at least one active run. */
   active_workflows: Workflow[];
   recent_replies: Reply[];

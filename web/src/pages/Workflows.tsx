@@ -80,11 +80,18 @@ export default function Workflows() {
     .map((key) => ({ key, items: visible.filter((v) => GROUP_OF(v.w) === key) }))
     .filter((g) => g.items.length);
 
-  const totalRuns = workflows.reduce((n, w) => n + w.run_count, 0);
-  const totalLeads = workflows.reduce((n, w) => n + w.leads_processed, 0);
+  // The summary line describes what the status filter and search leave on screen.
+  const filtered = Boolean(status || s);
+  const shown = filtered ? visible.map((v) => v.w) : workflows;
+  const totalRuns = shown.reduce((n, w) => n + w.run_count, 0);
+  const totalLeads = shown.reduce((n, w) => n + w.leads_processed, 0);
   const counts = q.data
     ? [
-        workflows.length === 1 ? "1 workflow" : `${workflows.length} workflows`,
+        filtered
+          ? `${shown.length} of ${workflows.length} ${workflows.length === 1 ? "workflow" : "workflows"}`
+          : workflows.length === 1
+            ? "1 workflow"
+            : `${workflows.length} workflows`,
         `${num(totalRuns)} ${totalRuns === 1 ? "run" : "runs"}`,
         `${num(totalLeads)} leads processed`,
         updatedAgo(q.dataUpdatedAt, now),
@@ -157,10 +164,11 @@ export default function Workflows() {
         <div className="overflow-clip rounded-xl border border-[#200D0D1A]">
           <table className="w-full table-fixed border-collapse text-left text-xs/4">
             <colgroup>
-              <col className="w-72" />
+              {/* Narrower Workflow and Leads columns below 1280px so Activity stays readable. */}
+              <col className="w-52 xl:w-72" />
               <col className="w-32" />
               <col />
-              <col className="w-24" />
+              <col className="w-16 xl:w-24" />
               <col className="w-22" />
               <col className="w-8" />
             </colgroup>
