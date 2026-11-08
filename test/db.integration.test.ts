@@ -229,6 +229,24 @@ suite("database integration (mocked providers)", () => {
     expect((await sql`select status from naive_sessions where id = ${sessionId}`)[0]!.status).toBe("running");
   });
 
+  test("onboarding answers its own question instead of waiting on the owner", async () => {
+    const sessionId = `ses_it_${run}_onboard`;
+    await sql`insert into naive_sessions (id, workspace_id, purpose, status) values (${sessionId}, ${WS}, 'onboarding', 'running')`;
+    const nv = provider([(c) => (c.method === "POST" ? ok({}, 202) : undefined)]);
+    const pendingActions = [{ kind: "question" as const, tool_call_id: "q1", name: "ask_operator", question: { prompt: "Who buys?", fields: [{ key: "buyer" }, { key: "tags", multiple: true }] } }];
+    const first = await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
+    expect(first.approvals).toHaveLength(0);
+    expect(nv.calls).toHaveLength(1);
+    expect(nv.calls[0]).toMatchObject({ url: `https://api.vetta.sh/v1/sessions/${sessionId}/answers`, body: { tool_call_id: "q1" } });
+    const answers = (nv.calls[0]!.body as { answers: Record<string, unknown> }).answers;
+    expect(answers.buyer).toContain("best guess");
+    expect(Array.isArray(answers.tags)).toBe(true);
+    expect((await sql`select status from naive_sessions where id = ${sessionId}`)[0]!.status).toBe("running");
+
+    await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
+    expect(nv.calls).toHaveLength(1);
+  });
+
   test("paused: nothing is auto-allowed", async () => {
     const lead = await newLead("paused");
     const sessionId = `ses_it_${run}_p`;

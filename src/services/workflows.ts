@@ -266,9 +266,15 @@ export function sessionStatus(remote: NaiveSession["status"] | undefined, stopRe
   }
 }
 
+const BEST_GUESS = "Nobody is available to answer. Use your best guess from the site and carry on; the owner edits it on the next step.";
+
+const bestGuessAnswers = (a: PendingAction) =>
+  Object.fromEntries((a.question?.fields ?? []).map((f) => [f.key, f.multiple ? [BEST_GUESS] : BEST_GUESS])) as Record<string, string | string[]>;
+
 /**
  * A session went idle (webhook or reconcile). Parked tool calls on the owner's allowlist are allowed;
- * other tool calls and ask_operator questions become approvals. While paused nothing is auto-allowed.
+ * other tool calls and ask_operator questions become approvals, except that onboarding answers its own questions. While
+ * paused nothing is auto-allowed.
  */
 export async function handleSessionIdle(
   sql: Sql,
@@ -304,7 +310,9 @@ export async function handleSessionIdle(
   const paused = await isPaused(sql, ws);
   const ttl = toolApprovalTtlMinutes(env);
   const allowed = pending.filter((a) => a.kind !== "question" && !paused && isToolAllowed(a.name, allowlist));
-  const parked = pending.filter((a) => !allowed.includes(a));
+  // Onboarding never waits on the owner, who edits the result on the next step: a question gets "use your best guess".
+  const guessed = session.purpose === "onboarding" ? pending.filter((a) => a.kind === "question") : [];
+  const parked = pending.filter((a) => !allowed.includes(a) && !guessed.includes(a));
 
   // Claim every (session, parked tool call) in one statement so a webhook, the poll and the reconcile cron never confirm
   // the same call twice. A call another handler already claimed counts as auto-allowed: it is being confirmed, so
@@ -312,10 +320,15 @@ export async function handleSessionIdle(
   // park the same tool_call_id again later (an identical search repeated, or a chat flagged for reading people's data,
   // where every tool asks each time): that's a new request, and without an answer the session waits forever.
   const key = (a: PendingAction) => `autoconfirm:${session.id}:${a.tool_call_id}${a.parked_seq === undefined ? "" : `:${a.parked_seq}`}`;
-  const claimed = await claimWebhookEvents(sql, "naive-autoconfirm", allowed.map(key));
-  const mine = allowed.filter((a) => claimed.has(key(a)));
+  const answerable = [...allowed, ...guessed];
+  const claimed = await claimWebhookEvents(sql, "naive-autoconfirm", answerable.map(key));
+  const mine = answerable.filter((a) => claimed.has(key(a)));
   const results = await Promise.allSettled(
-    mine.map((a) => client.confirmTool(session.id, { tool_call_id: a.tool_call_id, decision: "allow", scope: "call" })),
+    mine.map((a) =>
+      a.kind === "question"
+        ? client.answer(session.id, { tool_call_id: a.tool_call_id, answers: bestGuessAnswers(a) })
+        : client.confirmTool(session.id, { tool_call_id: a.tool_call_id, decision: "allow", scope: "call" }),
+    ),
   );
   const confirmed = mine.filter((_, i) => results[i]!.status === "fulfilled");
   const failed = mine.filter((_, i) => results[i]!.status === "rejected");
@@ -333,8 +346,13 @@ export async function handleSessionIdle(
     const reason = (results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason;
     throw reason instanceof Error ? reason : new Error(String(reason));
   }
-  const autoAllowed = allowed.map((a) => a.name);
-  const handledElsewhere = allowed.length - mine.length;
+  // A question parked before this rule may already have a card: it's answered now, so it leaves the queue.
+  for (const a of confirmed.filter((c) => c.kind === "question")) {
+    await sql`update approvals set status = 'answered', decided_at = now(), decided_via = 'auto'
+              where workspace_id = ${ws} and naive_session_id = ${session.id} and tool_call_id = ${a.tool_call_id} and status = 'pending'`;
+  }
+  const autoAllowed = answerable.map((a) => a.name);
+  const handledElsewhere = answerable.length - mine.length;
 
   const approvals: string[] = [];
   for (const action of parked) {
