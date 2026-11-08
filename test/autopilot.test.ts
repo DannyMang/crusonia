@@ -202,3 +202,16 @@ describe("the feed", () => {
     }
   });
 });
+
+describe("the feed's Company summary row", () => {
+  const row = (note: string) =>
+    feedItem({ id: "1", kind: "company_summary_updated", data: { author: "agent:s", note }, created_at: "2026-11-08T00:00:00Z", lead_id: null, who: null, score: null, why: null });
+  test("a long note is cut with an ellipsis, not mid-word", () => {
+    const text = row("Proposed initial profile from the product and pricing pages; unspecified markets were left open")!.text;
+    expect(text.endsWith("…")).toBe(true);
+    expect(text.length).toBeLessThanOrEqual("Updated the Company summary · ".length + 80);
+  });
+  test("a short note stays whole", () => {
+    expect(row("Saved")!.text).toBe("Updated the Company summary · Saved");
+  });
+});

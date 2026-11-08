@@ -5,6 +5,9 @@ import type { FlowStep, StepKind } from "../../api/workflows.ts";
 import { cx } from "../../lib/format.ts";
 import { appendAfter, canRemove, insertOnEdge, KIND_LABEL, layout, MENU, NODE_H, NODE_W, removeStep, renameStep } from "./layout.ts";
 
+/** Default workflows store provider ids; templates store names. */
+const PROVIDER_LABEL: Record<string, string> = { apify: "Apify", naive: "Naive", agentmail: "AgentMail", hubspot: "HubSpot", notion: "Notion" };
+
 type View = { x: number; y: number; k: number };
 type MenuAt = { x: number; y: number; insert: { parent: string; child: string } | { after: string } };
 
@@ -239,7 +242,7 @@ function StepNode({
       )}
       style={{ left: x, top: y, width: NODE_W, height: NODE_H }}
     >
-      <div className={cx("truncate text-[11px]/3.5", approval ? "font-semibold text-ink" : "font-medium text-muted")}>{step.provider || KIND_LABEL[step.kind]}</div>
+      <div className={cx("truncate text-[11px]/3.5", approval ? "font-semibold text-ink" : "font-medium text-muted")}>{(step.provider && PROVIDER_LABEL[step.provider]) || step.provider || KIND_LABEL[step.kind]}</div>
       {editing ? (
         <input
           autoFocus
@@ -253,7 +256,7 @@ function StepNode({
           className="-mx-1 h-5 rounded border border-[#200D0D33] px-1 text-[13px]/4.25 font-medium text-ink outline-none"
         />
       ) : (
-        <div className="truncate text-[13px]/4.25 font-medium text-ink" title={step.title}>
+        <div className="line-clamp-2 text-[13px]/4.25 font-medium text-ink" title={step.title}>
           {step.title}
         </div>
       )}

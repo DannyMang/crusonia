@@ -53,6 +53,7 @@ export type FlowInput = Qualification & {
   steps: FlowStep[];
   source?: FlowSource;
   trigger?: FlowDef["trigger"];
+  enabled?: boolean;
 };
 
 export type FlowVersionInput = Qualification & { steps: FlowStep[]; label?: string | null };

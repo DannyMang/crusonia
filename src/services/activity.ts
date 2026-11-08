@@ -27,6 +27,8 @@ export function shortWhy(raw: string | null | undefined, max = 70): string | nul
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 }
 
+const clipped = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
+
 const isAutomated = (actor: unknown) => typeof actor === "string" && /^(autopilot|agent)/.test(actor);
 
 /** One audit event as a feed row, or null when it isn't worth a row. Pure. */
@@ -58,7 +60,7 @@ export function feedItem(r: FeedRow): FeedItem | null {
     case "company_summary_updated":
       return String(d.author ?? "").startsWith("user:")
         ? row("You edited the Company summary", "you")
-        : row(`Updated the Company summary${d.note ? ` · ${String(d.note).slice(0, 80)}` : ""}`);
+        : row(`Updated the Company summary${d.note ? ` · ${clipped(String(d.note), 80)}` : ""}`);
     case "operator_cycle":
       return { ...row(String(d.did ?? "Operator cycle")), ...(typeof d.why === "string" ? { detail: d.why } : {}) };
     case "operate_started":

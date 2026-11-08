@@ -1,7 +1,7 @@
 // The workflow builder's canvas layout and edits (web/src/pages/workflows/layout.ts).
 import { describe, expect, test } from "bun:test";
 import type { FlowStep } from "../web/src/api/flow-types.ts";
-import { appendAfter, insertOnEdge, layout, removeStep } from "../web/src/pages/workflows/layout.ts";
+import { appendAfter, insertOnEdge, layout, NODE_H, NODE_W, removeStep } from "../web/src/pages/workflows/layout.ts";
 
 const s = (id: string, kind: FlowStep["kind"], next: string[] = [], branch: string | null = null): FlowStep => ({ id, kind, title: id, provider: null, branch, next });
 
@@ -65,5 +65,27 @@ describe("edits", () => {
     expect(next.find((x) => x.id === "t1")!.next).toEqual(["r1"]);
     expect(removeStep(sweep, "t1")).toBe(sweep);
     expect(removeStep(sweep, "c1")).toBe(sweep);
+  });
+});
+
+describe("a branch that joins the main path", () => {
+  const steps: FlowStep[] = [s("t", "trigger", ["q"]), s("q", "condition", ["d", "e"]), s("d", "draft", ["m"], "yes"), s("m", "send", ["e"]), s("e", "end")];
+
+  test("goes down its own column and across, labelled no, with no stray +", () => {
+    const lay = layout(steps);
+    const edge = lay.edges.find((e) => e.from === "q" && e.to === "e")!;
+    const q = lay.nodes.find((n) => n.step.id === "q")!;
+    const end = lay.nodes.find((n) => n.step.id === "e")!;
+    expect(end.col).toBeLessThan(q.col);
+    expect(edge.plus).toBeNull();
+    expect(edge.label?.text).toBe("no");
+    expect(edge.path).toBe(`M${q.x + NODE_W / 2} ${q.y + NODE_H}V${end.y + NODE_H / 2}H${end.x + NODE_W}`);
+    // One "+" per edge on the main path, none on the join.
+    expect(lay.edges.filter((e) => e.plus).length).toBe(lay.edges.length - 1);
+  });
+
+  test("the edge into the step from its own parent keeps its +", () => {
+    const lay = layout(steps);
+    expect(lay.edges.find((e) => e.from === "m" && e.to === "e")!.plus).not.toBeNull();
   });
 });

@@ -25,7 +25,7 @@ import { AutoTextarea, BoxInput, Checkbox, InlineInput, RolesInput } from "../..
 import { getOnboarding, patchOnboarding, useOnboarding } from "../../components/onboarding/store.ts";
 import { ArrowIcon, bigButton, FromSources, PencilIcon, StepTitle } from "../../components/onboarding/ui.tsx";
 import { cx } from "../../lib/format.ts";
-import { keys, useProfile } from "../../queries.ts";
+import { keys, useOwnerWorkspace, useProfile } from "../../queries.ts";
 
 const TARGET = 25;
 const card = "flex flex-col rounded-xl border border-[#200D0D1A] bg-white";
@@ -82,6 +82,8 @@ export default function Step3Customer() {
 type SetDraft = React.Dispatch<React.SetStateAction<ProfileDraft | null>>;
 
 function Editor({ draft, setDraft }: { draft: ProfileDraft; setDraft: SetDraft }) {
+  // CRM sync runs only for the owner workspace: elsewhere there's nothing to connect yet.
+  const owner = useOwnerWorkspace() === true;
   const update = (fn: (d: ProfileDraft) => ProfileDraft) => setDraft((d) => (d ? fn(d) : d));
   const [errors, setErrors] = useState<{ sells?: string; icp?: string; segment?: string }>({});
   const site = draft.website;
@@ -145,7 +147,7 @@ function Editor({ draft, setDraft }: { draft: ProfileDraft; setDraft: SetDraft }
         <Signals signals={draft.signals} site={site} onChange={(signals) => update((d) => ({ ...d, signals }))} />
       </div>
       <aside className="flex w-full shrink-0 flex-col gap-4 lg:w-85">
-        <Sharpen />
+        {owner ? <Sharpen /> : null}
         <RunCard draft={draft} validate={validate} />
         <Link to="/onboarding/1" className="flex items-center justify-center gap-1.5 text-[13px]/4 font-medium text-muted hover:text-ink">
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden className="shrink-0">
