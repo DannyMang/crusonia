@@ -4,8 +4,11 @@
 // - Claude Code and Codex have no install links, so their buttons copy the exact `mcp add` command.
 // All three read the API key from CRUSONIA_MCP_TOKEN when they connect (keys: Settings › API keys).
 
-/** Production MCP endpoint. Inside the app the Worker reports its own (`/api/status` mcp_url), e.g. on staging. */
-export const MCP_URL = "https://crusonia.veri-web.workers.dev/mcp";
+/**
+ * This deployment's MCP endpoint, from the origin that served the page: production's on production, staging's on staging.
+ * Inside the app the Worker reports the same URL (`/api/status` mcp_url).
+ */
+export const MCP_URL = `${location.origin}/mcp`;
 
 export const TOKEN_ENV = "CRUSONIA_MCP_TOKEN";
 

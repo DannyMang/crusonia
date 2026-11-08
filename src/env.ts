@@ -4,6 +4,8 @@
 export interface Env {
   // vars (wrangler.jsonc)
   PUBLIC_URL: string;
+  // Old hostnames of this Worker, comma-separated (src/lib/canonical-host.ts). Production only.
+  LEGACY_HOSTS?: string;
 
   // Static-assets binding for the web app (wrangler.jsonc `assets.binding`). Optional: absent until the SPA ships.
   ASSETS?: Fetcher;

@@ -2,6 +2,7 @@
 // (src/api/dashboard.ts, src/services/summary.ts).
 import { http } from "msw";
 import type { Me, Status, Summary, Workflow } from "../api.ts";
+import { MCP_URL } from "../lib/agent-install.ts";
 import { approvalsData } from "./approvals.ts";
 import { leadsData } from "./leads.ts";
 import { body, isEmpty, noContent, ok, scenario } from "./util.ts";
@@ -68,7 +69,7 @@ function status(): Status {
     next_steps: [],
     inbox_address: "crusonia@agentmail.to",
     naive_agent_configured: !unconfigured,
-    mcp_url: "https://crusonia.veri-web.workers.dev/mcp",
+    mcp_url: MCP_URL,
     imessage:
       scenario() === "sample"
         ? { enabled: true, configured: true, active: true, owner_phone_set: true, owner_phone_hint: "+1 ··· 0142", bridge: { online: true } }

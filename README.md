@@ -8,7 +8,7 @@ also use Apify's hosted MCP server); HubSpot and Notion are synced; Clerk handle
 in credits (see [Billing](#billing-stripe)); the owner can approve drafts by iMessage through Photon (see
 [iMessage approvals](#imessage-approvals-photon)).
 
-Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri-web.workers.dev/mcp
+Live: https://crusonia.dev · MCP: https://crusonia.dev/mcp
 
 ## Layout
 
@@ -41,8 +41,8 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 1. **Keys**: `cp .dev.vars.example .dev.vars` and fill in what you have. Each key says where to get it.
    Generate `MCP_TOKEN` with `openssl rand -hex 32`.
 2. **Migrate**: `bun run migrate` (reads `DATABASE_URL` from the environment or `.dev.vars`; safe to re-run).
-3. **Deploy**: `bun run deploy`. The workers.dev URL is already in `wrangler.jsonc` as `PUBLIC_URL`;
-   update it if the URL ever changes.
+3. **Deploy**: `bun run deploy`. The URL is already in `wrangler.jsonc` as `PUBLIC_URL`, next to the custom domains
+   (see [Production domain](#production-domain)); update both if it ever changes.
 4. **Upload secrets**: `bun run secrets` (= `wrangler secret bulk .dev.vars`). Never pass secrets as CLI arguments.
 5. **Provider setup**: `bun run setup --write` creates the AgentMail inbox + webhook, the Naive webhook + vault
    credentials and the Naive research agent, and writes `AGENTMAIL_INBOX_ID`, `AGENTMAIL_WEBHOOK_SECRET`,
@@ -72,9 +72,28 @@ Naive delivers every webhook to every registered endpoint, so each Worker sees t
 sessions they did not start (logged as `naive_unknown_session`). A shared AgentMail inbox means production also
 stores staging's inbound replies, as unmatched messages.
 
+### Production domain
+
+Production is `https://crusonia.dev` (`PUBLIC_URL`); `routes` in `wrangler.jsonc` attach it and `www` as Workers Custom
+Domains, so Cloudflare creates the DNS records and certificates on deploy. `src/lib/canonical-host.ts` keeps one public
+hostname:
+
+- `www.crusonia.dev` redirects everything to the same path on the apex (301, or 308 for anything but GET and HEAD).
+- `LEGACY_HOSTS` (the old workers.dev hostname) keeps answering `/api`, `/mcp`, `/webhooks` and `/health`, so providers,
+  agents and the iMessage bridge can move one at a time. Browser pages there redirect with their path, so old invite
+  links and bookmarks still land in the right place.
+- Staging has no `LEGACY_HOSTS` and `"routes": []`. Routes are inherited, so without that line a staging deploy would
+  take the domain away from production.
+
+Clerk: production uses Clerk's production instance (`pk_live_` in the web build, `sk_live_` on the Worker). Its Frontend
+API is `clerk.crusonia.dev`, so the Clerk CNAMEs in Cloudflare must be DNS only, not proxied. The web app takes the MCP
+URL for its install buttons from the origin that served the page; webhooks, Stripe return URLs, invite links and agent MCP
+URLs all come from `PUBLIC_URL`. After changing `PUBLIC_URL`, re-run `bun run setup` so providers follow it. Setup refuses
+to move a Naive agent it found by name: set `NAIVE_AGENT_ID` and `NAIVE_OPERATOR_AGENT_ID` to move them on purpose.
+
 ## Connect your agent (MCP)
 
-Endpoint: `https://crusonia.veri-web.workers.dev/mcp` (MCP Streamable HTTP; locally `http://localhost:8787/mcp` with
+Endpoint: `https://crusonia.dev/mcp` (MCP Streamable HTTP; locally `http://localhost:8787/mcp` with
 `bun run dev`). Every request needs `Authorization: Bearer <token>`: an API key, or the `MCP_TOKEN` secret (owner).
 
 API keys: create one per agent with `POST /api/keys {"name": "Claude Code"}` (the web app's Settings › API keys, or
@@ -92,7 +111,7 @@ export CRUSONIA_MCP_TOKEN='crs_live_...'   # an API key (or MCP_TOKEN), e.g. in 
 `--header` must come after the URL.
 
 ```sh
-claude mcp add --transport http --scope user crusonia https://crusonia.veri-web.workers.dev/mcp \
+claude mcp add --transport http --scope user crusonia https://crusonia.dev/mcp \
   --header 'Authorization: Bearer ${CRUSONIA_MCP_TOKEN}'
 ```
 
@@ -103,7 +122,7 @@ Or share it with the team through a project `.mcp.json` (same `${VAR}` expansion
   "mcpServers": {
     "crusonia": {
       "type": "http",
-      "url": "https://crusonia.veri-web.workers.dev/mcp",
+      "url": "https://crusonia.dev/mcp",
       "headers": { "Authorization": "Bearer ${CRUSONIA_MCP_TOKEN}" }
     }
   }
@@ -119,7 +138,7 @@ Check with `claude mcp list`, or `/mcp` inside a session.
 {
   "mcpServers": {
     "crusonia": {
-      "url": "https://crusonia.veri-web.workers.dev/mcp",
+      "url": "https://crusonia.dev/mcp",
       "headers": { "Authorization": "Bearer ${env:CRUSONIA_MCP_TOKEN}" }
     }
   }
@@ -129,14 +148,14 @@ Check with `claude mcp list`, or `/mcp` inside a session.
 **Codex**: Codex stores only the variable's name and reads the token when it connects:
 
 ```sh
-codex mcp add crusonia --url https://crusonia.veri-web.workers.dev/mcp --bearer-token-env-var CRUSONIA_MCP_TOKEN
+codex mcp add crusonia --url https://crusonia.dev/mcp --bearer-token-env-var CRUSONIA_MCP_TOKEN
 ```
 
 or in `~/.codex/config.toml` (or a trusted project's `.codex/config.toml`):
 
 ```toml
 [mcp_servers.crusonia]
-url = "https://crusonia.veri-web.workers.dev/mcp"
+url = "https://crusonia.dev/mcp"
 bearer_token_env_var = "CRUSONIA_MCP_TOKEN"
 ```
 

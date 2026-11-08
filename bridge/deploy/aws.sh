@@ -18,7 +18,7 @@
 #   CREDS_FILE          file with SPECTRUM_PROJECT_ID=, SPECTRUM_PROJECT_SECRET=, OWNER_PHONE= lines
 #   BRIDGE_SECRET_FILE  file with a BRIDGE_SECRET= line (the same value goes on the Worker)
 #   SEND_TEST_MESSAGE   1 = after the bridge connects, text OWNER_PHONE once: "Crusonia is connected."
-#   WORKER_URL          default https://crusonia.veri-web.workers.dev
+#   WORKER_URL          default https://crusonia.dev
 #   AWS_PROFILE / AWS_REGION (default us-east-1), AZ (default us-east-1a), INSTANCE (default crusonia-bridge)
 #
 # Secrets: only SPECTRUM_PROJECT_ID, SPECTRUM_PROJECT_SECRET, OWNER_PHONE, BRIDGE_SECRET and WORKER_URL reach the box.
@@ -33,7 +33,7 @@ AZ="${AZ:-${REGION}a}"
 INSTANCE="${INSTANCE:-crusonia-bridge}"
 BUNDLE="${BUNDLE:-nano_3_0}"
 BLUEPRINT="${BLUEPRINT:-ubuntu_24_04}"
-WORKER_URL="${WORKER_URL:-https://crusonia.veri-web.workers.dev}"
+WORKER_URL="${WORKER_URL:-https://crusonia.dev}"
 REPO_URL="${REPO_URL:-https://github.com/DannyMang/crusonia.git}"
 REPO_API="${REPO_API:-https://api.github.com/repos/DannyMang/crusonia}"
 TEST_TEXT="Crusonia is connected."
