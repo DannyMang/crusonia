@@ -1,13 +1,13 @@
 // /terms: a draft for the owner to review, not legal advice. It says what the product really does today: free credits,
 // paid top-ups not open yet, agents that can be wrong, and no email going out without a person's approval.
-import { ContactLink, LEGAL_ENTITY, LEGAL_JURISDICTION, LegalPage, Section, TextLink } from "./LegalPage.tsx";
+import { ContactLink, LegalPage, Section, TextLink } from "./LegalPage.tsx";
 
 export default function Terms() {
   return (
     <LegalPage title="Terms">
       <Section title="What Crusonia is">
         <p>
-          Crusonia is run by {LEGAL_ENTITY}. AI agents find and research companies from public web pages and draft outreach for you. By using the hosted service you agree to these
+          Crusonia's AI agents find and research companies from public web pages and draft outreach for you. By using the hosted service you agree to these
           terms and our <TextLink to="/privacy">Privacy</TextLink> notice.
         </p>
       </Section>
@@ -36,7 +36,7 @@ export default function Terms() {
       </Section>
       <Section title="No guarantees">
         <p>
-          The service is provided as is, without warranties. As far as the law allows, we aren't liable for indirect losses, and our total liability is limited to what you paid us in the 12 months before the claim. These terms are governed by the laws of {LEGAL_JURISDICTION}.
+          The service is provided as is, without warranties. As far as the law allows, we aren't liable for indirect losses, and our total liability is limited to what you paid us in the 12 months before the claim.
         </p>
       </Section>
       <Section title="Open source">

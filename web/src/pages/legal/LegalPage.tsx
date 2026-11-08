@@ -1,13 +1,12 @@
 // The frame of /terms and /privacy (Paper: naive > "Final · Terms"): the name, the title, a date, and plain text. Both are drafts for the owner to review,
-// so they say so. No footer. LEGAL_ENTITY and LEGAL_JURISDICTION are placeholders the owner still fills in.
+// so they say so. No footer.
 import { useEffect, type ReactNode } from "react";
 import { Link } from "react-router";
 import { Logo } from "../../components/icons.tsx";
 
 export const LEGAL_UPDATED = "November 8, 2026";
 export const LEGAL_CONTACT = "daniel@veri.studio";
-export const LEGAL_ENTITY = "[company name]";
-export const LEGAL_JURISDICTION = "[jurisdiction]";
+export const LEGAL_ENTITY = "Crusonia";
 
 const link = "text-ink underline decoration-[#200D0D4D] underline-offset-[3px] hover:decoration-ink";
 

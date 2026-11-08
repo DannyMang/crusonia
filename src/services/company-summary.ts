@@ -188,27 +188,38 @@ export function markdownToProfile(markdown: string, updatedAt: string | null): P
  * Writes a structured profile into the markdown: the title, the Website line and the profile's sections are
  * replaced; every other section (Proof points, Voice, Avoid, Pricing, anything an agent or person added) is kept.
  */
-export function profileToMarkdown(profile: Profile, existing: string | null): string {
+export function profileToMarkdown(profile: Profile, existing: string | null, prev?: Profile): string {
+  // With `prev` (the profile the document reads as now), only what changed is rewritten, so hand-written text in the other
+  // sections stays, and an empty value never blanks what's there: there's no history to get it back from.
+  const rewrite = (empty: boolean, ...fields: (keyof Profile)[]) => !prev || (!empty && fields.some((f) => JSON.stringify(prev[f]) !== JSON.stringify(profile[f])));
+
   let md = cleanMarkdown(existing ?? SUMMARY_TEMPLATE);
   const lines = md.split("\n");
   const h1 = headings(lines).find((h) => h.level === 1);
   const title = `# ${profile.company ?? "Company summary"}`;
-  if (h1) lines[h1.line] = title;
-  else lines.unshift(title, "");
-  md = lines.join("\n");
+  if (rewrite(!profile.company, "company")) {
+    if (h1) lines[h1.line] = title;
+    else lines.unshift(title, "");
+    md = lines.join("\n");
+  }
   const websiteLine = /^[ \t]*Website:.*$/im;
-  if (profile.website) {
-    md = websiteLine.test(md) ? md.replace(websiteLine, `Website: ${profile.website}`) : md.replace(title, `${title}\n\nWebsite: ${profile.website}`);
-  } else md = md.replace(websiteLine, "");
+  if (rewrite(!profile.website, "website")) {
+    if (profile.website) {
+      const heading = md.split("\n")[headings(md.split("\n")).find((h) => h.level === 1)?.line ?? -1];
+      md = websiteLine.test(md) ? md.replace(websiteLine, `Website: ${profile.website}`) : heading ? md.replace(heading, `${heading}\n\nWebsite: ${profile.website}`) : `Website: ${profile.website}\n\n${md}`;
+    } else md = md.replace(websiteLine, "");
+  }
 
-  const icp = [profile.icp_description ?? "", profile.segments.length ? `### Segments\n\n${profile.segments.map(segmentLine).join("\n")}` : ""]
-    .filter(Boolean)
-    .join("\n\n");
-  md = replaceSection(md, "What we sell", profile.sells ?? "");
-  md = replaceSection(md, "Who buys", icp);
-  md = replaceSection(md, "Buying signals", profile.signals.map((s) => `- **${s.name}**${s.description ? `: ${s.description}` : ""}`).join("\n"));
-  if (profile.notes || sectionBody(md, "Notes") !== null) md = replaceSection(md, "Notes", profile.notes ?? "");
-  if (profile.sources.length || sectionBody(md, "Sources") !== null) {
+  const description = profile.icp_description || prev?.icp_description || "";
+  const segments = profile.segments.length ? profile.segments : (prev?.segments ?? []);
+  const icp = [description, segments.length ? `### Segments\n\n${segments.map(segmentLine).join("\n")}` : ""].filter(Boolean).join("\n\n");
+  if (rewrite(!profile.sells, "sells")) md = replaceSection(md, "What we sell", profile.sells ?? "");
+  if (rewrite(!profile.icp_description && !profile.segments.length, "icp_description", "segments")) md = replaceSection(md, "Who buys", icp);
+  if (rewrite(!profile.signals.length, "signals")) {
+    md = replaceSection(md, "Buying signals", profile.signals.map((s) => `- **${s.name}**${s.description ? `: ${s.description}` : ""}`).join("\n"));
+  }
+  if ((profile.notes || sectionBody(md, "Notes") !== null) && rewrite(!profile.notes, "notes")) md = replaceSection(md, "Notes", profile.notes ?? "");
+  if ((profile.sources.length || sectionBody(md, "Sources") !== null) && rewrite(!profile.sources.length, "sources")) {
     md = replaceSection(md, "Sources", profile.sources.map((s) => `- ${s.field}: ${s.url}`).join("\n"));
   }
   return cleanMarkdown(md.replace(/\n{3,}/g, "\n\n"));
@@ -277,6 +288,9 @@ export async function updateCompanySummary(
   ws: string,
   input: { markdown: string; section?: string | null; author: string },
 ): Promise<SummaryView & { unchanged?: boolean }> {
+  if (!input.markdown.trim()) {
+    throw new ApiError(400, "empty_summary", input.section ? `Refusing to blank the "${input.section}" section of the Company summary.` : "Refusing to blank the Company summary.");
+  }
   if (!input.section) return writeCompanySummary(sql, ws, input);
   for (let attempt = 1; ; attempt++) {
     const current = await getCompanySummary(sql, ws);

@@ -210,8 +210,8 @@ describe("Terms and Privacy", () => {
     const frame = await read("web/src/pages/legal/LegalPage.tsx");
     expect(frame).toContain("Draft, last updated");
     expect(frame).toContain("daniel@veri.studio");
-    expect(frame).toContain("[company name]");
-    expect(frame).toContain("[jurisdiction]");
+    expect(frame).toContain('LEGAL_ENTITY = "Crusonia"');
+    expect(frame).not.toContain("[company name]");
   });
 
   test("Privacy names what the product really does", async () => {
