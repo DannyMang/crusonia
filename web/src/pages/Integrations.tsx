@@ -3,11 +3,11 @@
 // it (there is no API to store keys, so there is no token input). "Manage" opens the provider's own console.
 import type { ReactNode } from "react";
 import { Link } from "react-router";
-import { isApiError, type ProviderStatus, type Status } from "../api.ts";
+import { isApiError, type CrmSyncTarget, type ProviderStatus, type Status } from "../api.ts";
 import { clerkEnabled } from "../auth.tsx";
 import { Page } from "../components/AppShell.tsx";
 import { Card, CopyButton, QueryError, Skeleton } from "../components/ui.tsx";
-import { cx } from "../lib/format.ts";
+import { cx, num, timeAgo } from "../lib/format.ts";
 import { useStatus } from "../queries.ts";
 import { CodeWell, CrumbBar } from "./connect/CrumbBar.tsx";
 
@@ -19,6 +19,7 @@ const SECRET_HINT: Record<string, string> = {
   AGENTMAIL_INBOX_ID: "Written by `bun run setup --write` once the API key is set",
   HUBSPOT_ACCESS_TOKEN: "HubSpot › Settings › Integrations › Private Apps › Access token",
   NOTION_API_TOKEN: "Create one at notion.so/profile/integrations, then share the Leads database with it",
+  NOTION_LEADS_DATABASE_ID: "Written by bun run setup --crm --write (creates the Crusonia leads database)",
   APIFY_TOKEN: "console.apify.com › Settings › API & Integrations › Personal API tokens",
   NAIVE_API_KEY: "Naive dashboard › Settings › API keys",
   NAIVE_AGENT_ID: "Create the agent in the Naive dashboard and use its id (agt_…)",
@@ -28,7 +29,7 @@ const SECRET_HINT: Record<string, string> = {
 const SECRETS: Record<string, string[]> = {
   agentmail: ["AGENTMAIL_API_KEY", "AGENTMAIL_INBOX_ID"],
   hubspot: ["HUBSPOT_ACCESS_TOKEN"],
-  notion: ["NOTION_API_TOKEN"],
+  notion: ["NOTION_API_TOKEN", "NOTION_LEADS_DATABASE_ID"],
   apify: ["APIFY_TOKEN"],
   naive: ["NAIVE_API_KEY"],
 };
@@ -248,6 +249,33 @@ function Fact({ title, value, first }: { title: string; value: ReactNode; first?
   );
 }
 
+/** Read-only CRM sync state from /api/status `crm_sync`: is it writing, when it last synced, what is queued. */
+function SyncFacts({ sync, switchName }: { sync: CrmSyncTarget | undefined; switchName: string }) {
+  if (!sync) return null;
+  const state = sync.active ? "On" : sync.configured ? "Off" : "Needs key";
+  const queue =
+    sync.queue_depth === null ? "—" : sync.failed ? `${num(sync.queue_depth)} · ${num(sync.failed)} failed` : sync.queue_depth ? `${num(sync.queue_depth)} pending` : "Empty";
+  return (
+    <div className="flex flex-col gap-2.5 border-t border-t-[#200D0D1A] pt-3.5">
+      <div className="flex">
+        <Fact first title="Sync" value={state} />
+        <Fact title="Last sync" value={sync.last_sync_at ? timeAgo(sync.last_sync_at) : "Never"} />
+        <Fact title="Queue" value={queue} />
+      </div>
+      {sync.configured && !sync.enabled ? (
+        <div className="text-[13px]/4.5 font-medium text-[#200D0D99]">
+          Nothing is written until <span className="text-ink">{switchName}=true</span> is set on the Worker.
+        </div>
+      ) : null}
+      {sync.last_error ? (
+        <div className="text-[13px]/4.5 font-medium text-[#B42318]">
+          Last error: <span className="break-all">{sync.last_error}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ---------- cards ----------
 
 type CardProps = { status: Status | undefined; known: boolean };
@@ -309,10 +337,13 @@ function HubSpotCard({ status, known }: CardProps) {
       description="Keeps contacts and companies in sync, so approved leads land in your CRM and existing customers are never prospected."
     >
       {state === "connected" ? (
-        <div className="flex border-t border-t-[#200D0D1A] pt-3.5">
-          <Fact first title="Objects" value="Contacts, Companies" />
-          <Fact title="Direction" value="Two-way" />
-        </div>
+        <>
+          <div className="flex border-t border-t-[#200D0D1A] pt-3.5">
+            <Fact first title="Objects" value="Contacts, Companies" />
+            <Fact title="Direction" value="Two-way" />
+          </div>
+          <SyncFacts sync={status?.crm_sync?.hubspot} switchName="HUBSPOT_SYNC_ENABLED" />
+        </>
       ) : state === "needs_key" ? (
         <MissingSecrets secrets={secretsFor("hubspot", p)} />
       ) : null}
@@ -331,7 +362,11 @@ function NotionCard({ status, known }: CardProps) {
       manage={{ href: "https://www.notion.so/profile/integrations", what: "your Notion integrations" }}
       description="Writes every lead, its evidence and score into a Notion database your team already reads."
     >
-      {state === "needs_key" ? <MissingSecrets secrets={secretsFor("notion", p)} /> : null}
+      {state === "connected" ? (
+        <SyncFacts sync={status?.crm_sync?.notion} switchName="NOTION_SYNC_ENABLED" />
+      ) : state === "needs_key" ? (
+        <MissingSecrets secrets={secretsFor("notion", p)} />
+      ) : null}
     </ProviderCard>
   );
 }

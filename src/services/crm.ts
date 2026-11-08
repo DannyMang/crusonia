@@ -1,11 +1,22 @@
 // Owner-side lead management for the REST API: filtered listing, full detail with the timeline, create
-// (opted-in contacts), patch (stage, consent, fields), delete and CSV import. Agent-side writes (add_leads,
+// (opted-in contacts), patch (stage, consent, fields), delete and imports (CSV here; HubSpot records go
+// through the same applyImportCandidates from ./crm-sync.ts). Agent-side writes (add_leads,
 // evidence, scoring, drafts) live in ./leads.ts and ./drafts.ts. Every state change writes an `events` row.
 import type { Lead, Sql } from "../db.ts";
 import { newId, variantFor } from "../ids.ts";
 import { ApiError } from "../lib/errors.ts";
 import { companyDomain, normalizeEmail } from "./addresses.ts";
-import { CsvError, mapHeaders, parseCsv, planImport, toCandidates, type ExistingLead, type ImportField, type RowResult } from "./csv.ts";
+import {
+  CsvError,
+  mapHeaders,
+  parseCsv,
+  planImport,
+  toCandidates,
+  type ExistingLead,
+  type ImportCandidate,
+  type ImportField,
+  type RowResult,
+} from "./csv.ts";
 import { ServiceError } from "./errors.ts";
 import { getLeadDetail, LEAD_STAGES, normalizeDomain, type LeadStage } from "./leads.ts";
 
@@ -249,8 +260,44 @@ export async function importLeads(sql: Sql, input: ImportInput, actor: string) {
     });
   }
 
-  const importedAt = new Date().toISOString();
-  const candidates = toCandidates(rows, map, importedAt);
+  const source = input.source ?? "csv_import";
+  const results = await applyImportCandidates(sql, toCandidates(rows, map, new Date().toISOString()), {
+    source,
+    actor,
+    via: "csv_import",
+    dryRun: input.dry_run,
+  });
+  const { skip_reasons, ...summary } = summarizeImport(results);
+  if (!input.dry_run) {
+    await sql`insert into events (lead_id, kind, data)
+              values (null, 'leads_imported', ${JSON.stringify({ via: "csv_import", ...summary, source, actor })}::jsonb)`;
+  }
+  return {
+    dry_run: Boolean(input.dry_run),
+    ...summary,
+    skip_reasons,
+    columns: Object.fromEntries(Object.entries(map).map(([field, idx]) => [field, rows[0]![idx!]])),
+    rows: results.slice(0, MAX_ROW_RESULTS).map((r) => (r.status === "created" ? { row: r.row, status: r.status } : r)),
+    rows_truncated: results.length > MAX_ROW_RESULTS,
+  };
+}
+
+export type ApplyImportOptions = {
+  /** leads.source for created leads. */
+  source: string;
+  actor: string;
+  /** events.data.via: 'csv_import', 'hubspot_import'. The CRM sync trigger ignores 'hubspot_import'. */
+  via: string;
+  dryRun?: boolean;
+};
+
+/**
+ * Applies import candidates (CSV rows, HubSpot records) with the dedupe plan from ./csv.ts: creates new leads
+ * (no consent unless the candidate carries it), fills blank fields on existing ones and grants consent, never
+ * overwrites. Suppressed addresses are skipped. Shared by the CSV import and the HubSpot import.
+ */
+export async function applyImportCandidates(sql: Sql, candidates: ImportCandidate[], opts: ApplyImportOptions): Promise<RowResult[]> {
+  const { source, actor, via } = opts;
   const emails = [...new Set(candidates.flatMap((c) => (c.email ? [c.email] : [])))];
   const domains = [...new Set(candidates.flatMap((c) => (c.domain ? [c.domain] : [])))];
   const [existing, suppressedRows] = await sql.transaction(
@@ -263,124 +310,114 @@ export async function importLeads(sql: Sql, input: ImportInput, actor: string) {
   );
   const suppressed = new Set(suppressedRows!.map((r) => r.email as string));
   const plan = planImport(candidates, existing as ExistingLead[], suppressed);
-  const source = input.source ?? "csv_import";
   const results: RowResult[] = plan.rows;
+  if (opts.dryRun) return results;
 
-  if (!input.dry_run) {
-    const creates = await Promise.all(
-      plan.creates.map(async (c) => ({
-        id: newId("lead"),
-        key: c.key,
-        email: c.email ?? null,
-        name: c.name ?? null,
-        title: c.title ?? null,
-        company: c.company ?? null,
-        domain: c.domain ?? null,
-        website: c.website ?? null,
-        linkedin_url: c.linkedin_url ?? null,
-        sells: c.sells ?? null,
-        best_customers: c.best_customers ?? null,
-        consent_text: c.consent?.text ?? null,
-        consent_at: c.consent?.at ?? null,
-        // Same seed as add_leads (email, else the domain+name key) so a contact always gets the same variant.
-        variant: await variantFor(c.email ?? c.key),
-        stage: c.consent ? "new" : "no_consent",
-      })),
-    );
-    const inserted = new Set<string>();
-    const withEmail = creates.filter((c) => c.email);
-    const withoutEmail = creates.filter((c) => !c.email);
-    for (let i = 0; i < withEmail.length; i += CHUNK) {
-      const done = await sql`
-        with r as (${createRecordset(sql, withEmail.slice(i, i + CHUNK))}),
-        ins as (
-          insert into leads (id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
-                             consent_text, consent_at, variant, stage)
-          select id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
-                 consent_text, consent_at, variant, stage from r
-          on conflict (email) do nothing
-          returning id, email, consent_at
-        ), ev as (
-          insert into events (lead_id, kind, data)
-          select id, 'lead_added', jsonb_build_object('via', 'csv_import', 'source', ${source}::text,
-                                                      'consent', consent_at is not null, 'actor', ${actor}::text)
-          from ins
-        )
-        select 'e:' || email as key from ins`;
-      for (const row of done) inserted.add(row.key as string);
-    }
-    for (let i = 0; i < withoutEmail.length; i += CHUNK) {
-      const done = await sql`
-        with r as (${createRecordset(sql, withoutEmail.slice(i, i + CHUNK))}),
-        ins as (
-          insert into leads (id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
-                             variant, stage)
-          select id, null, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
-                 variant, 'no_consent' from r
-          on conflict (domain, (coalesce(lower(name), ''))) where email is null do nothing
-          returning id, domain, name
-        ), ev as (
-          insert into events (lead_id, kind, data)
-          select id, 'lead_added', jsonb_build_object('via', 'csv_import', 'source', ${source}::text, 'consent', false, 'actor', ${actor}::text)
-          from ins
-        )
-        select 'd:' || domain || '|' || coalesce(lower(name), '') as key from ins`;
-      for (const row of done) inserted.add(row.key as string);
-    }
-    // A concurrent import or create can win the race for a key: report those rows as skipped.
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i]!;
-      if (r.status === "created" && !inserted.has(r.key)) results[i] = { row: r.row, status: "skipped", reason: "exists" };
-    }
-
-    const updates = [...plan.updates].map(([id, changes]) => ({ id, ...changes, fields: Object.keys(changes) }));
-    for (let i = 0; i < updates.length; i += CHUNK) {
-      await sql`
-        with u as (
-          select * from jsonb_to_recordset(${JSON.stringify(updates.slice(i, i + CHUNK))}::jsonb) as x(
-            id text, email text, name text, title text, company text, domain text, website text, linkedin_url text,
-            sells text, best_customers text, consent_text text, consent_at timestamptz, fields jsonb)
-        ), upd as (
-          update leads l set
-            email = case when l.email is null and u.email is not null
-                          and not exists (select 1 from leads e where e.email = u.email) then u.email else l.email end,
-            name = coalesce(l.name, u.name),
-            title = coalesce(l.title, u.title),
-            company = coalesce(l.company, u.company),
-            domain = coalesce(l.domain, u.domain),
-            website = coalesce(l.website, u.website),
-            linkedin_url = coalesce(l.linkedin_url, u.linkedin_url),
-            sells = coalesce(l.sells, u.sells),
-            best_customers = coalesce(l.best_customers, u.best_customers),
-            consent_text = case when l.consent_at is null and u.consent_at is not null then u.consent_text else l.consent_text end,
-            consent_at = coalesce(l.consent_at, u.consent_at),
-            stage = case when l.stage = 'no_consent' and l.consent_at is null and u.consent_at is not null then 'new' else l.stage end,
-            updated_at = now()
-          from u where l.id = u.id
-          returning l.id
-        )
+  const creates = await Promise.all(
+    plan.creates.map(async (c) => ({
+      id: newId("lead"),
+      key: c.key,
+      email: c.email ?? null,
+      name: c.name ?? null,
+      title: c.title ?? null,
+      company: c.company ?? null,
+      domain: c.domain ?? null,
+      website: c.website ?? null,
+      linkedin_url: c.linkedin_url ?? null,
+      sells: c.sells ?? null,
+      best_customers: c.best_customers ?? null,
+      consent_text: c.consent?.text ?? null,
+      consent_at: c.consent?.at ?? null,
+      // Same seed as add_leads (email, else the domain+name key) so a contact always gets the same variant.
+      variant: await variantFor(c.email ?? c.key),
+      stage: c.consent ? "new" : "no_consent",
+    })),
+  );
+  const inserted = new Set<string>();
+  const withEmail = creates.filter((c) => c.email);
+  const withoutEmail = creates.filter((c) => !c.email);
+  for (let i = 0; i < withEmail.length; i += CHUNK) {
+    const done = await sql`
+      with r as (${createRecordset(sql, withEmail.slice(i, i + CHUNK))}),
+      ins as (
+        insert into leads (id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
+                           consent_text, consent_at, variant, stage)
+        select id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
+               consent_text, consent_at, variant, stage from r
+        on conflict (email) do nothing
+        returning id, email, consent_at
+      ), ev as (
         insert into events (lead_id, kind, data)
-        select u.id, 'lead_updated', jsonb_build_object('via', 'csv_import', 'fields', u.fields, 'actor', ${actor}::text)
-        from u join upd on upd.id = u.id`;
-    }
+        select id, 'lead_added', jsonb_build_object('via', ${via}::text, 'source', ${source}::text,
+                                                    'consent', consent_at is not null, 'actor', ${actor}::text)
+        from ins
+      )
+      select 'e:' || email as key from ins`;
+    for (const row of done) inserted.add(row.key as string);
+  }
+  for (let i = 0; i < withoutEmail.length; i += CHUNK) {
+    const done = await sql`
+      with r as (${createRecordset(sql, withoutEmail.slice(i, i + CHUNK))}),
+      ins as (
+        insert into leads (id, email, name, title, company, domain, website, linkedin_url, sells, best_customers, source,
+                           variant, stage)
+        select id, null, name, title, company, domain, website, linkedin_url, sells, best_customers, ${source},
+               variant, 'no_consent' from r
+        on conflict (domain, (coalesce(lower(name), ''))) where email is null do nothing
+        returning id, domain, name
+      ), ev as (
+        insert into events (lead_id, kind, data)
+        select id, 'lead_added', jsonb_build_object('via', ${via}::text, 'source', ${source}::text, 'consent', false, 'actor', ${actor}::text)
+        from ins
+      )
+      select 'd:' || domain || '|' || coalesce(lower(name), '') as key from ins`;
+    for (const row of done) inserted.add(row.key as string);
+  }
+  // A concurrent import or create can win the race for a key: report those rows as skipped.
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]!;
+    if (r.status === "created" && !inserted.has(r.key)) results[i] = { row: r.row, status: "skipped", reason: "exists" };
   }
 
-  const count = (s: RowResult["status"]) => results.filter((r) => r.status === s).length;
-  const summary = { created: count("created"), updated: count("updated"), skipped: count("skipped") };
-  const skipReasons: Record<string, number> = {};
-  for (const r of results) if (r.status === "skipped") skipReasons[r.reason] = (skipReasons[r.reason] ?? 0) + 1;
-  if (!input.dry_run) {
-    await sql`insert into events (lead_id, kind, data)
-              values (null, 'leads_imported', ${JSON.stringify({ via: "csv_import", ...summary, source, actor })}::jsonb)`;
+  const updates = [...plan.updates].map(([id, changes]) => ({ id, ...changes, fields: Object.keys(changes) }));
+  for (let i = 0; i < updates.length; i += CHUNK) {
+    await sql`
+      with u as (
+        select * from jsonb_to_recordset(${JSON.stringify(updates.slice(i, i + CHUNK))}::jsonb) as x(
+          id text, email text, name text, title text, company text, domain text, website text, linkedin_url text,
+          sells text, best_customers text, consent_text text, consent_at timestamptz, fields jsonb)
+      ), upd as (
+        update leads l set
+          email = case when l.email is null and u.email is not null
+                        and not exists (select 1 from leads e where e.email = u.email) then u.email else l.email end,
+          name = coalesce(l.name, u.name),
+          title = coalesce(l.title, u.title),
+          company = coalesce(l.company, u.company),
+          domain = coalesce(l.domain, u.domain),
+          website = coalesce(l.website, u.website),
+          linkedin_url = coalesce(l.linkedin_url, u.linkedin_url),
+          sells = coalesce(l.sells, u.sells),
+          best_customers = coalesce(l.best_customers, u.best_customers),
+          consent_text = case when l.consent_at is null and u.consent_at is not null then u.consent_text else l.consent_text end,
+          consent_at = coalesce(l.consent_at, u.consent_at),
+          stage = case when l.stage = 'no_consent' and l.consent_at is null and u.consent_at is not null then 'new' else l.stage end,
+          updated_at = now()
+        from u where l.id = u.id
+        returning l.id
+      )
+      insert into events (lead_id, kind, data)
+      select u.id, 'lead_updated', jsonb_build_object('via', ${via}::text, 'fields', u.fields, 'actor', ${actor}::text)
+      from u join upd on upd.id = u.id`;
   }
-  return {
-    dry_run: Boolean(input.dry_run),
-    ...summary,
-    skip_reasons: skipReasons,
-    columns: Object.fromEntries(Object.entries(map).map(([field, idx]) => [field, rows[0]![idx!]])),
-    rows: results.slice(0, MAX_ROW_RESULTS).map((r) => (r.status === "created" ? { row: r.row, status: r.status } : r)),
-    rows_truncated: results.length > MAX_ROW_RESULTS,
-  };
+  return results;
+}
+
+/** Counts per status plus skip reasons. */
+export function summarizeImport(results: RowResult[]) {
+  const count = (s: RowResult["status"]) => results.filter((r) => r.status === s).length;
+  const skip_reasons: Record<string, number> = {};
+  for (const r of results) if (r.status === "skipped") skip_reasons[r.reason] = (skip_reasons[r.reason] ?? 0) + 1;
+  return { created: count("created"), updated: count("updated"), skipped: count("skipped"), skip_reasons };
 }
 
 function createRecordset(sql: Sql, rows: unknown[]) {

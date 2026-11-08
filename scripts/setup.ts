@@ -3,12 +3,18 @@
 //   bun run setup --write         also write them into .dev.vars
 //   bun run setup --naive-credential   re-add the MCP credentials to an existing Naive vault
 //   bun run setup --agent         only create or update the Naive agent (e.g. after editing playbooks/)
+//   bun run setup --crm           only CRM sync: HubSpot crusonia_* properties and the Notion "Crusonia leads"
+//                                 database (writes NOTION_LEADS_DATABASE_ID with --write). Never part of a plain run:
+//                                 it changes the owner's HubSpot schema and Notion workspace.
 //
 // Needs: PUBLIC_URL (wrangler.jsonc, after the first deploy), MCP_TOKEN, and the API key of each
 // provider to set up (AGENTMAIL_API_KEY, NAIVE_API_KEY, APIFY_TOKEN). Providers without a key are skipped.
 // Prints secrets to the terminal on purpose (some are shown only once by the provider).
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { AgentMailClient } from "agentmail";
+import { HubSpotClient } from "../src/providers/hubspot.ts";
+import { NotionClient } from "../src/providers/notion.ts";
+import { setupHubSpot, setupNotion } from "./lib/crm-setup.ts";
 import { ROOT, getVar, requireVar } from "./lib/env.ts";
 import { APIFY_MCP_URL, PLAYBOOK_PATH, agentSettings, changedFields, naiveAgentConfig, parsePlaybook } from "./lib/naive-agent.ts";
 
@@ -288,6 +294,30 @@ export async function createNaiveAgent(baseUrl: string, naive: Naive) {
   return { id, version: updated.current_version, status: `updated (${Object.keys(update).join(", ")})` as const, config };
 }
 
+// ---------- CRM sync (--crm) ----------
+
+async function setupCrm() {
+  const hubspotToken = getVar("HUBSPOT_ACCESS_TOKEN");
+  if (!hubspotToken) notes.push("HubSpot skipped: HUBSPOT_ACCESS_TOKEN not set.");
+  else {
+    const report = await setupHubSpot(new HubSpotClient(hubspotToken));
+    for (const line of report.done) console.log(line);
+    notes.push(...report.notes);
+  }
+  const notionToken = getVar("NOTION_API_TOKEN");
+  if (!notionToken) notes.push("Notion skipped: NOTION_API_TOKEN not set.");
+  else {
+    const report = await setupNotion(new NotionClient(notionToken), {
+      parentPageId: getVar("NOTION_PARENT_PAGE_ID"),
+      databaseId: getVar("NOTION_LEADS_DATABASE_ID"),
+    });
+    for (const line of report.done) console.log(line);
+    notes.push(...report.notes);
+    if (report.databaseId && report.databaseId !== getVar("NOTION_LEADS_DATABASE_ID")) results.NOTION_LEADS_DATABASE_ID = report.databaseId;
+  }
+  notes.push("CRM sync stays off until HUBSPOT_SYNC_ENABLED / NOTION_SYNC_ENABLED is true (see README \"CRM sync\").");
+}
+
 // ---------- output ----------
 
 function writeDevVars(values: Record<string, string>) {
@@ -305,12 +335,14 @@ function writeDevVars(values: Record<string, string>) {
 const baseUrl = publicUrl();
 console.log(`PUBLIC_URL: ${baseUrl}\n`);
 
-const steps: [string, (baseUrl: string) => Promise<void>][] = args.has("--agent")
-  ? [["Naive agent", setupNaiveAgent]]
-  : [
-      ["AgentMail", setupAgentMail],
-      ["Naive", setupNaive],
-    ];
+const steps: [string, (baseUrl: string) => Promise<void>][] = args.has("--crm")
+  ? [["CRM sync", setupCrm]]
+  : args.has("--agent")
+    ? [["Naive agent", setupNaiveAgent]]
+    : [
+        ["AgentMail", setupAgentMail],
+        ["Naive", setupNaive],
+      ];
 let failed = false;
 for (const [name, step] of steps) {
   try {

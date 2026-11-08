@@ -27,14 +27,14 @@ AGENTMAIL_API_KEY=
 # console.apify.com > Settings > API & Integrations > Personal API tokens.
 APIFY_TOKEN=
 
-# HubSpot CRM sync: import contacts/companies, push notes and lead status back.
-# HubSpot > Settings > Integrations > Private Apps > Create, scopes crm.objects.contacts.read + .write
-# (add crm.objects.companies.read/.write for company sync) > Access token.
+# HubSpot CRM sync: import contacts/companies, push leads, notes and lead status back (README "CRM sync").
+# HubSpot > Settings > Integrations > Private Apps > Create > Scopes: crm.objects.contacts.read + .write,
+# crm.objects.companies.read + .write, crm.schemas.contacts.write + crm.schemas.companies.write > Access token.
 HUBSPOT_ACCESS_TOKEN=
 
-# Notion CRM sync (leads database). Not the Notion connection Claude Code uses.
+# Notion CRM sync (a "Crusonia leads" database). Not the Notion connection Claude Code uses.
 # notion.so/profile/integrations > New internal integration > Internal Integration Secret,
-# then share the target page/database with the integration.
+# then share a parent page with the integration (see NOTION_PARENT_PAGE_ID below).
 NOTION_API_TOKEN=
 
 # Clerk user auth (sign-up/login). Server verifies sessions with the secret key; the publishable key goes to the frontend.
@@ -75,7 +75,13 @@ AGENTMAIL_WEBHOOK_SECRET=
 # Naive agent that runs research sessions (POST /api/workflows/research). setup.ts creates it (system prompt:
 # playbooks/research.md) and updates it in place on re-runs; `bun run setup --agent` re-applies only the agent.
 NAIVE_AGENT_ID=
+# The "Crusonia leads" Notion database CRM sync writes to. `bun run setup --crm --write` creates it under
+# NOTION_PARENT_PAGE_ID and writes its id here.
+NOTION_LEADS_DATABASE_ID=
 
+# Setup only (`bun run setup --crm`): the Notion page shared with the integration that will hold the
+# "Crusonia leads" database (the 32-character id at the end of the page's URL). Only setup reads it.
+# NOTION_PARENT_PAGE_ID=
 # Optional, setup only: AgentMail username for the inbox (default "crusonia" -> crusonia@agentmail.to).
 # AGENTMAIL_USERNAME=
 # Optional, setup only: the Naive agent's model and spend limits (micro-USD: 1000000 = $1). Defaults shown.
@@ -100,6 +106,25 @@ NAIVE_AGENT_ID=
 # TOOL_APPROVAL_TTL_MINUTES=60
 # Weekly Naive spend budget in USD, shown next to the week's spend on the dashboard (display only, nothing is blocked).
 # WEEKLY_BUDGET_USD=
+
+# ---------------------------------------------------------------------------
+# CRM sync (README "CRM sync"). Off by default: nothing is written to HubSpot or Notion until a switch is true.
+# ---------------------------------------------------------------------------
+
+# Push leads, notes and lead status to HubSpot / leads to the Notion database. The HubSpot import
+# (POST /api/integrations/hubspot/import) only reads HubSpot and works without the switch.
+# HUBSPOT_SYNC_ENABLED=false
+# NOTION_SYNC_ENABLED=false
+# Which leads sync: qualified (opted in, qualified, in the send flow, or from HubSpot and scored) or all.
+# HUBSPOT_SYNC_SCOPE=qualified
+# NOTION_SYNC_SCOPE=qualified
+# HubSpot import consent. Unset (the default) = imported contacts get NO consent and are never emailed. Set it to the
+# contact property that records an email opt-in; HUBSPOT_CONSENT_VALUES lists the values that count as yes
+# (comma list, case-insensitive; default yes, true, 1, opted_in, subscribed, ...). hs_email_optout=true always wins.
+# HUBSPOT_CONSENT_PROPERTY=
+# HUBSPOT_CONSENT_VALUES=
+# Leads synced per target per cron run. Keep it small on the Workers Free plan (50 subrequests per invocation).
+# CRM_SYNC_BATCH_SIZE=5
 
 # ---------------------------------------------------------------------------
 # Later: Photon iMessage approvals (Photon Stable)

@@ -291,6 +291,20 @@ export type Summary = {
 
 export type ProviderStatus = { configured: boolean; used_for: string; missing?: string[] };
 
+/** One CRM sync target in /api/status (`crm_sync`). Writes happen only when `active` (configured + enabled). */
+export type CrmSyncTarget = {
+  /** The *_SYNC_ENABLED switch is on. */
+  enabled: boolean;
+  /** The target's keys are set. */
+  configured: boolean;
+  active: boolean;
+  /** Pending queue items; null without a database. */
+  queue_depth: number | null;
+  failed: number | null;
+  last_sync_at: string | null;
+  last_error: string | null;
+};
+
 export type Status = {
   providers: Record<string, ProviderStatus>;
   database: {
@@ -308,6 +322,8 @@ export type Status = {
   inbox_address: string | null;
   naive_agent_configured: boolean;
   mcp_url: string;
+  /** HubSpot and Notion sync (added with the CRM sync backend; absent on older deployments). */
+  crm_sync?: { hubspot: CrmSyncTarget; notion: CrmSyncTarget; error?: string };
 };
 
 export type Segment = { name: string; company_size: string | null; industry: string | null; roles: string[] };
