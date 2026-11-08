@@ -1,35 +1,82 @@
 import { QueryClientProvider } from "@tanstack/react-query";
+import { lazy, Suspense, useEffect, type ComponentType, type LazyExoticComponent } from "react";
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
-import { AuthProvider, RedirectIfSignedIn, RequireAuth } from "./auth.tsx";
-import { AppShell } from "./components/AppShell.tsx";
+import { AuthProvider, FullPageSpinner, RedirectIfSignedIn, RequireAuth } from "./auth.tsx";
 import Landing from "./landing/Landing.tsx";
-import Approvals from "./pages/Approvals.tsx";
-import SignIn from "./pages/auth/SignIn.tsx";
-import SignUp from "./pages/auth/SignUp.tsx";
-import SsoCallback from "./pages/auth/SsoCallback.tsx";
-import Connect from "./pages/Connect.tsx";
-import Experiments from "./pages/Experiments.tsx";
-import Home from "./pages/Home.tsx";
-import Integrations from "./pages/Integrations.tsx";
-import LeadDetail from "./pages/LeadDetail.tsx";
-import Leads from "./pages/Leads.tsx";
-import NotFound from "./pages/NotFound.tsx";
-import OnboardingLayout from "./pages/onboarding/Layout.tsx";
-import Step1Company from "./pages/onboarding/Step1Company.tsx";
-import Step2Reading from "./pages/onboarding/Step2Reading.tsx";
-import Step3Customer from "./pages/onboarding/Step3Customer.tsx";
-import Step4Leads from "./pages/onboarding/Step4Leads.tsx";
-import Replies from "./pages/Replies.tsx";
-import Settings from "./pages/Settings.tsx";
-import WorkflowRun from "./pages/WorkflowRun.tsx";
-import Workflows from "./pages/Workflows.tsx";
 import { queryClient } from "./queries.ts";
 
-const Protected = () => (
-  <RequireAuth>
-    <Outlet />
-  </RequireAuth>
+// Every route but the landing page is its own chunk (React.lazy), so "/" loads only the landing. Inside the
+// app the other pages are fetched in the background once the shell is up, so moving around stays instant.
+type Loader = () => Promise<{ default: ComponentType }>;
+
+const pages = {
+  AppShell: () => import("./components/AppShell.tsx").then((m) => ({ default: m.AppShell })),
+  Approvals: () => import("./pages/Approvals.tsx"),
+  SignIn: () => import("./pages/auth/SignIn.tsx"),
+  SignUp: () => import("./pages/auth/SignUp.tsx"),
+  SsoCallback: () => import("./pages/auth/SsoCallback.tsx"),
+  Connect: () => import("./pages/Connect.tsx"),
+  Experiments: () => import("./pages/Experiments.tsx"),
+  Home: () => import("./pages/Home.tsx"),
+  Integrations: () => import("./pages/Integrations.tsx"),
+  LeadDetail: () => import("./pages/LeadDetail.tsx"),
+  Leads: () => import("./pages/Leads.tsx"),
+  NotFound: () => import("./pages/NotFound.tsx"),
+  OnboardingLayout: () => import("./pages/onboarding/Layout.tsx"),
+  Step1Company: () => import("./pages/onboarding/Step1Company.tsx"),
+  Step2Reading: () => import("./pages/onboarding/Step2Reading.tsx"),
+  Step3Customer: () => import("./pages/onboarding/Step3Customer.tsx"),
+  Step4Leads: () => import("./pages/onboarding/Step4Leads.tsx"),
+  Replies: () => import("./pages/Replies.tsx"),
+  Settings: () => import("./pages/Settings.tsx"),
+  WorkflowRun: () => import("./pages/WorkflowRun.tsx"),
+  Workflows: () => import("./pages/Workflows.tsx"),
+} satisfies Record<string, Loader>;
+
+const L = {} as Record<keyof typeof pages, LazyExoticComponent<ComponentType>>;
+for (const [name, load] of Object.entries(pages) as [keyof typeof pages, Loader][]) L[name] = lazy(load);
+
+/** Fetch every page chunk while the browser is idle (they are cached, so this costs one download each). */
+function usePreloadPages() {
+  useEffect(() => {
+    const run = () => Object.values(pages).forEach((load) => void load().catch(() => {}));
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(run, { timeout: 3000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = setTimeout(run, 1500);
+    return () => clearTimeout(t);
+  }, []);
+}
+
+/** A page inside the app shell: a quiet spinner in the main column while its chunk loads the first time. */
+function PageSpinner() {
+  return (
+    <div className="grid min-h-[60vh] place-items-center" aria-busy="true" aria-label="Loading">
+      <span className="size-5 rounded-full border-2 border-hairline border-t-ink [animation:crusonia-spin_0.8s_linear_infinite]" />
+    </div>
+  );
+}
+
+const page = (C: LazyExoticComponent<ComponentType>) => (
+  <Suspense fallback={<PageSpinner />}>
+    <C />
+  </Suspense>
 );
+const screen = (C: LazyExoticComponent<ComponentType>) => (
+  <Suspense fallback={<FullPageSpinner />}>
+    <C />
+  </Suspense>
+);
+
+const Protected = () => {
+  usePreloadPages();
+  return (
+    <RequireAuth>
+      <Outlet />
+    </RequireAuth>
+  );
+};
 
 export function App() {
   return (
@@ -40,38 +87,38 @@ export function App() {
             {/* Public landing page (web/src/landing/); it sends signed-in visitors to /app. */}
             <Route index element={<Landing />} />
 
-            <Route path="sign-in/*" element={<RedirectIfSignedIn><SignIn /></RedirectIfSignedIn>} />
-            <Route path="sign-up/*" element={<RedirectIfSignedIn fallback="/onboarding/1"><SignUp /></RedirectIfSignedIn>} />
-            <Route path="sso-callback" element={<SsoCallback />} />
+            <Route path="sign-in/*" element={<RedirectIfSignedIn>{screen(L.SignIn)}</RedirectIfSignedIn>} />
+            <Route path="sign-up/*" element={<RedirectIfSignedIn fallback="/onboarding/1">{screen(L.SignUp)}</RedirectIfSignedIn>} />
+            <Route path="sso-callback" element={screen(L.SsoCallback)} />
 
             <Route element={<Protected />}>
-              <Route path="onboarding" element={<OnboardingLayout />}>
+              <Route path="onboarding" element={screen(L.OnboardingLayout)}>
                 <Route index element={<Navigate to="1" replace />} />
-                <Route path="1" element={<Step1Company />} />
-                <Route path="2" element={<Step2Reading />} />
-                <Route path="3" element={<Step3Customer />} />
-                <Route path="4" element={<Step4Leads />} />
+                <Route path="1" element={page(L.Step1Company)} />
+                <Route path="2" element={page(L.Step2Reading)} />
+                <Route path="3" element={page(L.Step3Customer)} />
+                <Route path="4" element={page(L.Step4Leads)} />
               </Route>
 
-              <Route path="app" element={<AppShell />}>
-                <Route index element={<Home />} />
-                <Route path="leads" element={<Leads />} />
-                <Route path="leads/:id" element={<LeadDetail />} />
-                <Route path="approvals" element={<Approvals />} />
-                <Route path="approvals/:code" element={<Approvals />} />
-                <Route path="workflows" element={<Workflows />} />
-                <Route path="workflows/runs/:id" element={<WorkflowRun />} />
-                <Route path="experiments" element={<Experiments />} />
-                <Route path="experiments/:id" element={<Experiments />} />
-                <Route path="replies" element={<Replies />} />
-                <Route path="integrations" element={<Integrations />} />
-                <Route path="connect" element={<Connect />} />
-                <Route path="settings" element={<Settings />} />
-                <Route path="*" element={<NotFound />} />
+              <Route path="app" element={screen(L.AppShell)}>
+                <Route index element={page(L.Home)} />
+                <Route path="leads" element={page(L.Leads)} />
+                <Route path="leads/:id" element={page(L.LeadDetail)} />
+                <Route path="approvals" element={page(L.Approvals)} />
+                <Route path="approvals/:code" element={page(L.Approvals)} />
+                <Route path="workflows" element={page(L.Workflows)} />
+                <Route path="workflows/runs/:id" element={page(L.WorkflowRun)} />
+                <Route path="experiments" element={page(L.Experiments)} />
+                <Route path="experiments/:id" element={page(L.Experiments)} />
+                <Route path="replies" element={page(L.Replies)} />
+                <Route path="integrations" element={page(L.Integrations)} />
+                <Route path="connect" element={page(L.Connect)} />
+                <Route path="settings" element={page(L.Settings)} />
+                <Route path="*" element={page(L.NotFound)} />
               </Route>
             </Route>
 
-            <Route path="*" element={<NotFound />} />
+            <Route path="*" element={screen(L.NotFound)} />
           </Routes>
         </AuthProvider>
       </BrowserRouter>

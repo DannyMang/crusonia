@@ -22,6 +22,10 @@ const media = (name: string) => ({
   poster: `/media/${name}_poster.jpg`,
 });
 
+// Portrait phones get hero_bloom_small: a 640x960 crop of the 1920x1080 clip around the tree. With the hero's
+// object-[72%_50%] it frames exactly what the full clip shows there, at about a third of the bytes.
+const smallHero = { ...media("hero_bloom_small"), media: "(max-width: 639px) and (max-aspect-ratio: 2/3)" };
+
 export default function Landing() {
   const { isLoaded, isSignedIn } = useSession();
 
@@ -104,7 +108,7 @@ const shade = { backgroundImage: "linear-gradient(in oklab 180deg, #FFFFFF00 0%,
 function Hero() {
   return (
     <section id="top" aria-labelledby="hero-title" className="relative flex h-[clamp(640px,100svh,900px)] flex-col justify-end overflow-hidden bg-[#2E4A2A] px-5 sm:px-6">
-      <PlayOnceVideo {...media("hero_bloom")} play="load" className="absolute inset-0 size-full object-cover object-[72%_50%] lg:object-center" />
+      <PlayOnceVideo {...media("hero_bloom")} small={smallHero} play="load" className="absolute inset-0 size-full object-cover object-[72%_50%] lg:object-center" />
       <div aria-hidden className="absolute inset-x-0 bottom-0 h-[78%] sm:h-[520px]" style={shade} />
       <div className="relative flex flex-col items-start gap-7 pb-12 sm:px-8 sm:pb-18 lg:px-14 min-[1320px]:flex-row min-[1320px]:items-end min-[1320px]:justify-between">
         <h1 id="hero-title" className="text-balance text-[42px]/[46px] font-semibold tracking-[-1px] sm:text-[64px]/[68px] lg:text-[76px]/20 lg:tracking-[-1.6px]">
