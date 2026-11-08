@@ -1,5 +1,5 @@
 // The minute cron: expire stale approvals, reconcile Naive sessions that missed a webhook, settle sends
-// AgentMail did not confirm, drain the CRM sync queue, debit finished sessions and Apify runs that still owe credits, expire
+// AgentMail did not confirm, send approved follow-ups that are due, drain the CRM sync queue, debit finished sessions and Apify runs that still owe credits, expire
 // unused plan credits after their rollover month, complete finished agent traces and prune old ones, and prune old
 // iMessage notices. Each step is independent; one failing does not skip the others. (iMessage notices themselves go
 // out when the bridge polls, not from here.)
@@ -10,6 +10,7 @@ import type { Env } from "../env.ts";
 import type { FetchFn } from "../providers/http.ts";
 import { expireStaleApprovals } from "./approvals.ts";
 import { runCrmSync } from "./crm-sync.ts";
+import { sendDueFollowUps } from "./followups.ts";
 import { pruneOutbox } from "./imessage.ts";
 import { reconcileSending } from "./send.ts";
 import { pruneTraces, syncFinishedTraces } from "./traces.ts";
@@ -23,6 +24,8 @@ export async function runScheduled(env: Env, fetchFn?: FetchFn): Promise<Record<
     ["expired_approvals", () => expireStaleApprovals(sql, env, fetchFn)],
     ["reconciled_sessions", () => reconcileSessions(sql, env, fetchFn)],
     ["reconciled_sends", () => reconcileSending(sql, env, fetchFn)],
+    // Approved follow-ups whose send time came (cancelled instead if the lead replied meanwhile).
+    ["followups", () => sendDueFollowUps(sql, env, fetchFn)],
     ["crm_sync", () => runCrmSync(sql, env, fetchFn)],
     // Debit finished Naive sessions that still owe credits (missed or failed debits, spend reported later).
     ["settled_usage", () => settleUsage(sql, env, fetchFn)],
