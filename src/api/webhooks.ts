@@ -14,7 +14,6 @@ import {
   BridgePollSchema,
   handleBridgePoll,
   handlePhotonEvent,
-  imessageConfig,
   normalizeHandle,
   PHOTON_POLL_PATH,
   PHOTON_WEBHOOK_PATH,
@@ -171,9 +170,6 @@ webhooks.post("/photon", async (c) => {
   if (raw instanceof Response) return raw;
   const event = parseBody(c, raw, PhotonEventSchema);
   if (event instanceof Response) return event;
-  if (!imessageConfig(c.env).enabled) {
-    return c.json({ ok: false, reply: "iMessage approvals are switched off in Crusonia (IMESSAGE_ENABLED). Use the app for now." });
-  }
   // Defense in depth: the bridge already drops every other sender.
   if (c.env.OWNER_PHONE && normalizeHandle(event.from) !== normalizeHandle(c.env.OWNER_PHONE)) {
     console.warn("photon: command from a handle that is not OWNER_PHONE refused");
