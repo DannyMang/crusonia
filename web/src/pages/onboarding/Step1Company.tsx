@@ -1,7 +1,8 @@
 // Onboarding · 1 Your company (Paper artboard 2K2B-0): the website (or a description) the agent reads on
 // step 2. Nothing paid happens here; Continue only stores the input and moves on.
-import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
+import { cleanWebsite, clearWebsite, peekWebsite } from "../../components/auth/flow.ts";
 import type { Profile } from "../../api.ts";
 import { ChevronRight } from "../../components/icons.tsx";
 import { getOnboarding, patchOnboarding, resetOnboarding } from "../../components/onboarding/store.ts";
@@ -28,12 +29,29 @@ function validHost(v: string) {
 
 export default function Step1Company() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const stored = getOnboarding();
-  const [mode, setMode] = useState<"url" | "describe">(stored.description && !stored.url ? "describe" : "url");
-  const [url, setUrl] = useState(() => cleanUrl(stored.url ?? ""));
+  // The website typed on the landing page: ?website= (signed-in visitors) or remembered through sign-up.
+  const [incoming] = useState(() => cleanWebsite(params.get("website")) ?? peekWebsite());
+  const [mode, setMode] = useState<"url" | "describe">(stored.description && !stored.url && !incoming ? "describe" : "url");
+  const [url, setUrl] = useState(() => incoming ?? cleanUrl(stored.url ?? ""));
   const [description, setDescription] = useState(stored.description ?? "");
   const [error, setError] = useState<string | null>(null);
   const profile = useProfile();
+
+  // The visitor already asked for this site on the landing page, so go straight to reading it (step 2 starts
+  // the crawl and the proposal once). With a saved profile we only prefill: they can review it instead.
+  const started = useRef(false);
+  useEffect(() => {
+    if (!incoming || started.current || profile.isPending) return;
+    started.current = true;
+    clearWebsite();
+    if (profile.data) return;
+    const full = `https://${incoming}`;
+    const s = getOnboarding();
+    if (s.url !== full || s.description) resetOnboarding({ url: full });
+    navigate("/onboarding/2", { replace: true });
+  }, [incoming, profile.isPending, profile.data, navigate]);
 
   function submit(e: FormEvent) {
     e.preventDefault();

@@ -47,3 +47,52 @@ export function clerkMessage(e: ErrorLike): string | null {
 }
 
 export const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+
+// ---------- website from the landing page ----------
+// The landing page sends visitors to /sign-up?website=<domain>. The domain is kept in sessionStorage through
+// sign-up (OAuth leaves the page) so onboarding step 1 can prefill it and start reading the site.
+
+const WEBSITE = "crusonia.signupWebsite";
+const WEBSITE_TTL_MS = 60 * 60_000;
+
+/** "acme.com/about" from "https://www.Acme.com/about/", or null when it is not a plausible public host. */
+export function cleanWebsite(raw: string | null | undefined): string | null {
+  const v = (raw ?? "").trim().replace(/^[a-z]+:\/\//i, "").replace(/\/+$/, "");
+  if (!v || v.length > 253 || /\s/.test(v)) return null;
+  try {
+    const host = new URL(`https://${v}`).hostname;
+    return /\.[a-z]{2,}$/i.test(host) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberWebsite(raw: string | null | undefined) {
+  const v = cleanWebsite(raw);
+  if (!v) return;
+  try {
+    sessionStorage.setItem(WEBSITE, JSON.stringify({ v, at: Date.now() }));
+  } catch {
+    // onboarding just starts empty
+  }
+}
+
+/** The remembered website, if fresh. Does not clear it (safe in StrictMode initializers); see clearWebsite. */
+export function peekWebsite(): string | null {
+  try {
+    const raw = sessionStorage.getItem(WEBSITE);
+    if (!raw) return null;
+    const { v, at } = JSON.parse(raw) as { v?: string; at?: number };
+    return typeof at === "number" && Date.now() - at < WEBSITE_TTL_MS ? cleanWebsite(v) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearWebsite() {
+  try {
+    sessionStorage.removeItem(WEBSITE);
+  } catch {
+    // ignore
+  }
+}

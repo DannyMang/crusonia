@@ -153,7 +153,10 @@ export function RedirectIfSignedIn({ children, fallback = "/app" }: { children: 
   if (devBypass) return <>{children}</>;
   if (isLoaded && isSignedIn) {
     const next = new URLSearchParams(location.search).get("redirect_url");
-    return <Navigate to={next && next.startsWith("/") && !next.startsWith("//") ? next : fallback} replace />;
+    const website = new URLSearchParams(location.search).get("website");
+    const target = next && next.startsWith("/") && !next.startsWith("//") ? next : fallback;
+    // A signed-in visitor from the landing page (/sign-up?website=…) keeps the website for onboarding.
+    return <Navigate to={website && !next ? `${target}?website=${encodeURIComponent(website)}` : target} replace />;
   }
   return <>{children}</>;
 }

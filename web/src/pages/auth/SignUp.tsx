@@ -5,10 +5,10 @@
 // no Terms or Privacy pages to link to yet.
 import { useAuth, useSignUp } from "@clerk/react";
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { clerkEnabled } from "../../auth.tsx";
 import { AuthBrand, AuthField, AuthHeading, AuthShell, CodeForm, FormError, PrimaryButton, StartForm, SwitchLine, type Provider } from "../../components/auth/AuthLayout.tsx";
-import { clerkMessage, goTo, isEmail, rememberAfterAuth } from "../../components/auth/flow.ts";
+import { clerkMessage, goTo, isEmail, rememberAfterAuth, rememberWebsite } from "../../components/auth/flow.ts";
 
 const TITLE = "Welcome to Crusonia!";
 const SUBTITLE = "Your first 25 leads, from just your website";
@@ -17,6 +17,10 @@ const AFTER_SIGN_UP = "/onboarding/1";
 const footer = <SwitchLine className="pt-5" text="Already have an account?" to="/sign-in" label="Sign in" />;
 
 export default function SignUp() {
+  // From the landing page: keep the visitor's website for onboarding step 1 (survives the OAuth round trip).
+  const [params] = useSearchParams();
+  const website = params.get("website");
+  useEffect(() => rememberWebsite(website), [website]);
   return clerkEnabled ? <ClerkSignUp /> : <StaticSignUp />;
 }
 
