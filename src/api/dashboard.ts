@@ -7,6 +7,7 @@ import { parseQuery, sqlFor, type AppEnv, type Principal } from "../lib/context.
 import { REPLY_LABELS } from "../services/classify.ts";
 import { crmStatusSummary } from "../services/crm-sync.ts";
 import { listReplies } from "../services/replies.ts";
+import { imessageStatus } from "../services/imessage.ts";
 import { getStatus } from "../services/status.ts";
 import { getSummary } from "../services/summary.ts";
 
@@ -66,6 +67,8 @@ dashboard.get("/status", async (c) => {
     billing: billingConfig(c.env),
     // Per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error. Details: GET /api/integrations/crm.
     crm_sync: await crmStatusSummary(sql, c.env),
+    // enabled, configured, active, missing, owner_phone_set, bridge (last reported state, online), undeliverable_notices.
+    imessage: await imessageStatus(sql, c.env),
   });
 });
 
