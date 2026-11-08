@@ -458,11 +458,12 @@ for (const [name, step] of steps) {
 if (notes.length) console.log(`\n${notes.map((n) => `- ${n}`).join("\n")}`);
 
 if (Object.keys(results).length) {
-  console.log("\nAdd to .dev.vars, then run `bun run secrets` to upload:\n");
+  const file = DEV_VARS.slice(ROOT.length);
+  console.log(`\nAdd to ${file}, then run \`bun run ${WRANGLER_ENV ? `secrets:${WRANGLER_ENV}` : "secrets"}\` to upload:\n`);
   for (const [key, value] of Object.entries(results)) console.log(`${key}=${value}`);
   if (args.has("--write")) {
     writeDevVars(results);
-    console.log("\nWrote these to .dev.vars.");
+    console.log(`\nWrote these to ${file}.`);
   }
 }
 
