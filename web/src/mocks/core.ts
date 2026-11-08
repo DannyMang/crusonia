@@ -90,8 +90,8 @@ const autopilot = () => ({
   available: true,
   enabled: autopilotOn,
   paused,
-  blocked: null,
-  payments_live: true,
+  blocked: scenario() === "launch" ? "no_credits" : null,
+  payments_live: scenario() !== "launch",
   running: autopilotOn ? [{ session_id: "ses_mock", lead_id: null, waiting_on_you: false, text: "Researching Nessie" }] : [],
   feed: isEmpty()
     ? []
@@ -107,7 +107,7 @@ const autopilot = () => ({
 
 export const coreHandlers = [
   http.get("/api/me", () => ok(me)),
-  http.get("/api/config", () => ok({ payments_live: true })),
+  http.get("/api/config", () => ok({ payments_live: scenario() !== "launch" })),
   http.get("/api/admin/instance", () => ok(instance())),
   http.put("/api/admin/instance", async ({ request }) => {
     halted = Boolean((await body<{ halted?: boolean }>(request)).halted);

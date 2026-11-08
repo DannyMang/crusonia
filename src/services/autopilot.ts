@@ -335,7 +335,7 @@ type Tick = { state: InstanceState; capReached: boolean; all: boolean; list: str
  * the owner's while the cap is reached, and not one a blocked person made. Part of the query rather than a check after it,
  * so a limit counts only workspaces that can run.
  */
-const canRun = (sql: Sql, t: Tick) => sql`(${t.all}::boolean or w.id = any(${t.list}::text[]))
+export const canRun = (sql: Sql, t: Pick<Tick, "capReached" | "all" | "list" | "blocked">) => sql`(${t.all}::boolean or w.id = any(${t.list}::text[]))
   and (not ${t.capReached}::boolean or w.id = ${OWNER_WORKSPACE_ID})
   and coalesce(w.created_by, '') <> all(${t.blocked}::text[])`;
 
@@ -541,7 +541,7 @@ const RETRY_MINUTES = 5;
 /** Schedules that are due. A claim moves next_run_at forward first, so two ticks never start the same run. */
 async function startDueSchedules(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
   // A skipped schedule stays due, so it starts the minute it can. So those are read apart: fresh ones oldest first, then a
-  // few of the skipped at random, and only with credits: a workspace out of them costs nothing until it has some again.
+  // few of the skipped at random. One already skipped for no credits costs nothing until it has some again.
   const due = sql`d.enabled and w.autopilot and not w.paused and d.trigger->>'kind' = 'schedule' and (d.next_run_at is null or d.next_run_at <= now()) and ${canRun(sql, tick)}`;
   const rows = (await sql`
     (select d.id, d.workspace_id, d.trigger, d.latest_version, d.enabled, d.next_run_at
@@ -551,7 +551,7 @@ async function startDueSchedules(sql: Sql, env: Env, tick: Tick, fetchFn?: Fetch
     union all
     (select d.id, d.workspace_id, d.trigger, d.latest_version, d.enabled, d.next_run_at
      from workflow_defs d join workspaces w on w.id = d.workspace_id
-     where ${due} and d.last_skip is not null and ${hasCredits(sql)}
+     where ${due} and d.last_skip is not null and (d.last_skip <> 'no_credits' or ${hasCredits(sql)})
      order by random() limit ${MAX_RETRIES_PER_TICK})`) as DueDef[];
   const started: string[] = [];
   for (const def of rows) {

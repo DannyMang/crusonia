@@ -1,6 +1,6 @@
 // /privacy: a draft for the owner to review, not legal advice. Based on what the product stores and who it sends data to:
 // the providers in src/env.ts, traces in src/services/traces.ts, operators' access in src/api/admin.ts.
-import { LEGAL_CONTACT, LEGAL_ENTITY, LegalPage, Section, TextLink } from "./LegalPage.tsx";
+import { ContactLink, LEGAL_ENTITY, LegalPage, Section, TextLink } from "./LegalPage.tsx";
 
 const PROCESSORS: [string, string][] = [
   ["Cloudflare", "hosting"],
@@ -59,7 +59,7 @@ export default function Privacy() {
         <p>Agent traces are deleted after 180 days. Everything else stays until you ask us to delete your account.</p>
       </Section>
       <Section title="Your choices">
-        <p>To see, correct or delete your data, or if an agent found you and you want to be removed, write to {LEGAL_CONTACT}.</p>
+        <p>To see, correct or delete your data, or if an agent found you and you want to be removed, write to <ContactLink />.</p>
       </Section>
     </LegalPage>
   );

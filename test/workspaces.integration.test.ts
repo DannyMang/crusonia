@@ -63,8 +63,23 @@ const env = (over: Partial<Env> = {}): Env => ({
   NAIVE_AGENT_ID: "agt_template",
   NAIVE_VAULT_ID: "vlt_test",
   CLERK_JWT_KEY: pem,
+  CLERK_SECRET_KEY: "sk_test_fake",
   ...over,
 });
+
+// Clerk's API, faked at fetch: every user has one verified address of their own, so a first sign-in gets its workspace.
+const realFetch = globalThis.fetch;
+const fakeClerkUser = (id: string) => ({
+  id,
+  primary_email_address_id: "e0",
+  email_addresses: [{ id: "e0", email_address: `${id.toLowerCase()}@it.example.com`, verification: { status: "verified" } }],
+});
+function fetchWithClerk(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const target = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+  if (target.hostname !== "api.clerk.com") return realFetch(input as Request, init);
+  const one = /^\/v1\/users\/(.+)$/.exec(target.pathname);
+  return Promise.resolve(Response.json(one ? fakeClerkUser(decodeURIComponent(one[1]!)) : target.searchParams.getAll("user_id").map(fakeClerkUser)));
+}
 
 async function call(token: string, method: string, path: string, body?: unknown, e: Env = env()) {
   const res = await worker.fetch(
@@ -100,6 +115,7 @@ async function tool(token: string, name: string, args: Record<string, unknown> =
 
 suite("workspaces (database, faked Naive)", () => {
   beforeAll(async () => {
+    globalThis.fetch = fetchWithClerk as typeof fetch;
     sql = getSql(url);
     const params = { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" };
     keys = (await crypto.subtle.generateKey(params, true, ["sign", "verify"])) as CryptoKeyPair;
@@ -129,6 +145,7 @@ suite("workspaces (database, faked Naive)", () => {
   });
 
   afterAll(async () => {
+    globalThis.fetch = realFetch;
     if (!sql) return;
     await deleteTestWorkspaces(sql, created);
     await sql`delete from events where workspace_id = 'ws_owner' and data::text like ${`%${run}%`}`;

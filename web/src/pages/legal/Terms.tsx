@@ -1,6 +1,6 @@
 // /terms: a draft for the owner to review, not legal advice. It says what the product really does today: free credits,
 // paid top-ups not open yet, agents that can be wrong, and no email going out without a person's approval.
-import { LEGAL_CONTACT, LEGAL_ENTITY, LEGAL_JURISDICTION, LegalPage, Section, TextLink } from "./LegalPage.tsx";
+import { ContactLink, LEGAL_ENTITY, LEGAL_JURISDICTION, LegalPage, Section, TextLink } from "./LegalPage.tsx";
 
 export default function Terms() {
   return (
@@ -43,7 +43,9 @@ export default function Terms() {
         <p>Crusonia's code is under the MIT license. If you host it yourself, that license applies and these terms don't.</p>
       </Section>
       <Section title="Contact">
-        <p>{LEGAL_CONTACT}</p>
+        <p>
+          <ContactLink />
+        </p>
       </Section>
     </LegalPage>
   );

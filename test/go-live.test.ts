@@ -202,14 +202,16 @@ describe("invite limits", () => {
 });
 
 describe("Terms and Privacy", () => {
-  test("public routes, drafts, at full size, with the placeholders the owner fills in", async () => {
+  test("public routes, drafts, at full size, with the owner's contact address and the placeholders still to fill in", async () => {
     const app = await read("web/src/App.tsx");
     expect(app).toContain('path="terms"');
     expect(app).toContain('path="privacy"');
     for (const path of ["/terms", "/privacy"]) expect(zoomFor(path, false)).toBe(1);
     const frame = await read("web/src/pages/legal/LegalPage.tsx");
     expect(frame).toContain("Draft, last updated");
-    expect(frame).toContain("[contact email]");
+    expect(frame).toContain("daniel@veri.studio");
+    expect(frame).toContain("[company name]");
+    expect(frame).toContain("[jurisdiction]");
   });
 
   test("Privacy names what the product really does", async () => {

@@ -14,7 +14,7 @@ const TITLE = "Welcome to Crusonia!";
 const SUBTITLE = "Your first 25 leads, from just your website";
 const AFTER_SIGN_UP = "/onboarding/1";
 
-const switchLine = (search = "") => <SwitchLine className="pt-5" text="Already have an account?" to={`/sign-in${search}`} label="Sign in" />;
+const switchLine = (search = "") => <SwitchLine className="pt-3" text="Already have an account?" to={`/sign-in${search}`} label="Sign in" />;
 
 export default function SignUp() {
   // From the landing page: keep the visitor's website for onboarding step 1 (survives the OAuth round trip).
@@ -24,11 +24,11 @@ export default function SignUp() {
   return clerkEnabled ? <ClerkSignUp /> : <StaticSignUp />;
 }
 
-const termsLink = "text-ink underline decoration-1 [text-underline-position:from-font] hover:decoration-2";
+const termsLink = "underline decoration-1 [text-underline-position:from-font] hover:decoration-2";
 
 function TermsLine() {
   return (
-    <p className="pt-3 text-[13px]/4.5 font-[525] text-muted">
+    <p className="pt-5 text-xs/4.5 font-[525] text-[#200D0D8C]">
       By continuing you agree to the{" "}
       <Link to="/terms" target="_blank" className={termsLink}>
         Terms
@@ -42,7 +42,7 @@ function TermsLine() {
 }
 
 function StaticSignUp() {
-  return <StartForm title={TITLE} subtitle={SUBTITLE} email="" disabled note="Sign-up is not configured in this build." footer={switchLine()} />;
+  return <StartForm title={TITLE} subtitle={SUBTITLE} email="" disabled note="Sign-up is not configured in this build." afterButton={<TermsLine />} footer={switchLine()} />;
 }
 
 type Pending = Provider | "email" | "verify" | "resend" | "details" | null;
