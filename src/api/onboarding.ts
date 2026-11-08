@@ -1,6 +1,7 @@
 // /api/profile (the onboarding result) and /api/onboarding/* (read a website, have the agent propose a profile).
 import { Hono } from "hono";
 import { z } from "zod";
+import { billingOwnerOf, requireCredits } from "../billing/accounts.ts";
 import { actorOf, parseJson, sqlFor, type AppEnv } from "../lib/context.ts";
 import { getProfile, profileUpdateSchema, saveProfile } from "../services/profile.ts";
 import { getOnboardingProposal, naiveAgent, startOnboardingProposal } from "../services/runs.ts";
@@ -46,7 +47,11 @@ const ProposeBody = z
 onboarding.post("/propose", async (c) => {
   const body = await parseJson(c, ProposeBody);
   naiveAgent(c.env); // 503 not_configured before touching the database
-  const result = await startOnboardingProposal(sqlFor(c.env), c.env, body, actorOf(c.get("principal")));
+  const principal = c.get("principal");
+  await requireCredits(c.env, principal); // 402 insufficient_credits when BILLING_ENFORCED and the balance is <= 0
+  const result = await startOnboardingProposal(sqlFor(c.env), c.env, body, actorOf(principal), undefined, {
+    billingOwnerId: billingOwnerOf(principal),
+  });
   return c.json(result, 202);
 });
 

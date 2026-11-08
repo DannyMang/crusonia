@@ -3,6 +3,7 @@
 // purpose; a run is one session (src/services/runs.ts).
 import { Hono } from "hono";
 import { z } from "zod";
+import { billingOwnerOf, requireCredits } from "../billing/accounts.ts";
 import { actorOf, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
 import { LEAD_STAGES } from "../services/crm.ts";
 import { getRunDetail, listWorkflows } from "../services/runs.ts";
@@ -38,6 +39,8 @@ const ResearchBody = z
 
 workflows.post("/research", async (c) => {
   const body = await parseJson(c, ResearchBody);
-  const result = await startResearch(sqlFor(c.env), c.env, body, actorOf(c.get("principal")));
+  const principal = c.get("principal");
+  await requireCredits(c.env, principal); // 402 insufficient_credits when BILLING_ENFORCED and the balance is <= 0
+  const result = await startResearch(sqlFor(c.env), c.env, body, actorOf(principal), undefined, { billingOwnerId: billingOwnerOf(principal) });
   return c.json(result, result.started.length ? 202 : 200);
 });

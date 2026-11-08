@@ -2,6 +2,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
+import { billingOwnerOf, requireCredits } from "../billing/accounts.ts";
 import { actorOf, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
 import { ApiError, errorBody, invalidRequest } from "../lib/errors.ts";
 import { sendApprovalTtlMinutes } from "../services/approval-ttl.ts";
@@ -58,7 +59,10 @@ const FindBody = z.object({ count: z.number().int().min(1).max(MAX_FIND_LEADS).d
 leads.post("/find", async (c) => {
   const body = await parseJson(c, FindBody);
   naiveAgent(c.env); // 503 not_configured before touching the database
-  return c.json(await startFindLeads(sqlFor(c.env), c.env, body.count, actorOf(c.get("principal"))), 202);
+  const principal = c.get("principal");
+  await requireCredits(c.env, principal); // 402 insufficient_credits when BILLING_ENFORCED and the balance is <= 0
+  const result = await startFindLeads(sqlFor(c.env), c.env, body.count, actorOf(principal), undefined, { billingOwnerId: billingOwnerOf(principal) });
+  return c.json(result, 202);
 });
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024;

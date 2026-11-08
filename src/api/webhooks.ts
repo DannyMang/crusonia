@@ -6,7 +6,8 @@ import { z } from "zod";
 import type { Env } from "../env.ts";
 import { sqlFor } from "../lib/context.ts";
 import { errorBody } from "../lib/errors.ts";
-import { verifyNaive, verifySvix } from "../lib/signatures.ts";
+import { handleStripeEvent, StripeEventSchema } from "../billing/webhook.ts";
+import { verifyNaive, verifyStripe, verifySvix } from "../lib/signatures.ts";
 import { AgentMailEventSchema, handleAgentMailEvent } from "../services/inbound.ts";
 import { claimWebhookEvent, releaseWebhookEvent } from "../services/webhook-events.ts";
 import { handleSessionIdle } from "../services/workflows.ts";
@@ -97,4 +98,27 @@ webhooks.post("/naive", async (c) => {
                       ${JSON.stringify({ type: delivery.type, session_id: sessionId ?? null })}::jsonb)`;
   }
   return c.json({ ok: true });
+});
+
+// Stripe (Crusonia's own account): checkout, invoices, subscriptions, refunds -> billing accounts and the credit
+// ledger (src/billing/webhook.ts). The signature is always verified (no secret, no processing); events are deduped
+// by id, and a failed handler releases the claim and answers 5xx so Stripe retries.
+webhooks.post("/stripe", async (c) => {
+  const secret = c.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) return c.json(errorBody("not_configured", "STRIPE_WEBHOOK_SECRET is not set"), 503);
+  const raw = await c.req.text();
+  const verified = await verifyStripe({ secret, header: c.req.header("stripe-signature"), body: raw, now: nowSeconds() });
+  if (!verified.ok) return c.json(errorBody("invalid_signature", verified.reason), 401);
+  const event = parseBody(c, raw, StripeEventSchema);
+  if (event instanceof Response) return event;
+
+  const sql = sqlFor(c.env);
+  if (!(await claimWebhookEvent(sql, "stripe", event.id))) return c.json({ ok: true, duplicate: true });
+  try {
+    const result = await handleStripeEvent(sql, c.env, event);
+    return c.json({ ok: true, type: event.type, ...result });
+  } catch (err) {
+    await releaseWebhookEvent(sql, event.id).catch(() => {});
+    throw err;
+  }
 });

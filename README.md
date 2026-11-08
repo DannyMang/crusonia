@@ -4,7 +4,8 @@ GTM engine (a Clay/Apollo alternative run by AI agents). Cloudflare Worker (Hono
 (React SPA in `web/`) served from the same Worker as static assets.
 Agents (Naive, or your own Claude Code / Cursor / Codex) work through our MCP server at `/mcp`; AgentMail handles
 email (opted-in leads only); Apify supplies web and lead data (our MCP tools call its REST API, and Naive agents can
-also use Apify's hosted MCP server); HubSpot and Notion are synced; Clerk handles users.
+also use Apify's hosted MCP server); HubSpot and Notion are synced; Clerk handles users; Stripe bills hosted usage
+in credits (see [Billing](#billing-stripe)).
 
 Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri-web.workers.dev/mcp
 
@@ -17,15 +18,16 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 | `src/auth.ts` | Bearer tokens for `/mcp` and `/api`: an API key (`crs_live_...`, looked up by SHA-256) or `MCP_TOKEN` (constant-time compare) |
 | `src/mcp/route.ts` | `/mcp`: MCP Streamable HTTP (stateless, JSON responses), fresh server per request |
 | `src/mcp/server.ts` | MCP tool definitions: a thin layer over `src/services` |
-| `src/api/*.ts` | REST routers: `auth` (Clerk, API key or `MCP_TOKEN`), `leads`, `approvals`, `workflows`, `settings`, signed `webhooks`; web app: `dashboard` (me, summary, status, replies), `onboarding` (profile, read-website, propose), `experiments`, `keys`; `integrations` (CRM sync) |
+| `src/api/*.ts` | REST routers: `auth` (Clerk, API key or `MCP_TOKEN`), `leads`, `approvals`, `workflows`, `settings`, signed `webhooks`; web app: `dashboard` (me, summary, status, replies), `onboarding` (profile, read-website, propose), `experiments`, `keys`; `billing` (Stripe); `integrations` (CRM sync) |
+| `src/billing/*.ts` | Stripe billing: `plans` (tiers, packs, the credit definition: the one file to edit), `accounts` (billing owner, ledger, 402 gate), `checkout` (Checkout and Customer Portal), `webhook` (Stripe events), `usage` (debits for finished Naive sessions), `expiry` (plan credit rollover), `overview`, `constants` |
 | `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron`; web app: `runs` (workflows/runs from Naive sessions and events, onboarding and find-leads sessions), `summary`, `replies`, `experiments`, `api-keys`; CRM sync: `crm-sync` (HubSpot/Notion push, HubSpot import, status), `crm-queue` (queue, retry, backoff), `crm-fields` (field mapping and ownership) |
-| `src/providers/*.ts` | Thin REST clients: `agentmail`, `naive`, `hubspot`, `notion` (the last two paced under their rate limits, 429-aware) |
+| `src/providers/*.ts` | Thin REST clients: `agentmail`, `naive`, `hubspot`, `notion` (the last two paced under their rate limits, 429-aware), `stripe` (no SDK, pinned API version) |
 | `src/lib/*.ts` | Errors (`{error: {code, message}}`), request helpers, Web Crypto, webhook signatures |
 | `test/*.test.ts` | `bun test`; `db.integration.test.ts` runs only with `TEST_DATABASE_URL` (a dev branch) |
 | `src/db.ts` | Neon HTTP driver (`getSql`), row types, `getLead`, `logEvent` |
 | `src/schema.sql` | Idempotent Postgres schema |
 | `scripts/migrate.ts` | Applies the schema to Neon (Bun) |
-| `scripts/setup.ts` | Creates the AgentMail inbox/webhook and the Naive webhook, vault and research agent; `--crm`: HubSpot properties and the Notion leads database (`scripts/lib/crm-setup.ts`) (Bun) |
+| `scripts/setup.ts` | Creates the AgentMail inbox/webhook and the Naive webhook, vault and research agent; `--stripe`: billing products, prices, portal and webhook (`scripts/lib/stripe-setup.ts`); `--crm`: HubSpot properties and the Notion leads database (`scripts/lib/crm-setup.ts`) (Bun) |
 | `scripts/lib/naive-agent.ts` | The Naive agent definition: tools and permissions, MCP servers, model, budget |
 | `playbooks/research.md` | The research agent's system prompt (versioned in its front matter) |
 | `web/` | Dashboard SPA (React + Vite + Tailwind, Clerk sign-in), built to `web/dist` and served as static assets. See [Web app](#web-app) |
@@ -45,7 +47,8 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
    `NAIVE_WEBHOOK_SECRET`, `NAIVE_VAULT_ID`, `NAIVE_AGENT_ID` into `.dev.vars` (drop `--write` to only print them).
    Idempotent; providers without a key are skipped. See [The research agent](#the-research-agent).
 6. **Upload again and redeploy**: `bun run secrets && bun run deploy`.
-7. **CRM sync (optional)**: off until you turn it on; see [CRM sync](#crm-sync).
+7. **Billing (optional)**: see [Billing (Stripe)](#billing-stripe).
+8. **CRM sync (optional)**: off until you turn it on; see [CRM sync](#crm-sync).
 
 ## Connect your agent (MCP)
 
@@ -182,7 +185,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | DELETE | `/api/suppressions/:email` | Remove |
 | GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token"}` |
 | GET | `/api/summary` | Home: `pipeline` (found, researched, drafted, awaiting_approval, sent, replied, meetings: where leads are now), top 5 `pending_approvals`, `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` from Naive session usage, `budget_usd` from `WEEKLY_BUDGET_USD`), `paused` |
-| GET | `/api/status` | `get_status` data plus `inbox_address`, `naive_agent_configured`, `mcp_url`, `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error) |
+| GET | `/api/status` | `get_status` data plus `inbox_address`, `naive_agent_configured`, `mcp_url`, `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error) |
 | GET, PUT | `/api/profile` | `{profile}`: company, website, sells, icp_description, segments, signals, sources (PUT replaces it) |
 | POST | `/api/onboarding/read-website` | `{url}` -> `{pages: [{url, title, text}]}`. Synchronous; Apify crawler with `APIFY_TOKEN` (a few cents), else a plain fetch |
 | POST | `/api/onboarding/propose` | `{url?, description?}` -> `{session_id}`: a Naive session reads the site and saves a proposed profile |
@@ -196,11 +199,15 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/experiments/:id/leads` | Enroll more leads `{lead_ids}` (each keeps its variant; leads in another running experiment are skipped) |
 | GET, POST | `/api/keys` | API keys for `/mcp` and `/api`: list (no secrets) / create `{name}` (full key returned once) |
 | DELETE | `/api/keys/:id` | Revoke |
+| GET | `/api/billing` | The caller's `plan` (key, status, `current_period_end`, `cancel_at_period_end`), `balance` (credits) and `balance_usd`, `expiring` included credits, the last 20 `ledger` rows, and the `plans` and `packs` with display prices |
+| POST | `/api/billing/checkout` | `{plan}` or `{pack}` -> `{url}`: a Stripe Checkout Session (subscription or one-time). 409 `already_subscribed` for a second plan |
+| POST | `/api/billing/portal` | -> `{url}`: the Stripe Customer Portal (change or cancel the plan, invoices, payment methods) |
 | GET | `/api/integrations/crm` | CRM sync per target (`hubspot`, `notion`): `enabled`, `configured`, `active`, `missing`, `scope`, `last_success_at`, `last_error`, `queue {pending, due, failed}`, `recent_errors`, `warnings`; HubSpot also `import` (running job) and `last_import` |
 | POST | `/api/integrations/sync` | `{target, lead_ids?}`: queue those leads (even outside the scope) or every lead in the scope. 409 `sync_disabled` while the target's switch is off |
 | POST | `/api/integrations/hubspot/import` | Queue the HubSpot import (contacts, then companies, 100 per minute). Needs only the token; 409 while one runs |
 | POST | `/webhooks/agentmail` | Svix-signed. `message.received` (match by thread, then sender; classify; stop follow-ups; unsubscribe suppresses), `message.bounced` (permanent: suppress), `message.complained`, `message.delivered` |
 | POST | `/webhooks/naive` | `Vetta-Signature`-signed. `session.idle`: allowlisted tools (`AUTO_CONFIRM_TOOLS`) are allowed, other tools and `ask_operator` questions become approvals |
+| POST | `/webhooks/stripe` | `Stripe-Signature`-signed (`STRIPE_WEBHOOK_SECRET`; no secret, no processing). Credits packs and monthly plans, tracks subscriptions, claws back refunds; see [Billing](#billing-stripe) |
 
 Rules enforced in code: the agent never sends; drafts are immutable (an edit is a new version and closes the old
 approval); a send approval is bound to the recipient and draft version, expires (`SEND_APPROVAL_TTL_HOURS`, 7 days
@@ -217,7 +224,80 @@ experiment runs carry its id; `sent` counts those drafts once sent, `replies` th
 send, `positive` those labeled `interested`. Stop rules are reported (`stop_rule_met`); stopping is a `PATCH`.
 
 The minute cron expires stale approvals (an expired tool call is denied to the agent), reconciles running Naive
-sessions that missed a webhook (events after `last_seq`), settles unconfirmed sends, and drains the CRM sync queue.
+sessions that missed a webhook (events after `last_seq`), settles unconfirmed sends, drains the CRM sync queue,
+debits finished Naive sessions that still owe credits, and expires unused plan credits after their rollover month.
+
+## Billing (Stripe)
+
+Hosted Crusonia bills usage in credits through **its own Stripe account** (never one shared with another product).
+Self-hosting needs none of this: without `STRIPE_SECRET_KEY` the billing endpoints answer 503 and nothing is blocked.
+
+**Credits and plans.** Everything lives in [`src/billing/plans.ts`](src/billing/plans.ts); the values are
+placeholders until the owner decides (marked `TODO(owner)`):
+
+- 1 credit = $0.01 of list value. Ledger amounts are whole credits.
+- **Free** $0/month: the first 5 leads are free, then top-ups from $10. **Pro** $20/month grants 2,000 credits and
+  **Scale** $100/month grants 10,000 credits on each paid subscription invoice (first payment and each renewal).
+  Top-up packs: $10, $50 and $200 for 1,000, 5,000 and 20,000 credits.
+- A free sample of 300 credits (about 5 leads) is granted once per billing account; `BILLING_FREE_CREDITS` changes
+  it, `0` turns it off.
+- Usage: when a Naive session finishes, the billing owner that started it is debited its reported spend
+  (`naive_sessions.consumed_micro_usd`) times 2, rounded up: $0.30 of agent spend = 60 credits. A session that
+  resumes and spends more is topped up; nothing is debited twice. Data calls (Apify) are not metered yet.
+- The amount paid never decides the credits (coupons, tax and rounding change what is paid, not what is granted).
+- Unused included plan credits roll over for one month after the period they were granted for, then expire (the
+  minute cron writes an `expire` row for what is left). Usage spends the soonest-expiring credits first. Top-up packs
+  and the free sample never expire.
+- Plan changes in the portal apply without proration; the new plan's credits arrive with its next paid invoice.
+
+To change pricing: edit `plans.ts`, run `bun run setup --stripe`, deploy. Prices are found by `lookup_key`, so no
+Stripe ids live in this repo; a changed amount gets a new price that takes over the lookup key (existing
+subscribers keep their old price, which still maps to its plan through its metadata).
+
+**Who pays.** The billing owner is the Clerk user, or `owner` for `MCP_TOKEN` and API-key callers. Each owner has one
+Stripe customer, created by us and found by owner id only (never matched by email). Every object we create carries
+metadata `app: crusonia` and `crusonia_user_id` (customers, Checkout Sessions, subscriptions through
+`subscription_data.metadata`, payment intents), and the webhook ignores objects without `app: crusonia`.
+
+**Ledger.** `credit_ledger` is append-only (a trigger refuses updates and deletes); the balance is the sum per owner.
+Each row's `source` makes it idempotent: `signup:<owner>`, `checkout:<session>`, `invoice:<invoice>` (with
+`expires_at`), `usage:<naive session>`, `refund:<charge>:<amount refunded>`, `expire:<grant source>`.
+
+**Webhook events** (`POST /webhooks/stripe`, signature verified on the raw body, deduped by event id in
+`webhook_events`, every event written to `events`):
+
+| Event | Effect |
+| --- | --- |
+| `checkout.session.completed` | Credit pack: credited only when `payment_status` is `paid`. Subscription: links the subscription |
+| `checkout.session.async_payment_succeeded` | Credits a pack whose payment settled later (same source: never twice) |
+| `invoice.paid` | Grants the plan's monthly credits for `subscription_create` and `subscription_cycle` invoices, once per invoice |
+| `customer.subscription.created` / `.updated` / `.deleted` | Plan, status, period end and cancel-at-period-end on the account (older events never overwrite newer ones) |
+| `charge.refunded` | Claws back the purchase's credits in proportion to the amount refunded, minus any that already expired (packs by PaymentIntent, plan invoices through the Invoice Payments API) |
+
+**Turn it on (test mode first).**
+
+1. Create Crusonia's Stripe account, stay in test mode, and put its test secret key in `.dev.vars` as
+   `STRIPE_SECRET_KEY=sk_test_...` (or a restricted `rk_test_` key, see below).
+2. `bun run migrate` (adds `billing_accounts`, `credit_ledger` and `naive_sessions.billing_owner_id`).
+3. `bun run setup --stripe`: creates or updates the products and prices, the Customer Portal configuration (switch
+   plan, cancel at period end, invoices, payment methods) and the webhook endpoint `${PUBLIC_URL}/webhooks/stripe`
+   for the events above, pinned to the API version in `src/providers/stripe.ts`. The webhook signing secret is
+   written to `.dev.vars.stripe.test` (mode 600, gitignored) and never printed. Add `--verify-checkout` to create
+   and expire one test Checkout Session. Safe to re-run; `--rotate-webhook-secret` replaces the endpoint and secret.
+4. Upload both secrets and deploy: `bun run secrets` (uploads `STRIPE_SECRET_KEY` from `.dev.vars`),
+   `bunx wrangler secret bulk .dev.vars.stripe.test`, `bun run deploy`. For `wrangler dev`, copy the
+   `STRIPE_WEBHOOK_SECRET` line into `.dev.vars`.
+5. Try it: `POST /api/billing/checkout {"pack": "small"}`, open the URL, pay with test card `4242 4242 4242 4242`,
+   then `GET /api/billing` shows 1,000 more credits.
+6. When you want limits: set `BILLING_ENFORCED=true` (a var or secret). Starting paid work (onboarding propose,
+   `POST /api/leads/find`, research workflows) then answers 402 `insufficient_credits` when the caller's balance is
+   0 or less. It is off by default so the owner's own use never blocks, and `MCP_TOKEN` always bypasses it.
+
+**Going live.** Activate the Stripe account (business and bank details), create a live restricted key (`rk_live_`)
+and put it in `.dev.vars` as `STRIPE_SECRET_KEY`, then run `bun run setup --stripe --live` (setup refuses a live key
+without `--live`), upload `.dev.vars.stripe.live` and the key as in step 4, and deploy. A restricted key needs write
+access to Products, Prices, Customer portal and Webhook endpoints for setup, and write access to Customers, Checkout
+Sessions and Customer portal plus read access to Prices and Invoices (invoice payments, for refunds) for the Worker.
 
 ## CRM sync
 
@@ -337,6 +417,13 @@ user id in `CLERK_ALLOWED_USER_IDS`. Note: while an uploaded version is newer th
   `test/crm-sync.integration.test.ts` (trigger, queue, pushes, import) also run against a real database with mocked
   providers (never point it at production; they clean up their rows).
 - `bun run deploy:dry`: build the web app and the Worker without deploying. `bun run deploy` builds the web app first too.
+  field mapping, queue retry/backoff and 429s, and HubSpot/Notion pushes and setup against in-memory fakes; billing with
+  an in-memory Stripe). With `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts` (send/reply/Naive flows),
+  `test/web-api.integration.test.ts` (keys, summary, experiments, replies, workflows, onboarding),
+  `test/crm-sync.integration.test.ts` (trigger, queue, pushes, import) and `test/billing.integration.test.ts` (webhook,
+  ledger, refunds, rollover, usage debits, the 402 gate) also run against a real database with mocked providers (never
+  point it at production; they clean up their rows).
+- `bun run deploy:dry`: build without deploying.
 - `bun run cf-typegen`: regenerate runtime types after changing `compatibility_date` or flags.
 
 ## Contributing
