@@ -17,7 +17,7 @@
 #   GIT_REF             commit to run (a full SHA pushed to GitHub); required for up/recreate
 #   CREDS_FILE          file with SPECTRUM_PROJECT_ID=, SPECTRUM_PROJECT_SECRET=, OWNER_PHONE= lines
 #   BRIDGE_SECRET_FILE  file with a BRIDGE_SECRET= line (the same value goes on the Worker)
-#   SEND_TEST_MESSAGE   1 = after the bridge connects, text OWNER_PHONE once: "Crusonia is connected. Reply help for commands."
+#   SEND_TEST_MESSAGE   1 = after the bridge connects, text OWNER_PHONE once: "Crusonia is connected."
 #   WORKER_URL          default https://crusonia.veri-web.workers.dev
 #   AWS_PROFILE / AWS_REGION (default us-east-1), AZ (default us-east-1a), INSTANCE (default crusonia-bridge)
 #
@@ -36,7 +36,7 @@ BLUEPRINT="${BLUEPRINT:-ubuntu_24_04}"
 WORKER_URL="${WORKER_URL:-https://crusonia.veri-web.workers.dev}"
 REPO_URL="${REPO_URL:-https://github.com/DannyMang/crusonia.git}"
 REPO_API="${REPO_API:-https://api.github.com/repos/DannyMang/crusonia}"
-TEST_TEXT="Crusonia is connected. Reply help for commands."
+TEST_TEXT="Crusonia is connected."
 
 ls_() { aws lightsail --region "$REGION" "$@"; }
 say() { printf '%s\n' "$*" >&2; }

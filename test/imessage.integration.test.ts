@@ -1,6 +1,6 @@
 // iMessage approvals end to end against a real Postgres (a Neon dev branch, never production), through the real
 // Worker routes with signed bridge requests: the poll (notices, acks with bubble ids, reminders), and owner commands
-// applying approve / reject / edit / answer / tapbacks through the real approval services, decided_via = 'imessage'.
+// (👍 / 👎 tapbacks, the only input) applying through the real approval services, decided_via = 'imessage'.
 // AgentMail and Naive are mocked at fetch (the Neon driver's own requests pass through). Skipped unless
 // TEST_DATABASE_URL is set:  TEST_DATABASE_URL=<dev branch url> bun test test/imessage.integration.test.ts
 // The dev branch is shared: polls lease every recent pending approval, so assertions only look at this run's codes.
@@ -14,6 +14,7 @@ import { signBridge } from "../src/lib/signatures.ts";
 import { createAgentApproval } from "../src/services/approvals.ts";
 import { createLead } from "../src/services/crm.ts";
 import { createDraft } from "../src/services/drafts.ts";
+import { setPaused } from "../src/services/settings.ts";
 import { createTestWorkspace, deleteTestWorkspaces } from "./helpers/workspace.ts";
 
 const WS = "ws_owner";
@@ -75,6 +76,7 @@ async function bridgeCall(path: string, payload: unknown, over: Partial<Env> = {
 }
 let seq = 0;
 const say = (command: Record<string, unknown>, id = `it-${run}-${++seq}`) => bridgeCall("/webhooks/photon", { id, from: OWNER, command });
+const thumb = (reaction: "like" | "dislike", bubble: string) => say({ action: "react", reaction, message_id: bubble });
 
 type Notice = { id: string; type: string; text: string };
 /**
@@ -152,9 +154,10 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     const seen = await pollFor([`approval:${code}`]);
     const notice = seen.get(`approval:${code}`)!;
     expect(notice.type).toBe("approval");
-    expect(notice.text).toContain("Draft to notice Tester (Fieldnote)");
+    expect(notice.text).toStartWith(`Request ${code} · draft v1 to notice Tester (Fieldnote)`);
     expect(notice.text).toContain(`Hi notice, worth a chat?`);
-    expect(notice.text).toContain(`reply A ${code}`);
+    expect(notice.text).toEndWith("Tap 👍 to send, 👎 to reject.");
+    expect(notice.text).not.toMatch(/reply|Expires/);
     const [row] = await sql`select delivered_at, message_id, draft_id, attempts from imessage_outbox where id = ${`approval:${code}`}`;
     expect(row).toMatchObject({ message_id: notice.bubble, draft_id: draftId, attempts: 1 });
     expect(row!.delivered_at).not.toBeNull();
@@ -200,110 +203,119 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     expect((await sql`select attempts from imessage_outbox where id = ${id}`)[0]!.attempts).toBe(2);
   });
 
-  test("A <code>: sends through AgentMail, decided_via imessage", async () => {
+  test("👍 on a notice sends through AgentMail, decided_via imessage, once", async () => {
     const { code, lead } = await newSendApproval("approve");
+    const n = (await pollFor([`approval:${code}`])).get(`approval:${code}`)!;
     const sent = calls.length;
-    const res = await say({ action: "approve", code: code.toLowerCase() });
-    expect(res).toMatchObject({ ok: true, reply: `Approved. Sent "Quick question" to approve Tester (Fieldnote).` });
+    expect(await thumb("like", n.bubble)).toMatchObject({ ok: true, reply: `Approved. Sent "Quick question" to approve Tester (Fieldnote).`, code });
     expect(calls.slice(sent).map((c) => c.body?.to)).toEqual([lead.email]);
     expect(await approvalRow(code)).toMatchObject({ status: "approved", decided_via: "imessage" });
-    // Single use: a second A is refused with the current state, and nothing is sent.
-    expect((await say({ action: "approve", code })).reply).toBe(`${code} is already closed: approved.`);
+    // Single use: a second 👍 (a new tapback event) is refused with the current state, and nothing is sent.
+    expect((await thumb("like", n.bubble)).reply).toBe(`Request ${code} is already closed: approved.`);
     expect(calls.length).toBe(sent + 1);
   });
 
-  test("a retried delivery of the same iMessage returns the first reply without acting again", async () => {
+  test("a retried delivery of the same tapback returns the first reply without acting again", async () => {
     const { code } = await newSendApproval("dupe");
+    const n = (await pollFor([`approval:${code}`])).get(`approval:${code}`)!;
     const id = `it-${run}-dupe`;
-    const first = await say({ action: "approve", code }, id);
+    const first = await say({ action: "react", reaction: "like", message_id: n.bubble }, id);
     const sent = calls.length;
-    expect(await say({ action: "approve", code }, id)).toEqual({ ...first, duplicate: true });
+    expect(await say({ action: "react", reaction: "like", message_id: n.bubble }, id)).toEqual({ ok: true, duplicate: true, reply: first.reply });
     expect(calls.length).toBe(sent);
   });
 
-  test("R <code> rejects the draft; unknown and expired codes get clear replies", async () => {
+  test("👎 on a notice rejects it; 👍 on an expired request gets a clear reply and sends nothing", async () => {
     const { code } = await newSendApproval("reject");
-    expect((await say({ action: "reject", code, reason: "too pushy" })).reply).toBe("Rejected. The draft to reject Tester (Fieldnote) won't be sent.");
-    expect(await approvalRow(code)).toMatchObject({ status: "rejected", decided_via: "imessage", answer: "too pushy" });
+    const n = (await pollFor([`approval:${code}`])).get(`approval:${code}`)!;
+    expect((await thumb("dislike", n.bubble)).reply).toBe("Rejected. The draft to reject Tester (Fieldnote) won't be sent.");
+    expect(await approvalRow(code)).toMatchObject({ status: "rejected", decided_via: "imessage", answer: "Rejected with a 👎 tapback" });
 
-    expect((await say({ action: "approve", code: "ZZZZ" })).reply).toBe("No approval ZZZZ. Text status to see what's open.");
     const old = await newSendApproval("expired");
+    const oldNotice = (await pollFor([`approval:${old.code}`])).get(`approval:${old.code}`)!;
     await sql`update approvals set expires_at = now() - interval '1 minute' where code = ${old.code}`;
-    expect((await say({ action: "approve", code: old.code })).reply).toBe(`Code ${old.code} expired.`);
+    const sent = calls.length;
+    expect((await thumb("like", oldNotice.bubble)).reply).toBe(`Request ${old.code} expired.`);
+    expect(calls.length).toBe(sent);
   });
 
-  test("E <code> <text>: a new immutable version + approval; the old code closes; the new one gets its own notice", async () => {
-    const { code } = await newSendApproval("edit");
-    const res = await say({ action: "edit", code, text: "Hi edit, shorter: 15 minutes this week?" });
-    expect(res.ok).toBe(true);
-    const newCode = /reply A ([2-9A-Z]{4})/.exec(res.reply)![1]!;
-    expect(res.reply).toContain(`Saved as v2 for edit Tester (Fieldnote) (${code} is closed)`);
-    expect(await approvalRow(code)).toMatchObject({ status: "expired" });
-    const [d] = await sql`select d.version, d.body from approvals a join drafts d on d.id = a.draft_id where a.code = ${newCode}`;
-    expect(d).toEqual({ version: 2, body: "Hi edit, shorter: 15 minutes this week?" });
-    const notice = (await pollFor([`approval:${newCode}`])).get(`approval:${newCode}`)!;
-    expect(notice.text).toContain(", v2:");
-    expect(notice.text).toContain("15 minutes this week?");
-  });
-
-  test("👍 on a draft's bubble sends exactly that version; 👍 on the bubble of a superseded version cannot", async () => {
+  test("editing a texted draft closes its request: the new notice says it changed, and 👍 approves only the version on that bubble", async () => {
     const v1 = await newSendApproval("tap");
     const n1 = (await pollFor([`approval:${v1.code}`])).get(`approval:${v1.code}`)!;
-    // The owner edits instead, then taps the OLD bubble: that approval is closed, so nothing is sent.
-    const edited = await say({ action: "edit", code: v1.code, text: "v2 body" });
-    const v2code = /reply A ([2-9A-Z]{4})/.exec(edited.reply)![1]!;
-    const sent = calls.length;
-    expect((await say({ action: "react", reaction: "like", message_id: n1.bubble })).reply).toBe(`${v1.code} is already closed: expired.`);
-    expect(calls.length).toBe(sent);
-    // Tapping the v2 bubble sends v2.
+    // The edit happens in the app.
+    const res = await worker.fetch(
+      new Request(`https://example.test/api/approvals/${v1.code}/edit`, {
+        method: "POST",
+        headers: { Authorization: "Bearer it", "Content-Type": "application/json" },
+        body: JSON.stringify({ body: "v2 body" }),
+      }),
+      { ...env, MCP_TOKEN: "it" },
+      {} as ExecutionContext,
+    );
+    expect(res.status).toBe(201);
+    const v2code = ((await res.json()) as { approval: { code: string } }).approval.code;
+    expect(await approvalRow(v1.code)).toMatchObject({ status: "expired" });
+
     const n2 = (await pollFor([`approval:${v2code}`])).get(`approval:${v2code}`)!;
-    expect((await say({ action: "react", reaction: "like", message_id: n2.bubble })).reply).toContain("Approved. Sent");
+    const [changed, request] = n2.text.split("\n");
+    expect(changed).toBe("That draft changed; here's the new one (v1 is closed).");
+    expect(request).toStartWith(`Request ${v2code} · draft v2 to tap Tester`);
+    expect(n2.text).toContain("v2 body");
+
+    // A 👍 on the old bubble cannot send anything.
+    const sent = calls.length;
+    expect((await thumb("like", n1.bubble)).reply).toBe(`Request ${v1.code} is already closed: expired.`);
+    expect(calls.length).toBe(sent);
+    // A 👍 on the new bubble sends exactly the new version.
+    expect((await thumb("like", n2.bubble)).reply).toContain("Approved. Sent");
     expect(calls.at(-1)!.body).toMatchObject({ text: "v2 body" });
     expect(await approvalRow(v2code)).toMatchObject({ status: "approved", decided_via: "imessage" });
   });
 
-  test("👎 on a bubble rejects; a tapback on a message that is not a notice is ignored silently", async () => {
-    const { code } = await newSendApproval("tapno");
-    const n = (await pollFor([`approval:${code}`])).get(`approval:${code}`)!;
-    expect((await say({ action: "react", reaction: "dislike", message_id: n.bubble })).reply).toContain("Rejected.");
-    expect(await approvalRow(code)).toMatchObject({ status: "rejected", decided_via: "imessage" });
-    expect(await say({ action: "react", reaction: "like", message_id: `not-a-notice-${run}` })).toEqual({ ok: false, error: "unknown_message", reply: "" });
+  test("a thumb on a message that is not a notice does nothing and asks for no reply", async () => {
+    expect(await thumb("like", `not-a-notice-${run}`)).toEqual({ ok: false, error: "unknown_message", reply: "" });
+    expect(await thumb("dislike", `not-a-notice-${run}`)).toEqual({ ok: false, error: "unknown_message", reply: "" });
   });
 
-  test("tool approval: 👍 on its bubble allows the call at Naive; R <code> on another denies it", async () => {
+  test("tool approval: 👍 on its bubble allows the call at Naive; 👎 on another denies it", async () => {
     const allow = await newAgentApproval("toolok", "tool");
     const n = (await pollFor([`approval:${allow.code}`])).get(`approval:${allow.code}`)!;
-    expect(n.text).toContain("Agent wants to run apify.run_actor");
-    expect((await say({ action: "react", reaction: "like", message_id: n.bubble })).reply).toBe("Allowed. The agent can run apify.run_actor and continues.");
+    expect(n.text).toStartWith(`Request ${allow.code} · agent wants to run apify.run_actor`);
+    expect((await thumb("like", n.bubble)).reply).toBe("Allowed. The agent can run apify.run_actor and continues.");
     expect(calls.at(-1)).toMatchObject({ url: expect.stringContaining(`/v1/sessions/${allow.sessionId}/tool_confirmations`), body: { tool_call_id: "tc_toolok", decision: "allow" } });
     expect(await approvalRow(allow.code)).toMatchObject({ status: "approved", decided_via: "imessage" });
 
     const deny = await newAgentApproval("toolno", "tool");
-    expect((await say({ action: "reject", code: deny.code })).reply).toBe("Denied. The agent won't run apify.run_actor.");
+    const m = (await pollFor([`approval:${deny.code}`])).get(`approval:${deny.code}`)!;
+    expect((await thumb("dislike", m.bubble)).reply).toBe("Denied. The agent won't run apify.run_actor.");
     expect(calls.at(-1)!.body).toMatchObject({ tool_call_id: "tc_toolno", decision: "deny" });
   });
 
-  test("question: <code> <answer> is forwarded to Naive; approve/reject on a question explains how to answer", async () => {
+  test("question: thumbs can't answer it; it points to the app and stays open", async () => {
     const q = await newAgentApproval("question", "question");
-    expect((await say({ action: "approve", code: q.code })).reply).toBe(`${q.code} is a question, not an approval. Reply ${q.code} <your answer>.`);
-    expect((await say({ action: "answer", code: q.code, text: "Seed-stage devtools" })).reply).toBe("Answered. The agent continues.");
-    expect(calls.at(-1)).toMatchObject({ url: expect.stringContaining(`/v1/sessions/${q.sessionId}/answers`), body: { tool_call_id: "tc_question", answers: { segment: "Seed-stage devtools" } } });
-    expect(await approvalRow(q.code)).toMatchObject({ status: "answered", decided_via: "imessage" });
+    const n = (await pollFor([`approval:${q.code}`])).get(`approval:${q.code}`)!;
+    expect(n.text).toEndWith("Answer it in the app.");
+    const sent = calls.length;
+    for (const reaction of ["like", "dislike"] as const) {
+      expect((await thumb(reaction, n.bubble)).reply).toBe(`Request ${q.code} is a question: answer it in the app.`);
+    }
+    expect(calls.length).toBe(sent);
+    expect(await approvalRow(q.code)).toMatchObject({ status: "pending" });
   });
 
-  test("pause, status and resume", async () => {
-    expect((await say({ action: "pause" })).reply).toStartWith("Paused.");
-    const status = await say({ action: "status" });
-    expect(status.reply).toStartWith("Crusonia is PAUSED");
-    // While paused, approving a send is refused with a hint and nothing is sent.
+  test("while paused, 👍 is refused with a hint and nothing is sent", async () => {
     const { code } = await newSendApproval("paused");
-    const sent = calls.length;
-    expect((await say({ action: "approve", code })).reply).toBe(`Sending is paused. Text resume first, then A ${code}.`);
-    expect(calls.length).toBe(sent);
-    expect((await say({ action: "resume" })).reply).toStartWith("Resumed.");
-    expect((await sql`select paused from workspaces where id = ${WS}`)[0]!.paused).toBe(false);
-    const [ev] = await sql`select data from events where kind = 'imessage_command' and data->>'message_id' = ${`it-${run}-${seq}`}`;
-    expect(ev!.data).toMatchObject({ action: "resume", ok: true });
+    const n = (await pollFor([`approval:${code}`])).get(`approval:${code}`)!;
+    await setPaused(sql, WS, true, "test");
+    try {
+      const sent = calls.length;
+      expect((await thumb("like", n.bubble)).reply).toBe("Sending is paused. Resume in the app, then tap 👍 again.");
+      expect(calls.length).toBe(sent);
+      const [ev] = await sql`select data from events where kind = 'imessage_command' and data->>'target_message_id' = ${n.bubble}`;
+      expect(ev!.data).toMatchObject({ action: "react", reaction: "like", code, ok: false, error: "paused" });
+    } finally {
+      await setPaused(sql, WS, false, "test");
+    }
   });
 
   test("an expiry reminder is queued once, 10+ minutes after the notice, in the last quarter of the approval's life", async () => {
@@ -315,7 +327,7 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
       sql`update imessage_outbox set delivered_at = now() - interval '20 minutes' where id = ${`approval:${code}`}`,
     ]);
     const seen = await pollFor([`warn:${code}`]);
-    expect(seen.get(`warn:${code}`)!.text).toStartWith(`Reminder: ${code} expires in`);
+    expect(seen.get(`warn:${code}`)!.text).toStartWith(`Reminder: request ${code} expires in`);
     expect((await pollFor([])).has(`warn:${code}`)).toBe(false);
   });
 
@@ -357,7 +369,7 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     const ours = (res.notices as Notice[]).filter((n) => ids.includes(n.id));
     expect(ours.length).toBeLessThanOrEqual(2);
     const summary = (res.notices as Notice[]).find((n) => n.type === "summary");
-    expect(summary?.text).toMatch(/^\+\d+ more approvals? waiting: open Crusonia \(https:\/\/example\.test\/app\/approvals\) or text status\.$/);
+    expect(summary?.text).toMatch(/^\+\d+ more approvals? waiting: open Crusonia \(https:\/\/example\.test\/app\/approvals\)\.$/);
     expect(res.notices.at(-1).type).toBe("summary");
     const skipped = await sql`select id from imessage_outbox where id = any(${ids}::text[]) and skip_reason = 'rate_limited'`;
     expect(skipped.length).toBe(5 - ours.length);
@@ -367,7 +379,7 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     expect((again.notices as Notice[]).some((n) => n.type === "summary" || skipped.some((s) => s.id === n.id))).toBe(false);
   });
 
-  test("another workspace's approvals are never texted, and a text cannot decide them", async () => {
+  test("another workspace's approvals are never texted, and a thumb cannot decide them", async () => {
     const other = await createTestWorkspace(sql, `imsg_${run}`);
     try {
       const lead = await createLead(sql, other, { email: email("elsewhere"), name: "Else", source: "it_test", consent: { text: "opted in" } }, "test");
@@ -375,8 +387,11 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
       const seen = await pollFor([]);
       expect(seen.has(`approval:${approval.code}`)).toBe(false);
       expect((await sql`select count(*)::int as n from imessage_outbox where approval_code = ${approval.code}`)[0]!.n).toBe(0);
-      const reply = await say({ action: "approve", code: approval.code });
-      expect(reply.ok).toBe(false);
+      // Even a bubble recorded for that approval does not reach it from the owner's phone.
+      const bubble = `bubble-${run}-elsewhere`;
+      await sql`insert into imessage_outbox (id, workspace_id, approval_code, kind, draft_id, message_id, delivered_at)
+                values (${`approval:${approval.code}`}, ${other}, ${approval.code}, 'approval', ${approval.draft_id}, ${bubble}, now())`;
+      expect(await thumb("like", bubble)).toEqual({ ok: false, error: "unknown_message", reply: "" });
       expect((await approvalRow(approval.code)).status).toBe("pending");
       expect(calls.some((c) => String(c.url).endsWith("/messages/send") && c.body?.subject === "Not yours")).toBe(false);
     } finally {

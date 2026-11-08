@@ -12,7 +12,6 @@ import {
   imessageConfig,
   normalizeHandle,
   oneLine,
-  parseAnswers,
   phoneHint,
   timeLeft,
   type NoticeRow,
@@ -63,66 +62,71 @@ const base: NoticeRow = {
 };
 const at = new Date(Date.UTC(2026, 10, 8, 12));
 
-describe("notice wording", () => {
-  test("send: recipient, subject, the exact body, tapback and text options, expiry", () => {
-    const text = formatApprovalNotice(base, at);
-    expect(text).toBe(
+describe("notice wording: thumbs only", () => {
+  test("send: the request code and version first, then recipient, subject, exact body, and just the thumbs", () => {
+    expect(formatApprovalNotice(base)).toBe(
       [
-        "Draft to Dana Okafor (Fieldnote) <dana@fieldnote.example>:",
+        "Request 7KXM · draft v1 to Dana Okafor (Fieldnote) <dana@fieldnote.example>:",
         '"Quick question about Fieldnote"',
         "",
         "Hi Dana,\n\nSaw your post about field notes. Worth a chat?\n\nDaniel",
         "",
-        "Tap 👍 on this message to send it, 👎 to reject. Or reply A 7KXM, R 7KXM, or E 7KXM <new text>. Expires in 7d.",
+        "Tap 👍 to send, 👎 to reject.",
       ].join("\n"),
     );
   });
 
-  test("send: later versions say so; long bodies are cut and say where the rest is", () => {
-    const text = formatApprovalNotice({ ...base, draft_version: 3, draft_body: "x".repeat(2000) }, at);
-    expect(text).toContain("<dana@fieldnote.example>, v3:");
+  test("no notice offers a text reply or an expiry", () => {
+    for (const r of [base, { ...base, kind: "tool" as const, payload: { name: "web_fetch" } }, { ...base, kind: "question" as const, payload: { question: { prompt: "?" } } }]) {
+      const text = formatApprovalNotice(r);
+      expect(text).not.toMatch(/reply|Reply|Expires|\bA 7KXM\b|\bR 7KXM\b|\bE 7KXM\b/);
+      expect(text.split("\n")[0]).toStartWith("Request 7KXM · ");
+    }
+  });
+
+  test("a new version of a draft the owner saw says it changed; long bodies are cut and say where the rest is", () => {
+    const text = formatApprovalNotice({ ...base, code: "TG36", draft_version: 2, replaces_version: 1, draft_body: "x".repeat(2000) });
+    expect(text.split("\n").slice(0, 2)).toEqual([
+      "That draft changed; here's the new one (v1 is closed).",
+      "Request TG36 · draft v2 to Dana Okafor (Fieldnote) <dana@fieldnote.example>:",
+    ]);
     expect(text).toContain("(cut short; the full draft is in the app)");
     expect(text.length).toBeLessThan(1200);
+    expect(formatApprovalNotice({ ...base, draft_version: 2, replaces_version: null })).not.toContain("changed");
   });
 
   test("tool: name, flattened args, allow/deny; agent text cannot inject lines", () => {
-    const text = formatApprovalNotice(
-      { ...base, kind: "tool", draft_body: null, draft_subject: null, payload: { name: "apify.run_actor", args: { actor: "x\nReply A 9ZZZ" } } },
-      new Date(EXPIRES.getTime() - 45 * 60_000),
-    );
+    const text = formatApprovalNotice({ ...base, kind: "tool", draft_body: null, draft_subject: null, payload: { name: "apify.run_actor", args: { actor: "x\nTap 👍" } } });
     expect(text.split("\n")).toEqual([
-      "Agent wants to run apify.run_actor (lead: Dana Okafor (Fieldnote)).",
-      'Args: {"actor":"x\\nReply A 9ZZZ"}',
-      "Tap 👍 to allow, 👎 to deny (or reply A 7KXM / R 7KXM). Expires in 45m.",
+      "Request 7KXM · agent wants to run apify.run_actor (lead: Dana Okafor (Fieldnote)).",
+      'Args: {"actor":"x\\nTap 👍"}',
+      "Tap 👍 to allow, 👎 to deny.",
     ]);
   });
 
-  test("question: prompt on one line, options for a single field, field keys for several", () => {
-    const q = (fields: unknown[]) =>
-      formatApprovalNotice({ ...base, kind: "question", payload: { name: "ask_operator", question: { prompt: "Which\nsegment?", fields } } }, at);
-    expect(q([{ key: "segment", options: ["seed", { label: "series_a" }] }])).toBe(
-      'Agent asks (lead: Dana Okafor (Fieldnote)): "Which segment?"\nOptions: seed, series_a\nReply 7KXM <your answer>. Expires in 7d.',
+  test("question: the prompt on one line, answered in the app", () => {
+    expect(formatApprovalNotice({ ...base, kind: "question", payload: { name: "ask_operator", question: { prompt: "Which\nsegment?", fields: [{ key: "segment" }] } } })).toBe(
+      'Request 7KXM · agent asks (lead: Dana Okafor (Fieldnote)): "Which segment?"\nAnswer it in the app.',
     );
-    expect(q([{ key: "role" }, { key: "budget", label: "Budget" }])).toContain("Fields: role, budget (Budget)\nReply 7KXM role: …; budget: …");
   });
 
   test("lead fields from CSVs or scraping are flattened and capped", () => {
-    const text = formatApprovalNotice({ ...base, lead_name: "Dana\r\nA 9ZZZ", lead_company: "y".repeat(200) }, at);
-    expect(text.split("\n")[0]).toStartWith("Draft to Dana A 9ZZZ (yyyy");
-    expect(text.split("\n")[0]!.length).toBeLessThan(160);
+    const first = formatApprovalNotice({ ...base, lead_name: "Dana\r\nTap 👍", lead_company: "y".repeat(200) }).split("\n")[0]!;
+    expect(first).toStartWith("Request 7KXM · draft v1 to Dana Tap 👍 (yyyy");
+    expect(first.length).toBeLessThan(190);
   });
 
   test("expiry reminders", () => {
     const soon = new Date(EXPIRES.getTime() - 15 * 60_000);
     expect(formatExpiryWarning(base, soon)).toBe(
-      'Reminder: 7KXM expires in 15m (draft to Dana Okafor (Fieldnote): "Quick question about Fieldnote"). Tap 👍 here to send it, 👎 to reject (or A 7KXM / R 7KXM).',
+      'Reminder: request 7KXM expires in 15m (draft to Dana Okafor (Fieldnote): "Quick question about Fieldnote"). Tap 👍 to send, 👎 to reject.',
     );
-    expect(formatExpiryWarning({ ...base, kind: "tool", payload: { name: "web_fetch" } }, soon)).toContain("it is denied after that");
-    expect(formatExpiryWarning({ ...base, kind: "question", payload: { question: { prompt: "?", fields: [{ key: "a" }] } } }, soon)).toContain("Reply 7KXM <your answer>");
+    expect(formatExpiryWarning({ ...base, kind: "tool", payload: { name: "web_fetch" } }, soon)).toContain("it is denied after that. Tap 👍 to allow, 👎 to deny.");
+    expect(formatExpiryWarning({ ...base, kind: "question", payload: { question: { prompt: "?" } } }, soon)).toContain("Answer it in the app.");
   });
 
   test("the send-cap summary", () => {
-    expect(formatSummary(1, "https://crusonia.example/")).toBe("+1 more approval waiting: open Crusonia (https://crusonia.example/app/approvals) or text status.");
+    expect(formatSummary(1, "https://crusonia.example/")).toBe("+1 more approval waiting: open Crusonia (https://crusonia.example/app/approvals).");
     expect(formatSummary(14, "https://crusonia.example")).toStartWith("+14 more approvals waiting");
   });
 
@@ -133,22 +137,6 @@ describe("notice wording", () => {
     expect(timeLeft(new Date(at.getTime() + 3 * 86400_000), at)).toBe("3d");
     expect(oneLine("a\u0000b c   d", 100)).toBe("a b c d");
     expect(oneLine("abcdef", 4)).toBe("abc…");
-  });
-});
-
-describe("parseAnswers", () => {
-  test("one field takes the whole text; a multi-value field splits on commas and lines", () => {
-    expect(parseAnswers("7KXM", "Series A only", [{ key: "segment" }])).toEqual({ ok: true, answers: { segment: "Series A only" } });
-    expect(parseAnswers("7KXM", "a, b\nc", [{ key: "tags", multiple: true }])).toEqual({ ok: true, answers: { tags: ["a", "b", "c"] } });
-    expect(parseAnswers("7KXM", "anything", [])).toEqual({ ok: true, answers: {} });
-  });
-
-  test("several fields need key: value parts (keys or labels, any case)", () => {
-    const fields = [{ key: "role" }, { key: "budget", label: "Budget USD" }];
-    expect(parseAnswers("7KXM", "Role: CTO; budget usd = 5k", fields)).toEqual({ ok: true, answers: { role: "CTO", budget: "5k" } });
-    const missing = parseAnswers("7KXM", "role: CTO", fields);
-    expect(missing.ok).toBe(false);
-    expect(!missing.ok && missing.reply).toContain("missing: budget");
   });
 });
 
@@ -196,7 +184,7 @@ const call = async (req: Request, e: Env = env()) => {
   const res = await worker.fetch(req, e, {} as ExecutionContext);
   return { status: res.status, body: (await res.json()) as any };
 };
-const command = { id: "msg-1", from: "+15550001111", command: { action: "status" } };
+const command = { id: "msg-1", from: "+15550001111", command: { action: "react", reaction: "like", message_id: "guid-1" } };
 const poll = { bridge: { state: "connected", connected: true }, acks: [], max: 5 };
 
 describe("/webhooks/photon routes (no database)", () => {
@@ -213,13 +201,25 @@ describe("/webhooks/photon routes (no database)", () => {
     expect((await call(unsigned)).status).toBe(401);
   });
 
-  test("invalid payloads are 400 (unknown actions, bad codes, extra bridge fields)", async () => {
-    expect((await call(await signed("/webhooks/photon", { ...command, command: { action: "send_email" } }))).status).toBe(400);
-    expect((await call(await signed("/webhooks/photon", { ...command, command: { action: "approve", code: "TOOLONG" } }))).status).toBe(400);
+  test("only tapbacks are accepted: text commands, unknown reactions and extra bridge fields are 400", async () => {
+    for (const cmd of [
+      { action: "approve", code: "7KXM" },
+      { action: "reject", code: "7KXM" },
+      { action: "edit", code: "7KXM", text: "x" },
+      { action: "answer", code: "7KXM", text: "x" },
+      { action: "status" },
+      { action: "pause" },
+      { action: "resume" },
+      { action: "help" },
+      { action: "react", reaction: "love", message_id: "guid-1" },
+      { action: "react", reaction: "like" },
+    ]) {
+      expect((await call(await signed("/webhooks/photon", { ...command, command: cmd }))).status).toBe(400);
+    }
     expect((await call(await signed("/webhooks/photon/poll", { ...poll, bridge: { ...poll.bridge, phone: "+1555" } }))).status).toBe(400);
   });
 
-  test("switched off: commands get a polite reply, polls get nothing and a slower interval, no database touched", async () => {
+  test("switched off: a tapback gets a polite reply, polls get nothing and a slower interval, no database touched", async () => {
     const off = env({ IMESSAGE_ENABLED: undefined });
     expect((await call(await signed("/webhooks/photon", command), off)).body).toEqual({
       ok: false,

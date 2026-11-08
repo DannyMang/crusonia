@@ -2,7 +2,7 @@
 // filter, command round trip with a signed webhook, the local /notify (operator) endpoint, and the HTTP server.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { AddressInfo } from "node:net";
-import { Bridge } from "../src/bridge.ts";
+import { Bridge, REPLY_WINDOW_MS } from "../src/bridge.ts";
 import type { Config } from "../src/config.ts";
 import { loadConfig } from "../src/config.ts";
 import { signedHeaders, verify } from "../src/hmac.ts";
@@ -58,18 +58,22 @@ function setup(reply?: Parameters<typeof fakeWorker>[0]) {
 
 const headersOf = (h: Record<string, string>) => ({ get: (n: string) => h[n.toLowerCase()] });
 
-describe("owner-only filter", () => {
-  test("messages from anyone but the owner are ignored: no Worker call, no reply", async () => {
+const NOTICE_BUBBLE = "guid-notice-1";
+const tap = (emoji = "👍", targetId: string | undefined = NOTICE_BUBBLE) => ({ emoji, targetId });
+
+describe("only the owner's tapbacks do anything", () => {
+  test("anyone else's tapback or text: no Worker call, no reply", async () => {
     const { messenger, worker } = setup();
+    await messenger.inject({ from: STRANGER, reaction: tap() });
     await messenger.inject({ from: STRANGER, text: "A 7KXM" });
-    await messenger.inject({ from: "someone@example.com", text: "status" });
+    await messenger.inject({ from: "someone@example.com", reaction: tap() });
     expect(worker.calls).toHaveLength(0);
     expect(messenger.outbox).toHaveLength(0);
   });
 
-  test("the owner's group-chat messages are ignored too", async () => {
+  test("the owner's tapback in a group chat is ignored too", async () => {
     const { messenger, worker } = setup();
-    await messenger.inject({ from: OWNER, text: "A 7KXM", isDirect: false });
+    await messenger.inject({ from: OWNER, reaction: tap(), isDirect: false });
     expect(worker.calls).toHaveLength(0);
   });
 
@@ -86,79 +90,133 @@ describe("owner-only filter", () => {
   });
 });
 
-describe("owner commands", () => {
-  test("A <code>: a signed webhook with the parsed command; the Worker's answer is the reply", async () => {
-    const { messenger, worker } = setup(() => ({ json: { ok: true, reply: "Approved. Sent to Dana Okafor <dana@fieldnote.example>." } }));
-    await messenger.inject({ from: OWNER, text: "a 7kxm", id: "msg-1" });
-    expect(worker.calls).toHaveLength(1);
-    expect(worker.calls[0]!.url).toBe("https://worker.test/webhooks/photon");
-    expect(worker.calls[0]!.body).toMatchObject({ id: "msg-1", from: OWNER, command: { action: "approve", code: "7KXM" } });
-    expect(messenger.outbox).toEqual([expect.objectContaining({ to: OWNER, text: "Approved. Sent to Dana Okafor <dana@fieldnote.example>." })]);
-  });
-
-  test("help, unknown text and non-text content are answered locally", async () => {
-    const { messenger, worker } = setup();
-    await messenger.inject({ from: OWNER, text: "help" });
-    await messenger.inject({ from: OWNER, text: "hello there" });
-    await messenger.inject({ from: OWNER });
+// The incident: read receipts come in with the owner as sender and a new id each time. Answering one got the answer
+// read, which sent another receipt, which was answered again, until the box was stopped.
+describe("no event but a thumb on a notice ever produces a text", () => {
+  test("the loop: a notice, then read receipts for everything we send, produces no text at all", async () => {
+    const { messenger, worker, bridge } = setup();
+    const body = JSON.stringify({ id: "approval:TG36", type: "approval", text: "Request TG36 · draft v1 to Dana: ..." });
+    await bridge.handleNotify(body, headersOf(signedHeaders(secret, "/notify", body)));
+    expect(messenger.outbox).toHaveLength(1);
+    // A faithful phone: each thing it receives is read at once, which is a new receipt event from the owner.
+    for (let i = 0; i < 20 && i < messenger.outbox.length; i++) {
+      await messenger.inject({ from: OWNER, id: `${messenger.outbox[i]!.id}:read:${i}`, contentType: "read" });
+    }
+    expect(messenger.outbox).toHaveLength(1); // only the notice
     expect(worker.calls).toHaveLength(0);
-    expect(messenger.outbox.map((o) => o.text)).toEqual([
-      expect.stringContaining("Crusonia commands"),
-      expect.stringContaining("Text help"),
-      expect.stringContaining("only read text"),
-    ]);
   });
 
-  test("a duplicate delivery of the same iMessage is answered once", async () => {
+  test("receipts, typing, attachments, polls and other content are silent", async () => {
     const { messenger, worker } = setup();
-    await messenger.inject({ from: OWNER, text: "status", id: "dup-1" });
-    await messenger.inject({ from: OWNER, text: "status", id: "dup-1" });
+    for (const contentType of ["read", "typing", "attachment", "voice", "contact", "richlink", "poll", "group", "unknown"]) {
+      await messenger.inject({ from: OWNER, contentType });
+    }
+    expect(worker.calls).toHaveLength(0);
+    expect(messenger.outbox).toHaveLength(0);
+  });
+
+  test("texts get no answer: there are no text commands", async () => {
+    const { messenger, worker } = setup();
+    for (const text of ["help", "status", "pause", "A 7KXM", "R 7KXM", "E 7KXM new text", "yes", "what is this"]) {
+      await messenger.inject({ from: OWNER, text });
+    }
+    expect(worker.calls).toHaveLength(0);
+    expect(messenger.outbox).toHaveLength(0);
+  });
+
+  test("our own message echoing back is never acted on or answered, even carrying a thumb", async () => {
+    const { messenger, worker } = setup();
+    await messenger.inject({ from: OWNER, fromSelf: true, text: "Approved." });
+    await messenger.inject({ from: OWNER, fromSelf: true, contentType: "read" });
+    await messenger.inject({ from: OWNER, fromSelf: true, reaction: tap() });
+    expect(worker.calls).toHaveLength(0);
+    expect(messenger.outbox).toHaveLength(0);
+  });
+
+  test("other tapbacks, and thumbs without a target, are silent", async () => {
+    const { messenger, worker } = setup();
+    for (const emoji of ["❤️", "😂", "‼️", "❓"]) await messenger.inject({ from: OWNER, reaction: tap(emoji) });
+    await messenger.inject({ from: OWNER, reaction: { emoji: "👍", targetId: undefined } });
+    expect(worker.calls).toHaveLength(0);
+    expect(messenger.outbox).toHaveLength(0);
+  });
+
+  test("a thumb on a bubble that is not a notice: the Worker answers with no reply, so nothing is texted", async () => {
+    const { messenger, worker } = setup(() => ({ json: { ok: false, reply: "" } }));
+    await messenger.inject({ from: OWNER, reaction: tap("👍", "not-a-notice") });
+    expect(worker.calls).toHaveLength(1);
+    expect(messenger.outbox).toHaveLength(0);
+  });
+});
+
+describe("tapbacks on a notice", () => {
+  test("👍 is a signed react command bound to that bubble; the Worker's confirmation is texted", async () => {
+    const { messenger, worker } = setup(() => ({ json: { ok: true, reply: 'Approved. Sent "Hi" to Dana.' } }));
+    await messenger.inject({ from: OWNER, id: "r-1", reaction: tap() });
+    expect(worker.calls[0]!.url).toBe("https://worker.test/webhooks/photon");
+    expect(worker.calls[0]!.body).toMatchObject({ id: "r-1", from: OWNER, command: { action: "react", reaction: "like", message_id: NOTICE_BUBBLE } });
+    expect(messenger.outbox).toEqual([expect.objectContaining({ to: OWNER, text: 'Approved. Sent "Hi" to Dana.' })]);
+  });
+
+  test("👎 (any skin tone) is a dislike", async () => {
+    const { messenger, worker } = setup();
+    await messenger.inject({ from: OWNER, reaction: tap("👎🏽", "guid-9") });
+    expect(worker.calls.map((c) => c.body.command)).toEqual([{ action: "react", reaction: "dislike", message_id: "guid-9" }]);
+  });
+
+  test("a duplicate delivery of the same tapback acts once", async () => {
+    const { messenger, worker } = setup();
+    await messenger.inject({ from: OWNER, id: "dup-1", reaction: tap() });
+    await messenger.inject({ from: OWNER, id: "dup-1", reaction: tap() });
     expect(worker.calls).toHaveLength(1);
     expect(messenger.outbox).toHaveLength(1);
   });
 
   test("Worker 5xx is retried with the same event id; a 4xx is not", async () => {
     let n = 0;
-    const flaky = setup(() => (++n < 3 ? { status: 503, json: { error: { code: "busy" } } } : { json: { ok: true, reply: "Paused." } }));
-    await flaky.messenger.inject({ from: OWNER, text: "pause", id: "retry-1" });
+    const flaky = setup(() => (++n < 3 ? { status: 503, json: { error: { code: "busy" } } } : { json: { ok: true, reply: "Approved." } }));
+    await flaky.messenger.inject({ from: OWNER, id: "retry-1", reaction: tap() });
     expect(flaky.worker.calls.map((c) => c.body.id)).toEqual(["retry-1", "retry-1", "retry-1"]);
-    expect(flaky.messenger.outbox.at(-1)!.text).toBe("Paused.");
+    expect(flaky.messenger.outbox.at(-1)!.text).toBe("Approved.");
 
     const bad = setup(() => ({ status: 400, json: { error: { code: "invalid_payload" } } }));
-    await bad.messenger.inject({ from: OWNER, text: "status" });
+    await bad.messenger.inject({ from: OWNER, reaction: tap() });
     expect(bad.worker.calls).toHaveLength(1);
     expect(bad.messenger.outbox.at(-1)!.text).toContain("didn't confirm");
   });
 });
 
-describe("tapbacks", () => {
-  test("👍 on a bubble becomes a react command bound to that message id; the Worker's answer is the reply", async () => {
-    const { messenger, worker } = setup(() => ({ json: { ok: true, reply: "Approved. Sent \"Hi\" to Dana." } }));
-    await messenger.inject({ from: OWNER, id: "r-1", reaction: { emoji: "👍", targetId: "guid-123" } });
-    expect(worker.calls[0]!.body).toMatchObject({ id: "r-1", command: { action: "react", reaction: "like", message_id: "guid-123" } });
-    expect(messenger.outbox.at(-1)!.text).toContain("Approved");
+describe("hard loop guard: one non-notice text per 10 minutes", () => {
+  const at = (msg: Parameters<Bridge["handleInbound"]>[0], bridge: Bridge, ms: number) => bridge.handleInbound(msg, ms);
+  const msg = (id: string, messenger: MockMessenger) => ({
+    id,
+    sender: OWNER,
+    text: undefined,
+    contentType: "reaction",
+    reaction: tap(),
+    isDirect: true,
+    receivedAt: new Date(),
+    reply: (text: string) => messenger.sendToOwner(text).then(() => undefined),
   });
 
-  test("👎 (any skin tone) rejects; other tapbacks and tapbacks without a target do nothing", async () => {
-    const { messenger, worker } = setup();
-    await messenger.inject({ from: OWNER, reaction: { emoji: "👎🏽", targetId: "guid-9" } });
-    expect(worker.calls.map((c) => c.body.command)).toEqual([{ action: "react", reaction: "dislike", message_id: "guid-9" }]);
-    await messenger.inject({ from: OWNER, reaction: { emoji: "❤️", targetId: "guid-9" } });
-    await messenger.inject({ from: OWNER, reaction: { emoji: "😂", targetId: "guid-9" } });
-    await messenger.inject({ from: OWNER, reaction: { emoji: "👍", targetId: undefined } });
-    expect(worker.calls).toHaveLength(1);
+  test("every thumb still decides, but only the first confirmation in the window is texted", async () => {
+    const { messenger, worker, bridge } = setup();
+    const t0 = 1_800_000_000_000;
+    await at(msg("a", messenger), bridge, t0);
+    await at(msg("b", messenger), bridge, t0 + 1_000);
+    await at(msg("c", messenger), bridge, t0 + REPLY_WINDOW_MS - 1);
+    expect(worker.calls).toHaveLength(3);
+    expect(messenger.outbox).toHaveLength(1);
+    await at(msg("d", messenger), bridge, t0 + REPLY_WINDOW_MS);
+    expect(messenger.outbox).toHaveLength(2);
   });
 
-  test("a tapback from anyone but the owner is ignored", async () => {
-    const { messenger, worker } = setup();
-    await messenger.inject({ from: STRANGER, reaction: { emoji: "👍", targetId: "guid-1" } });
-    expect(worker.calls).toHaveLength(0);
-  });
-
-  test("an empty Worker reply (tapback on a message that is not a notice) sends nothing back", async () => {
-    const { messenger } = setup(() => ({ json: { ok: false, reply: "" } }));
-    await messenger.inject({ from: OWNER, reaction: { emoji: "👍", targetId: "not-a-notice" } });
-    expect(messenger.outbox).toHaveLength(0);
+  test("notices are not limited by it (the Worker's send cap covers those)", async () => {
+    const { messenger, bridge } = setup();
+    await bridge.handleInbound(msg("a", messenger));
+    const body = JSON.stringify({ id: "approval:7KXM", type: "approval", text: "Request 7KXM" });
+    await bridge.handleNotify(body, headersOf(signedHeaders(secret, "/notify", body)));
+    expect(messenger.outbox).toHaveLength(2);
   });
 });
 
@@ -241,10 +299,10 @@ describe("HTTP server (mock mode)", () => {
   });
 
   test("POST /mock/inbound needs a signature and returns the replies", async () => {
-    const body = JSON.stringify({ from: OWNER, text: "status" });
+    const body = JSON.stringify({ from: OWNER, reaction: { emoji: "👍", targetId: "guid-1" } });
     expect((await fetch(`${base}/mock/inbound`, { method: "POST", body })).status).toBe(401);
     const res = await fetch(`${base}/mock/inbound`, { method: "POST", headers: signedHeaders(secret, "/mock/inbound", body), body });
-    expect(((await res.json()) as any).replies).toEqual([expect.objectContaining({ to: OWNER, text: "ok status" })]);
+    expect(((await res.json()) as any).replies).toEqual([expect.objectContaining({ to: OWNER, text: "ok react" })]);
   });
 
   test("oversized bodies are refused; unknown routes are 404", async () => {
@@ -266,6 +324,17 @@ describe("Spectrum message mapping", () => {
   test("a tapback maps to its emoji and the target message id", () => {
     const m = toInbound(space, { id: "g:reaction:7", sender: { id: OWNER }, content: { type: "reaction", emoji: "👍", target: { id: "guid-123" } } })!;
     expect(m).toMatchObject({ contentType: "reaction", text: undefined, reaction: { emoji: "👍", targetId: "guid-123" } });
+  });
+
+  test("a read receipt stays a non-text event from the owner (the bridge drops it)", () => {
+    const m = toInbound(space, { id: "g:read:7", sender: { id: OWNER }, content: { type: "read" } })!;
+    expect(m).toMatchObject({ contentType: "read", sender: OWNER, text: undefined });
+    expect(m.reaction).toBeUndefined();
+  });
+
+  test("a message from the line's own number is dropped like any echo", () => {
+    expect(toInbound({ ...space, phone: "+15550007777" }, { id: "m6", sender: { id: "+15550007777" }, content: { type: "text", text: "x" } })).toBeNull();
+    expect(toInbound({ ...space, phone: "shared" }, { id: "m7", sender: { id: OWNER }, content: { type: "text", text: "x" } })).not.toBeNull();
   });
 
   test("our own outbound echoes are dropped; non-text content has no text; groups are not direct", () => {
