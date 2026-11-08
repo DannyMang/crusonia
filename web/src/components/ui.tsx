@@ -204,12 +204,13 @@ export function errorCopy(err: unknown, what = "this", userId?: string | null): 
     if (err.code === "profile_missing") return { title: "Set up your ideal customer first", body: "Finding leads searches for the profile you save in onboarding.", calm: true };
     if (err.missingRoute) return { title: `${capitalize(what)} is coming online`, body: "This part of Crusonia ships with the next backend update.", calm: true };
     if (err.status === 401) return { title: "Your session ended", body: "Sign in again to continue.", calm: false };
+    if (err.code === "signups_closed")
+      return { title: "Sign-ups are closed", body: "This Crusonia instance is not taking new accounts right now. Ask the owner for access.", calm: false };
+    if (err.code === "account_blocked") return { title: "No access", body: "This account cannot use this Crusonia instance.", calm: false };
     if (err.status === 403)
       return {
-        title: "No access yet",
-        body: userId
-          ? `This account is not on the workspace's allow list. Add its user id ${userId} to CLERK_ALLOWED_USER_IDS on the Worker.`
-          : "This account is not on the workspace's allow list. Ask the owner to add it.",
+        title: "No access",
+        body: userId ? `This account (${userId}) cannot do this in this workspace.` : "This account cannot do this in this workspace.",
         calm: false,
       };
     if (err.status === 404) return { title: "Not found", body: err.message, calm: false };

@@ -24,6 +24,7 @@ export function previewText(body: string | null | undefined, max = PREVIEW_CHARS
 
 export async function listReplies(
   sql: Sql,
+  ws: string,
   opts: { limit: number; cursor?: string; label?: string; lead_id?: string },
 ): Promise<{ data: Reply[]; next_cursor: string | null }> {
   if (opts.cursor && !/^\d{1,18}$/.test(opts.cursor)) {
@@ -35,7 +36,7 @@ export async function listReplies(
              'id', l.id, 'name', l.name, 'email', l.email, 'company', l.company, 'stage', l.stage) end as lead
     from messages m
     left join leads l on l.id = m.lead_id
-    where m.direction = 'in'
+    where m.workspace_id = ${ws} and m.direction = 'in'
       and (${opts.cursor ?? null}::bigint is null or m.id < ${opts.cursor ?? null}::bigint)
       and (${opts.label ?? null}::text is null or m.label = ${opts.label ?? null})
       and (${opts.lead_id ?? null}::text is null or m.lead_id = ${opts.lead_id ?? null})

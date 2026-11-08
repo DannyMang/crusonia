@@ -1,11 +1,10 @@
 // The qualification workflow: what research must establish before a lead is scored. The ICP comes from the Company
 // summary; this adds the research questions, the evidence requirements and the completion criteria. Research sessions
-// get it in their first message (and the get_workflow MCP tool). Saved under settings key `qualification_workflow`,
-// versioned: every save is a new version. Nothing is hardcoded: with no workflow saved, research works as before.
+// get it in their first message (and the get_workflow MCP tool). One per workspace, saved under settings key
+// `qualification_workflow:<workspace id>`, versioned: every save is a new version. Nothing is hardcoded: with no workflow saved, research works as before.
 //
 // Pause on missing evidence: a lead whose evidence doesn't cover every required requirement is never scored. It moves
 // to `needs_review` with a `review_question` (the agent's, or one naming the missing evidence), and the run goes on.
-// TODO(workspaces): one workflow per workspace.
 import { z } from "zod";
 import type { Sql } from "../db.ts";
 import { getProfile, type Profile } from "./profile.ts";
@@ -35,26 +34,28 @@ export const qualificationWorkflowSchema = z
 export type QualificationWorkflowInput = z.input<typeof qualificationWorkflowSchema>;
 export type QualificationWorkflow = z.infer<typeof qualificationWorkflowSchema> & { version: number; updated_at: string };
 
-export async function getQualificationWorkflow(sql: Sql): Promise<QualificationWorkflow | null> {
-  const [row] = await sql`select value from settings where key = 'qualification_workflow'`;
+const keyOf = (ws: string) => `qualification_workflow:${ws}`;
+
+export async function getQualificationWorkflow(sql: Sql, ws: string): Promise<QualificationWorkflow | null> {
+  const [row] = await sql`select value from settings where key = ${keyOf(ws)}`;
   return (row?.value as QualificationWorkflow | undefined) ?? null;
 }
 
 /** Saves a new version (the previous one stays in the audit trail). */
-export async function saveQualificationWorkflow(sql: Sql, input: QualificationWorkflowInput, actor: string): Promise<QualificationWorkflow> {
+export async function saveQualificationWorkflow(sql: Sql, ws: string, input: QualificationWorkflowInput, actor: string): Promise<QualificationWorkflow> {
   const def = qualificationWorkflowSchema.parse(input);
   const rows = await sql`
-    with prev as (select value from settings where key = 'qualification_workflow'),
+    with prev as (select value from settings where key = ${keyOf(ws)}),
     up as (
       insert into settings (key, value)
-      values ('qualification_workflow', ${JSON.stringify(def)}::jsonb
+      values (${keyOf(ws)}, ${JSON.stringify(def)}::jsonb
               || jsonb_build_object('version', coalesce(((select value from prev)->>'version')::int, 0) + 1, 'updated_at', now()))
       on conflict (key) do update set value = excluded.value
       returning value
     ),
     ev as (
-      insert into events (lead_id, kind, data)
-      select null, 'qualification_workflow_saved', jsonb_build_object('version', value->'version', 'actor', ${actor}::text, 'workflow', value) from up
+      insert into events (workspace_id, lead_id, kind, data)
+      select ${ws}, null, 'qualification_workflow_saved', jsonb_build_object('version', value->'version', 'actor', ${actor}::text, 'workflow', value) from up
     )
     select value from up`;
   return rows[0]!.value as QualificationWorkflow;
@@ -92,8 +93,11 @@ export function workflowBrief(workflow: QualificationWorkflow | null): string | 
 }
 
 /** MCP get_workflow: the qualification workflow and the ICP it scores against (from the Company summary). */
-export async function getWorkflowForAgent(sql: Sql): Promise<{ workflow: QualificationWorkflow | null; icp: Pick<Profile, "sells" | "icp_description" | "segments" | "signals"> | null }> {
-  const [workflow, profile] = await Promise.all([getQualificationWorkflow(sql), getProfile(sql)]);
+export async function getWorkflowForAgent(
+  sql: Sql,
+  ws: string,
+): Promise<{ workflow: QualificationWorkflow | null; icp: Pick<Profile, "sells" | "icp_description" | "segments" | "signals"> | null }> {
+  const [workflow, profile] = await Promise.all([getQualificationWorkflow(sql, ws), getProfile(sql, ws)]);
   return {
     workflow,
     icp: profile ? { sells: profile.sells, icp_description: profile.icp_description, segments: profile.segments, signals: profile.signals } : null,

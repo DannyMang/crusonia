@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { describePrincipal } from "../src/api/dashboard.ts";
 import { authenticate } from "../src/api/auth.ts";
-import { bearerAuth, resolveBearer } from "../src/auth.ts";
+import { bearerAuth, resolveBearer, type McpEnv } from "../src/auth.ts";
 import type { Env } from "../src/env.ts";
 import worker from "../src/index.ts";
 import { actorOf } from "../src/lib/context.ts";
@@ -14,10 +14,12 @@ import { API_KEY_PREFIX, generateApiKey, hashApiKey, isApiKey, type ApiKeyLookup
 
 const env = (over: Partial<Env> = {}): Env => ({ PUBLIC_URL: "https://example.test", MCP_TOKEN: "owner-token", ...over });
 
-/** In-memory key store keyed by hash, like the api_keys table. Records every lookup. */
+/** In-memory key store keyed by hash, like the api_keys table. Records every lookup. Key i belongs to ws_<i>. */
 async function store(...active: string[]) {
-  const byHash = new Map<string, { id: string; name: string }>();
-  for (const [i, key] of active.entries()) byHash.set(await hashApiKey(key), { id: `key_${i}`, name: `agent ${i}` });
+  const byHash = new Map<string, { id: string; name: string; workspace_id: string; kind: "user" | "agent" }>();
+  for (const [i, key] of active.entries()) {
+    byHash.set(await hashApiKey(key), { id: `key_${i}`, name: `agent ${i}`, workspace_id: `ws_${i}`, kind: "user" });
+  }
   const calls: string[] = [];
   const lookup: ApiKeyLookup = async (token) => {
     calls.push(token);
@@ -60,7 +62,7 @@ describe("/api auth with API keys", () => {
     const { key } = await generateApiKey();
     const s = await store(key);
     const principal = await authenticate(env(), `Bearer ${key}`, { lookupApiKey: s.lookup });
-    expect(principal).toEqual({ kind: "api_key", keyId: "key_0", name: "agent 0" });
+    expect(principal).toEqual({ kind: "api_key", keyId: "key_0", name: "agent 0", workspaceId: "ws_0", agent: false });
     expect(actorOf(principal)).toBe("api_key:key_0");
   });
 
@@ -82,13 +84,20 @@ describe("/api auth with API keys", () => {
   test("keys work without MCP_TOKEN; without a database there is nothing to check them against", async () => {
     const { key } = await generateApiKey();
     const s = await store(key);
-    expect(await resolveBearer(env({ MCP_TOKEN: undefined }), key, s.lookup)).toEqual({ kind: "api_key", keyId: "key_0", name: "agent 0" });
+    expect(await resolveBearer(env({ MCP_TOKEN: undefined }), key, s.lookup)).toEqual({
+      kind: "api_key",
+      keyId: "key_0",
+      name: "agent 0",
+      workspaceId: "ws_0",
+      agent: false,
+    });
+    expect(await resolveBearer(env(), "owner-token")).toEqual({ kind: "owner_token", workspaceId: "ws_owner" });
     expect(await resolveBearer(env({ MCP_TOKEN: undefined }), key)).toBeNull(); // no DATABASE_URL, no lookup
   });
 
   test("/api/me describes token principals without any network call", async () => {
     expect(await describePrincipal(env(), { kind: "owner_token" })).toEqual({ user: { id: "owner", name: "Owner (MCP_TOKEN)" }, auth: "token" });
-    expect(await describePrincipal(env(), { kind: "api_key", keyId: "key_1", name: "Claude Code" })).toEqual({
+    expect(await describePrincipal(env(), { kind: "api_key", keyId: "key_1", name: "Claude Code", workspaceId: "ws_1" })).toEqual({
       user: { id: "api_key:key_1", name: "Claude Code" },
       auth: "token",
       key: { id: "key_1", name: "Claude Code" },
@@ -103,13 +112,13 @@ describe("/api auth with API keys", () => {
 
 describe("/mcp bearer middleware", () => {
   async function app(lookup?: ApiKeyLookup) {
-    const a = new Hono<{ Bindings: Env }>();
+    const a = new Hono<McpEnv>();
     a.use("*", bearerAuth(lookup));
-    a.post("/", (c) => c.json({ ok: true }));
+    a.post("/", (c) => c.json({ ok: true, workspace: c.get("workspace").id }));
     return a;
   }
-  const post = async (a: Hono<{ Bindings: Env }>, token: string | null, e: Env = env()) =>
-    a.request("/", { method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {} }, e);
+  const post = async (a: Hono<McpEnv>, token: string | null, e: Env = env(), path = "/") =>
+    a.request(path, { method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {} }, e);
 
   test("accepts MCP_TOKEN and active keys, rejects unknown and revoked keys with WWW-Authenticate", async () => {
     const { key } = await generateApiKey();
@@ -124,6 +133,18 @@ describe("/mcp bearer middleware", () => {
     await s.revoke(key);
     expect((await post(a, key)).status).toBe(401);
     expect((await post(a, null)).status).toBe(401);
+  });
+
+  test("the token decides the workspace; a ?ws= that names another workspace is 403", async () => {
+    const [{ key: a0 }, { key: a1 }] = [await generateApiKey(), await generateApiKey()];
+    const a = await app((await store(a0, a1)).lookup);
+    expect(await (await post(a, a0)).json()).toEqual({ ok: true, workspace: "ws_0" });
+    expect(await (await post(a, a1)).json()).toEqual({ ok: true, workspace: "ws_1" });
+    expect(await (await post(a, "owner-token")).json()).toEqual({ ok: true, workspace: "ws_owner" });
+    expect((await post(a, a0, env(), "/?ws=ws_0")).status).toBe(200);
+    expect((await post(a, a0, env(), "/?ws=ws_1")).status).toBe(403);
+    expect((await post(a, a1, env(), "/?ws=ws_owner")).status).toBe(403);
+    expect((await post(a, "owner-token", env(), "/?ws=ws_0")).status).toBe(403);
   });
 
   test("keys alone (no MCP_TOKEN) are enough to enable /mcp", async () => {
