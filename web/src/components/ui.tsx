@@ -2,6 +2,7 @@
 import { useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Link, type LinkProps } from "react-router";
 import { isApiError } from "../api.ts";
+import { useSession } from "../auth.tsx";
 import { cx } from "../lib/format.ts";
 import { CheckIcon, CopyIcon, Spinner } from "./icons.tsx";
 
@@ -195,7 +196,7 @@ export function EmptyState({
 }
 
 /** Explains an API error in plain words. `not_configured` (503) reads as "coming online", not as a failure. */
-export function errorCopy(err: unknown, what = "this"): { title: string; body: string; calm: boolean } {
+export function errorCopy(err: unknown, what = "this", userId?: string | null): { title: string; body: string; calm: boolean } {
   if (isApiError(err)) {
     if (err.code === "schema_out_of_date")
       return { title: `${capitalize(what)} is coming online`, body: "This needs a database update that has not run on this deployment yet.", calm: true };
@@ -203,7 +204,14 @@ export function errorCopy(err: unknown, what = "this"): { title: string; body: s
     if (err.code === "profile_missing") return { title: "Set up your ideal customer first", body: "Finding leads searches for the profile you save in onboarding.", calm: true };
     if (err.missingRoute) return { title: `${capitalize(what)} is coming online`, body: "This part of Crusonia ships with the next backend update.", calm: true };
     if (err.status === 401) return { title: "Your session ended", body: "Sign in again to continue.", calm: false };
-    if (err.status === 403) return { title: "No access yet", body: "This account is not on the workspace's allow list. Ask the owner to add it.", calm: false };
+    if (err.status === 403)
+      return {
+        title: "No access yet",
+        body: userId
+          ? `This account is not on the workspace's allow list. Add its user id ${userId} to CLERK_ALLOWED_USER_IDS on the Worker.`
+          : "This account is not on the workspace's allow list. Ask the owner to add it.",
+        calm: false,
+      };
     if (err.status === 404) return { title: "Not found", body: err.message, calm: false };
     if (err.status === 423) return { title: "Crusonia is paused", body: "Turn sends back on in the sidebar to start new work.", calm: true };
     return { title: "Something went wrong", body: err.message, calm: false };
@@ -222,7 +230,8 @@ function notConfiguredHint(message: string) {
 }
 
 export function QueryError({ error, what, onRetry, className }: { error: unknown; what?: string; onRetry?: () => void; className?: string }) {
-  const c = errorCopy(error, what);
+  const { user } = useSession();
+  const c = errorCopy(error, what, user?.id);
   return (
     <div
       role={c.calm ? "status" : "alert"}

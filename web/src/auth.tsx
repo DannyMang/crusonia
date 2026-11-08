@@ -22,7 +22,7 @@ function devToken(): string | null {
 /** True only in `vite dev` with mocks on or a dev token set. Always false in production builds. */
 export const devBypass: boolean = import.meta.env.DEV && (import.meta.env.VITE_MSW === "1" || Boolean(devToken()));
 
-export type AuthUser = { name: string | null; email: string | null; imageUrl: string | null };
+export type AuthUser = { id: string | null; name: string | null; email: string | null; imageUrl: string | null };
 
 type AuthState = {
   isLoaded: boolean;
@@ -51,7 +51,7 @@ export function useApi(): Api {
 const devState: AuthState = {
   isLoaded: true,
   isSignedIn: true,
-  user: { name: "Local dev", email: "dev@localhost", imageUrl: null },
+  user: { id: null, name: "Local dev", email: "dev@localhost", imageUrl: null },
   getToken: async () => devToken() ?? "msw",
   signOut: async () => {
     try {
@@ -74,7 +74,12 @@ function ClerkBridge({ children }: { children: ReactNode }) {
             isLoaded,
             isSignedIn: Boolean(isSignedIn),
             user: user
-              ? { name: user.fullName ?? user.firstName ?? null, email: user.primaryEmailAddress?.emailAddress ?? null, imageUrl: user.imageUrl ?? null }
+              ? {
+                  id: user.id,
+                  name: user.fullName ?? user.firstName ?? null,
+                  email: user.primaryEmailAddress?.emailAddress ?? null,
+                  imageUrl: user.imageUrl ?? null,
+                }
               : null,
             getToken: () => getToken(),
             signOut: () => clerk.signOut({ redirectUrl: "/sign-in" }),
