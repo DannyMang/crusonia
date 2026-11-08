@@ -1,4 +1,4 @@
-// One-click agent setup, shared by the landing ("Set-up fast.") and the app's Connect your agent popover.
+// One-click agent setup, shared by the landing ("Set-up fast.") and Settings · Connect your agent.
 // - Cursor: Cursor's MCP install deeplink (cursor.com/docs: cursor://anysphere.cursor-deeplink/mcp/install
 //   ?name=<name>&config=<base64 of the server's JSON config>). Cursor opens and asks to install crusonia.
 // - Claude Code and Codex have no install links, so their buttons copy the exact `mcp add` command.

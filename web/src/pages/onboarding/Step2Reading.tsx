@@ -420,7 +420,7 @@ function ComingOnline({ onFill }: { onFill: () => void }) {
           Continue and fill it in yourself
           <ArrowIcon />
         </button>
-        <Link to="/app?connect=1" className="inline-flex h-10 items-center rounded-[10px] border border-ink bg-white px-4 text-sm/4.5 font-semibold text-ink hover:bg-[#200D0D08]">
+        <Link to="/app/settings/agent" className="inline-flex h-10 items-center rounded-[10px] border border-ink bg-white px-4 text-sm/4.5 font-semibold text-ink hover:bg-[#200D0D08]">
           Connect your agent
         </Link>
       </div>

@@ -1,23 +1,22 @@
 // Signed-in dashboard layout: the shared sidebar plus the routed page. Pages own their padding and use
 // <Page> so a 1440px window matches the Paper artboards (240px sidebar + 1200px main) exactly.
 import type { ReactNode } from "react";
-import { Outlet, useLocation } from "react-router";
+import { Navigate, Outlet, useLocation } from "react-router";
 import { cx } from "../lib/format.ts";
-import { ConnectAgentPopover, HIDE_TRIGGER } from "./ConnectAgentPopover.tsx";
 import { MobileBar, Sidebar } from "./Sidebar.tsx";
 
 /** Sidebar beside the page from `lg` (1024px) up; below that a top bar with a menu drawer above it. */
 export function AppShell() {
-  const { pathname } = useLocation();
+  const { search } = useLocation();
+  // Older ?connect=1 links opened a popover that now lives in Settings.
+  if (new URLSearchParams(search).get("connect") === "1") return <Navigate to="/app/settings/agent" replace />;
   return (
     <div className="flex min-h-screen flex-col bg-white text-ink lg:flex-row">
       <MobileBar />
       <Sidebar />
-      {/* Room under the last row so the floating Connect your agent button never covers it once scrolled to the end. */}
-      <main className={cx("flex min-w-0 grow flex-col", !HIDE_TRIGGER.test(pathname) && "pb-14")}>
+      <main className="flex min-w-0 grow flex-col">
         <Outlet />
       </main>
-      <ConnectAgentPopover />
     </div>
   );
 }

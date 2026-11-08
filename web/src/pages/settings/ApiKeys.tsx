@@ -1,17 +1,13 @@
-// Settings · API keys (/app/settings/keys): list, create (full key shown once) and revoke the keys MCP clients use.
-// The Connect your agent popover creates keys too and links here ("Manage keys").
+// The API keys card on Settings · Connect your agent (pages/settings/ConnectAgent.tsx): list, create (full key shown
+// once) and revoke the keys MCP clients use.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Link } from "react-router";
 import { isApiError, type ApiKey } from "../../api.ts";
 import { useApi } from "../../auth.tsx";
-import { Page } from "../../components/AppShell.tsx";
 import { Card, CopyButton, EmptyState, errorCopy, QueryError, Skeleton } from "../../components/ui.tsx";
 import { exportLine } from "../../lib/agent-install.ts";
 import { cx, longDate, shortDate } from "../../lib/format.ts";
 import { keys, useApiKeys } from "../../queries.ts";
-import { CrumbBar } from "../connect/CrumbBar.tsx";
-import { SettingsTabs } from "./SettingsTabs.tsx";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -32,42 +28,7 @@ function lastUsed(v: string, now = Date.now()) {
 /** POST /api/keys answer: the stored key plus the full secret, shown exactly once. */
 export type CreatedKey = { api_key: ApiKey; key: string };
 
-const limeButton = "flex h-8.75 shrink-0 items-center rounded-lg bg-lime px-5 text-sm/4.5 font-medium text-ink hover:bg-[#b3de7a] disabled:opacity-60";
-
-/** Opens the Connect your agent popover in place (components/ConnectAgentPopover.tsx reads ?connect=1). */
-const connectLink =
-  "flex h-8.75 shrink-0 items-center rounded-lg border border-[#200D0D26] bg-white px-4 text-sm/4.5 font-medium text-ink hover:bg-[#200D0D08]";
-
-export default function SettingsApiKeys() {
-  const [created, setCreated] = useState<CreatedKey | null>(null);
-  const [creating, setCreating] = useState(false);
-  const list = useApiKeys();
-  const missing = isApiError(list.error) && list.error.missingRoute;
-  return (
-    <>
-      <CrumbBar here="API keys" parent={{ label: "Settings", to: "/app/settings" }} />
-      <Page>
-        <div className="flex w-240 max-w-full flex-col gap-4 px-4 pb-14 pt-6 sm:px-12 sm:pt-8">
-          <SettingsTabs />
-          <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3 pb-2 pt-3">
-            <h1 className="whitespace-nowrap text-xl/5.75 font-medium tracking-[-0.01em] text-ink">API keys</h1>
-            <div className="flex shrink-0 items-center gap-2">
-              <Link to="?connect=1" className={connectLink}>
-                Connect your agent
-              </Link>
-              {!missing ? (
-                <button type="button" className={limeButton} onClick={() => setCreating(true)} disabled={creating || list.isPending}>
-                  Create key
-                </button>
-              ) : null}
-            </div>
-          </div>
-          <ApiKeysCard created={created} onCreated={setCreated} creating={creating} onCreating={setCreating} />
-        </div>
-      </Page>
-    </>
-  );
-}
+export const limeButton = "flex h-8.75 shrink-0 items-center rounded-lg bg-lime px-5 text-sm/4.5 font-medium text-ink hover:bg-[#b3de7a] disabled:opacity-60";
 
 export function ApiKeysCard({
   created,

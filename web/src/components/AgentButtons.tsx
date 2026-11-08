@@ -1,23 +1,23 @@
 // "Add to Cursor / Claude Code / Codex" buttons (Paper: "Landing S3 · Add-to button states"), used on the landing
-// (large) and in the app's Connect your agent popover (compact). Press-and-release bounce and the lime "Copied"
+// (large) and on Settings · Connect your agent (row). Press-and-release bounce and the lime "Copied"
 // state live in index.css (.agent-button), so they honor prefers-reduced-motion without JS.
 import { useEffect, useRef, useState } from "react";
 import { claudeCodeCommand, codexCommand, copyText, cursorInstallUrl } from "../lib/agent-install.ts";
 import { cx } from "../lib/format.ts";
 import { BrandLogo } from "./BrandLogo.tsx";
 
-type Size = "lg" | "md";
+type Size = "lg" | "row";
 
 const base: Record<Size, string> = {
   lg: "h-15 justify-center gap-3 pr-6.5 pl-5.5 text-base/5 shadow-[0_10px_24px_#200D0D0F] sm:justify-start",
-  md: "h-11 w-full justify-start gap-2.5 pr-4 pl-3.5 text-sm/4.5",
+  row: "h-11 justify-center gap-2.5 pr-4.5 pl-3.5 text-sm/4.5 sm:justify-start",
 };
 const button = (size: Size) =>
   cx(
     "agent-button flex shrink-0 items-center rounded-full border border-[#200D0D26] bg-white font-semibold text-ink hover:border-[#200D0D4D]",
     base[size],
   );
-const markSize: Record<Size, number> = { lg: 24, md: 20 };
+const markSize: Record<Size, number> = { lg: 24, row: 20 };
 
 /** How long the lime "Copied" state holds before it fades back. */
 const COPIED_MS = 1_300;

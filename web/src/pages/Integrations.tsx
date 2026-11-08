@@ -112,7 +112,7 @@ export default function Integrations() {
 
           <p className="pt-1 text-xs/4 font-medium text-faint">
             Missing a tool? Your own coding agent can call Crusonia alongside any other MCP server.{" "}
-            <Link to="?connect=1" className="text-ink underline decoration-[#200D0D4D] decoration-1 underline-offset-[3px] hover:decoration-ink">
+            <Link to="/app/settings/agent" className="text-ink underline decoration-[#200D0D4D] decoration-1 underline-offset-[3px] hover:decoration-ink">
               Connect your agent
             </Link>
           </p>
