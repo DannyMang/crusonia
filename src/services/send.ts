@@ -134,7 +134,7 @@ async function recordSent(sql: Sql, env: Env, draft: DraftRow & { recipient?: st
                 ${draft.subject}, ${draft.body})
         on conflict (provider_message_id) do nothing`,
     sql`update leads set stage = 'sent', updated_at = now()
-        where id = ${draft.lead_id} and stage not in ('replied', 'interested', 'not_interested', 'unsubscribed')`,
+        where id = ${draft.lead_id} and stage not in ('replied', 'interested', 'not_interested', 'meeting_booked', 'unsubscribed')`,
     sql`insert into events (lead_id, kind, data) values (${draft.lead_id}, 'email_sent', ${JSON.stringify({
       draft_id: draft.id,
       version: draft.version,

@@ -101,7 +101,7 @@ export function createMcpServer(env: Env, deps: Deps = {}): McpServer {
     {
       title: "Save the onboarding profile",
       description:
-        "Saves the user's go-to-market profile: what they sell, their website, the ideal customer profile, target segments and buying signals. Replaces any previous profile, so send all fields. Only save after the user has confirmed the ICP you proposed.",
+        "Saves the user's go-to-market profile: company, website, what they sell, the ideal customer profile (icp_description), target segments (name, company_size, industry, roles), buying signals (name, description) and sources (which page supports which field). Replaces any previous profile, so send all fields. Only save after the user has confirmed the ICP you proposed, unless the user asked you to save a proposal for them to review.",
       inputSchema: profileInputSchema,
       annotations: { ...WRITE, idempotentHint: true },
     },
@@ -112,7 +112,7 @@ export function createMcpServer(env: Env, deps: Deps = {}): McpServer {
     "get_profile",
     {
       title: "Get the onboarding profile",
-      description: "Returns the saved go-to-market profile (what the user sells, ICP, segments, buying signals), or null if onboarding hasn't happened yet. Read it before prospecting or scoring.",
+      description: "Returns the saved go-to-market profile (what the user sells, ICP description, segments, buying signals, sources), or null if onboarding hasn't happened yet. Read it before prospecting or scoring.",
       annotations: READ,
     },
     () => run(async () => ({ profile: await getProfile(db()) })),

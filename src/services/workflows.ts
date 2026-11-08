@@ -145,11 +145,13 @@ export async function handleSessionIdle(
   let remoteStatus: string | undefined;
   let stopReason = input.stopReason ?? null;
   let pending = input.pendingActions;
+  let consumed: number | null = null;
   if (!pending) {
     const remote = await client.getSession(session.id);
     remoteStatus = remote.status;
     stopReason = remote.stop_reason ?? stopReason;
     pending = remote.pending_actions ?? [];
+    consumed = typeof remote.consumed_micro_usd === "number" ? remote.consumed_micro_usd : null;
   }
   let status = sessionStatus(remoteStatus, stopReason);
 
@@ -186,7 +188,9 @@ export async function handleSessionIdle(
   if (autoAllowed.length) status = "running";
   else if (pending.length && status === "done") status = "idle";
   await sql.transaction([
-    sql`update naive_sessions set status = ${status}, stop_reason = ${stopReason}, updated_at = now() where id = ${session.id}`,
+    sql`update naive_sessions set status = ${status}, stop_reason = ${stopReason}, updated_at = now(),
+          consumed_micro_usd = greatest(consumed_micro_usd, ${consumed}::bigint)
+        where id = ${session.id}`,
     sql`insert into events (lead_id, kind, data) values (${session.lead_id}, 'naive_idle', ${JSON.stringify({
       session_id: session.id,
       stop_reason: stopReason,

@@ -9,7 +9,31 @@ import { runScheduled } from "./services/cron.ts";
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.get("/", (c) => c.json({ name: "crusonia", ok: true, health: "/health", mcp: "/mcp", api: "/api" }));
+// ---------------------------------------------------------------------------------------------------------
+// Web app (static assets) and this Worker share one origin, so there is no CORS. The frontend PR adds the
+// `assets` block to wrangler.jsonc. It must keep these paths on the Worker, e.g.:
+//
+//   "assets": {
+//     "directory": "./web/dist",            // wherever the SPA build lands
+//     "binding": "ASSETS",
+//     "not_found_handling": "single-page-application",
+//     "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/webhooks/*", "/health"]
+//   }
+//
+// Why run_worker_first: in SPA mode a browser navigation (Sec-Fetch-Mode: navigate) that matches no file is
+// answered with index.html before the Worker runs, so opening /health or /api/me in a tab would show the app.
+// Listing the paths also opts out of that header heuristic. fetch() calls, MCP clients and provider webhooks
+// are not navigations, but they stay correct either way. Do not ship asset files under api/, mcp/,
+// webhooks/ or health: assets that match a path win over the Worker unless the path is listed above.
+// If the Worker does get a non-API request (run_worker_first: true, or a path not listed), "/" and the
+// not-found handler below hand it to ASSETS when the binding exists.
+// ---------------------------------------------------------------------------------------------------------
+const API_PATH = /^\/(api|mcp|webhooks|health)(\/|$)/;
+
+app.get("/", async (c) => {
+  if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw);
+  return c.json({ name: "crusonia", ok: true, health: "/health", mcp: "/mcp", api: "/api" });
+});
 
 app.get("/health", (c) =>
   c.json({
@@ -19,14 +43,19 @@ app.get("/health", (c) =>
   }),
 );
 
-// MCP endpoint for agents (Claude Code, Cursor, Codex, Naive). Bearer auth: MCP_TOKEN.
+// MCP endpoint for agents (Claude Code, Cursor, Codex, Naive). Bearer auth: an API key (POST /api/keys) or MCP_TOKEN.
 app.route("/mcp", mcp);
 
-// REST API for the owner (Clerk session or MCP_TOKEN) and signed provider webhooks.
+// REST API for the owner (Clerk session, API key or MCP_TOKEN) and signed provider webhooks.
 app.route("/api", api);
 app.route("/webhooks", webhooks);
 
-app.notFound((c) => c.json(errorBody("not_found", `No route for ${c.req.method} ${new URL(c.req.url).pathname}`), 404));
+app.notFound((c) => {
+  const path = new URL(c.req.url).pathname;
+  // Unknown API paths are JSON 404s; anything else belongs to the web app when it is deployed (SPA routes).
+  if (c.env.ASSETS && !API_PATH.test(path)) return c.env.ASSETS.fetch(c.req.raw);
+  return c.json(errorBody("not_found", `No route for ${c.req.method} ${path}`), 404);
+});
 
 // Every error is JSON: { error: { code, message, details? } }.
 app.onError((err, c) => {

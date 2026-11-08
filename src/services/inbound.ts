@@ -164,7 +164,13 @@ async function handleReceived(sql: Sql, m: z.infer<typeof MessageSchema>, classi
     return ok ? { handled: true, detail: { matched: false, label } } : duplicate;
   }
 
-  const stage = lead.stage === "unsubscribed" ? "unsubscribed" : STAGE_FOR_LABEL[label];
+  // Unsubscribed is final; a booked meeting stays booked unless the person unsubscribes.
+  const stage =
+    lead.stage === "unsubscribed"
+      ? "unsubscribed"
+      : lead.stage === "meeting_booked" && label !== "unsubscribe"
+        ? "meeting_booked"
+        : STAGE_FOR_LABEL[label];
   const queries = [
     insertMessage,
     sql`update leads set stage = ${stage}, reply_label = ${label}, updated_at = now() where id = ${lead.id}`,

@@ -5,6 +5,9 @@ export interface Env {
   // vars (wrangler.jsonc)
   PUBLIC_URL: string;
 
+  // Static-assets binding for the web app (wrangler.jsonc `assets.binding`). Optional: absent until the SPA ships.
+  ASSETS?: Fetcher;
+
   // secrets: needed now
   DATABASE_URL?: string;
   NAIVE_API_KEY?: string;
@@ -37,6 +40,8 @@ export interface Env {
   // default 168 (7 days); minutes before an agent tool or question approval expires, default 60.
   SEND_APPROVAL_TTL_HOURS?: string;
   TOOL_APPROVAL_TTL_MINUTES?: string;
+  // Weekly Naive spend budget in USD, shown next to the week's spend on the dashboard (display only).
+  WEEKLY_BUDGET_USD?: string;
 
   // secrets: later (Photon / iMessage)
   SPECTRUM_PROJECT_ID?: string;
@@ -44,7 +49,7 @@ export interface Env {
   OWNER_PHONE?: string;
 }
 
-type SecretKey = { [K in keyof Env]-?: undefined extends Env[K] ? K : never }[keyof Env];
+type SecretKey = { [K in keyof Env]-?: undefined extends Env[K] ? (Env[K] extends string | undefined ? K : never) : never }[keyof Env];
 
 /** Returns a secret or throws a clear error naming the missing key. */
 export function requireEnv(env: Env, key: SecretKey): string {

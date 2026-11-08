@@ -13,7 +13,7 @@ create table if not exists leads (
   consent_at     timestamptz,
   variant        text not null check (variant in ('A', 'B')),
   -- new | no_consent | researching | qualified | disqualified | needs_review | awaiting_approval
-  -- | sent | replied | interested | not_interested | unsubscribed
+  -- | sent | replied | interested | not_interested | meeting_booked | unsubscribed
   stage          text not null default 'new',
   score          int,
   qualified      boolean,
@@ -173,3 +173,67 @@ alter table messages add column if not exists label text;
 create index if not exists messages_thread_idx on messages (thread_id) where thread_id is not null;
 
 create index if not exists naive_sessions_status_idx on naive_sessions (status, updated_at);
+
+-- ---------------------------------------------------------------------------
+-- Web app API (dashboard, onboarding, workflows, experiments, API keys). Additive and idempotent.
+-- ---------------------------------------------------------------------------
+
+-- Naive sessions as workflow runs. `input` is what the owner started the run with (onboarding url or
+-- description, find_leads count). `consumed_micro_usd` is Naive's running total for the session (null =
+-- not reported yet). `events_seq` is how far the event cache below goes; it is separate from `last_seq`,
+-- which belongs to the reconcile cron. `leads_processed` counts leads a find_leads run added or updated.
+alter table naive_sessions add column if not exists input jsonb not null default '{}';
+alter table naive_sessions add column if not exists consumed_micro_usd bigint;
+alter table naive_sessions add column if not exists events_seq int not null default 0;
+alter table naive_sessions add column if not exists events_synced_at timestamptz;
+alter table naive_sessions add column if not exists last_event_at timestamptz;
+alter table naive_sessions add column if not exists leads_processed int not null default 0;
+create index if not exists naive_sessions_purpose_idx on naive_sessions (purpose, created_at desc);
+
+-- Cached Naive session events for the run view (GET /api/workflows/runs/:id). Tool outputs and messages
+-- came from the agent and the web: untrusted, stored as data and truncated.
+create table if not exists naive_session_events (
+  session_id text not null references naive_sessions(id) on delete cascade,
+  seq        int not null,
+  type       text not null,
+  data       jsonb not null default '{}',
+  created_at timestamptz not null,
+  primary key (session_id, seq)
+);
+
+-- A/B experiments. Arms are the lead variants A and B (stable per lead). Leads are enrolled explicitly
+-- (leads.experiment_id); drafts created while the lead's experiment is running carry its id, and the
+-- per-arm stats are computed from those drafts, their replies and reply labels.
+create table if not exists experiments (
+  id                      text primary key,
+  name                    text not null,
+  hypothesis              text,
+  segment                 text,
+  metric                  text not null default 'positive_reply_rate',
+  stop_rule_sends_per_arm int,
+  stop_rule_days          int,
+  -- running | stopped
+  status                  text not null default 'running' check (status in ('running', 'stopped')),
+  variants                jsonb not null default '{}',
+  created_at              timestamptz not null default now(),
+  stopped_at              timestamptz
+);
+alter table leads add column if not exists experiment_id text references experiments(id) on delete set null;
+alter table drafts add column if not exists experiment_id text references experiments(id) on delete set null;
+create index if not exists leads_experiment_idx on leads (experiment_id) where experiment_id is not null;
+create index if not exists drafts_experiment_idx on drafts (experiment_id, variant) where experiment_id is not null;
+
+-- GET /api/replies: inbound messages, newest first.
+create index if not exists messages_inbound_idx on messages (id desc) where direction = 'in';
+
+-- Per-user API keys for /mcp and /api ("Connect your agent"). Only the SHA-256 of the key is stored;
+-- `prefix` (crs_live_ + 8 chars) identifies it in the UI. A revoked key never authenticates again.
+create table if not exists api_keys (
+  id           text primary key,
+  name         text not null,
+  prefix       text not null,
+  hash         text not null unique,
+  created_at   timestamptz not null default now(),
+  last_used_at timestamptz,
+  revoked_at   timestamptz
+);

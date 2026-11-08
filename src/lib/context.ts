@@ -8,14 +8,17 @@ import { ApiError, invalidRequest } from "./errors.ts";
 /** Who made an /api/* call. TODO(workspaces): carry a workspace id once multi-tenancy is decided. */
 export type Principal =
   | { kind: "owner_token" }
-  | { kind: "clerk"; userId: string; sessionId: string | null };
+  | { kind: "api_key"; keyId: string; name: string }
+  // email/name are set only when the session token carries them (custom session claims).
+  | { kind: "clerk"; userId: string; sessionId: string | null; email?: string; name?: string };
 
 export type AppEnv = { Bindings: Env; Variables: { principal: Principal } };
 
-/** A short label for the audit trail: `owner_token` or `clerk:<user id>`. */
+/** A short label for the audit trail: `owner_token`, `api_key:<key id>` or `clerk:<user id>`. */
 export function actorOf(principal: Principal | undefined): string {
   if (!principal) return "system";
-  return principal.kind === "clerk" ? `clerk:${principal.userId}` : "owner_token";
+  if (principal.kind === "clerk") return `clerk:${principal.userId}`;
+  return principal.kind === "api_key" ? `api_key:${principal.keyId}` : "owner_token";
 }
 
 /** Throws ServiceError("config_missing") when DATABASE_URL is unset; the error handler answers 503. */

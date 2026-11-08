@@ -98,6 +98,8 @@ NAIVE_AGENT_ID=
 # Minutes before an agent tool or ask_operator question approval expires. The Naive session waits meanwhile; an
 # expired tool call is denied to the agent.
 # TOOL_APPROVAL_TTL_MINUTES=60
+# Weekly Naive spend budget in USD, shown next to the week's spend on the dashboard (display only, nothing is blocked).
+# WEEKLY_BUDGET_USD=
 
 # ---------------------------------------------------------------------------
 # Later: Photon iMessage approvals (Photon Stable)

@@ -8,6 +8,7 @@ import { sendApprovalTtlMinutes } from "../services/approval-ttl.ts";
 import { createLead, deleteLead, getLeadFull, importLeads, LEAD_STAGES, patchLead, searchLeads } from "../services/crm.ts";
 import { IMPORT_FIELDS } from "../services/csv.ts";
 import { createDraft } from "../services/drafts.ts";
+import { MAX_FIND_LEADS, naiveAgent, startFindLeads } from "../services/runs.ts";
 
 export const leads = new Hono<AppEnv>();
 
@@ -48,6 +49,16 @@ const CreateBody = z.object({
 leads.post("/", async (c) => {
   const body = await parseJson(c, CreateBody);
   return c.json({ lead: await createLead(sqlFor(c.env), body, actorOf(c.get("principal"))) }, 201);
+});
+
+// Starts a Naive session that searches for leads matching the saved profile, adds them (add_leads) and
+// researches them. Async: follow it in GET /api/workflows (purpose find_leads).
+const FindBody = z.object({ count: z.number().int().min(1).max(MAX_FIND_LEADS).default(25) }).strict();
+
+leads.post("/find", async (c) => {
+  const body = await parseJson(c, FindBody);
+  naiveAgent(c.env); // 503 not_configured before touching the database
+  return c.json(await startFindLeads(sqlFor(c.env), c.env, body.count, actorOf(c.get("principal"))), 202);
 });
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024;

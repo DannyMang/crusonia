@@ -34,6 +34,11 @@ export type NaiveSession = {
   status: "queued" | "running" | "idle" | "completed" | "failed" | "cancelled" | string;
   stop_reason?: StopReason | null;
   pending_actions?: PendingAction[];
+  /** Running session total in micro-USD (1,000,000 = $1). */
+  consumed_micro_usd?: number | null;
+  started_at?: string;
+  ended_at?: string | null;
+  last_seq?: number;
 };
 
 export type NaiveEvent = { seq: number; type: string; data: Record<string, unknown>; created_at?: string };
@@ -96,8 +101,10 @@ export class NaiveClient {
     return this.post<unknown>(`/v1/sessions/${encodeURIComponent(sessionId)}/answers`, input);
   }
 
-  listEvents(sessionId: string, afterSeq: number, limit = 100) {
+  /** `includeAccepted` adds the opt-in types (tool.confirm.resolved, message.accepted, ...); a free read either way. */
+  listEvents(sessionId: string, afterSeq: number, limit = 100, opts: { includeAccepted?: boolean } = {}) {
     const qs = new URLSearchParams({ after_seq: String(afterSeq), limit: String(limit) });
+    if (opts.includeAccepted) qs.set("include_accepted", "true");
     return this.get<EventPage>(`/v1/sessions/${encodeURIComponent(sessionId)}/events?${qs}`);
   }
 }

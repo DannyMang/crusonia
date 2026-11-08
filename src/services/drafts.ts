@@ -58,7 +58,7 @@ export async function createDraft(
   for (let attempt = 1; ; attempt++) {
     try {
       const rows = await sql`
-        with lead as (select id, variant from leads where id = ${input.lead_id}),
+        with lead as (select id, variant, experiment_id from leads where id = ${input.lead_id}),
         next as (select coalesce(max(version), 0) + 1 as version from drafts where lead_id = ${input.lead_id}),
         superseded as (
           update drafts set status = 'superseded'
@@ -71,8 +71,10 @@ export async function createDraft(
           returning code
         ),
         draft as (
-          insert into drafts (id, lead_id, version, variant, subject, body, status)
-          select ${newId("draft")}, lead.id, next.version, lead.variant, ${input.subject}, ${input.body}, 'pending_approval'
+          insert into drafts (id, lead_id, version, variant, subject, body, status, experiment_id)
+          select ${newId("draft")}, lead.id, next.version, lead.variant, ${input.subject}, ${input.body}, 'pending_approval',
+                 -- A lead enrolled in a running experiment: the draft counts toward its arm (lead.variant).
+                 (select e.id from experiments e where e.id = lead.experiment_id and e.status = 'running')
           from lead, next
           returning *
         ),
