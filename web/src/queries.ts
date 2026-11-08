@@ -152,5 +152,6 @@ export function useInvalidateLead() {
     if (leadId) void qc.invalidateQueries({ queryKey: keys.lead(leadId) });
     void qc.invalidateQueries({ queryKey: ["leads"] });
     void qc.invalidateQueries({ queryKey: ["find-run"] });
+    void qc.invalidateQueries({ queryKey: ["notes"] });
   };
 }
