@@ -66,6 +66,7 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
   beforeAll(async () => {
     sql = getSql(url);
     WS = await createTestWorkspace(sql, `loop_${run}`);
+    env.SEND_WORKSPACE_IDS = WS; // not the owner workspace: sending must be enabled for it
     // A workspace other than the owner's runs on its own copy of the template agent; pretend it exists.
     await sql`update workspaces set naive_agent_id = 'agt_ws_copy', naive_credential_id = 'vcr_x', naive_synced_at = now() + interval '1 hour'
               where id = ${WS}`;

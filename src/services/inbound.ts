@@ -138,10 +138,14 @@ async function handleReceived(sql: Sql, m: z.infer<typeof MessageSchema>, classi
   if (lead) matchedBy = "thread";
   else if (from) {
     // Leads we emailed first. The same address may be a lead in several workspaces: then the sender alone
-    // does not say whose reply it is, so it stays unmatched rather than guessed.
+    // does not say whose reply it is, so it stays unmatched rather than guessed. Outside the owner workspace a lead
+    // only counts once that workspace has emailed it: the inbox is shared, so adding an address as a lead must not
+    // route that person's mail (to the owner, or to another workspace) into the workspace that added it.
     const candidates = (await sql`
       select l.id, l.email, l.stage, l.workspace_id from leads l
       where lower(l.email) = ${from}
+        and (l.workspace_id = ${OWNER_WORKSPACE_ID}
+             or exists (select 1 from messages o where o.lead_id = l.id and o.workspace_id = l.workspace_id and o.direction = 'out'))
       order by exists (select 1 from messages o where o.lead_id = l.id and o.direction = 'out') desc, l.created_at
       limit 20`) as MatchedLead[];
     if (candidates.length && new Set(candidates.map((c) => c.workspace_id)).size === 1) {

@@ -114,7 +114,7 @@ suite("workspaces (database, faked Naive)", () => {
 
     // B's data: an opted-in lead with a pending send approval, a suppression, a run, a reply, a summary.
     b.email = `shared-${run}@it.example.com`;
-    const lead = await call(keyB, "POST", "/api/leads", { email: b.email, name: "Bea", consent: { text: "opted in" } });
+    const lead = await call(await clerkToken(`user_it_${run}_b`), "POST", "/api/leads", { email: b.email, name: "Bea", consent: { text: "opted in" } });
     b.lead = lead.body.lead.id;
     b.code = (await createDraft(sql, B, { lead_id: b.lead, subject: "Hi from B", body: "Body" }, { ttlMinutes: 60 })).approval.code;
     b.suppressed = `nope-${run}@it.example.com`;
@@ -298,8 +298,11 @@ suite("workspaces (database, faked Naive)", () => {
     test("approvals", async () => {
       expect((await call(keyA, "GET", "/api/approvals")).body.data.map((a: any) => a.code)).not.toContain(b.code);
       expect((await call(keyA, "GET", `/api/approvals/${b.code}`)).status).toBe(404);
+      const personA = await clerkToken(`user_it_${run}_a`);
       for (const action of ["approve", "reject", "edit", "answer"]) {
-        expect({ action, status: (await call(keyA, "POST", `/api/approvals/${b.code}/${action}`, {})).status }).toEqual({ action, status: 404 });
+        expect({ action, status: (await call(personA, "POST", `/api/approvals/${b.code}/${action}`, {})).status }).toEqual({ action, status: 404 });
+        // API keys never decide approvals, in any workspace (src/api/guards.ts).
+        expect({ action, status: (await call(keyB, "POST", `/api/approvals/${b.code}/${action}`, {})).status }).toEqual({ action, status: 403 });
       }
       expect((await call(keyB, "GET", `/api/approvals/${b.code}`)).body.approval).toMatchObject({ status: "pending" });
     });
@@ -316,7 +319,8 @@ suite("workspaces (database, faked Naive)", () => {
 
     test("suppressions and the pause switch", async () => {
       expect((await call(keyA, "GET", "/api/suppressions")).body.data.map((s: any) => s.email)).not.toContain(b.suppressed);
-      expect((await call(keyA, "DELETE", `/api/suppressions/${encodeURIComponent(b.suppressed)}`)).status).toBe(404);
+      expect((await call(await clerkToken(`user_it_${run}_a`), "DELETE", `/api/suppressions/${encodeURIComponent(b.suppressed)}`)).status).toBe(404);
+      expect((await call(keyB, "DELETE", `/api/suppressions/${encodeURIComponent(b.suppressed)}`)).status).toBe(403);
       expect((await call(keyA, "PUT", "/api/settings/pause", { paused: true })).body).toEqual({ paused: true });
       expect((await call(keyB, "GET", "/api/settings/pause")).body).toEqual({ paused: false });
       expect((await call(keyA, "PUT", "/api/settings/pause", { paused: false })).body).toEqual({ paused: false });
@@ -325,7 +329,8 @@ suite("workspaces (database, faked Naive)", () => {
 
     test("API keys", async () => {
       expect((await call(keyA, "GET", "/api/keys")).body.data.map((k: any) => k.id)).not.toContain(b.keyId);
-      expect((await call(keyA, "DELETE", `/api/keys/${b.keyId}`)).status).toBe(404);
+      expect((await call(await clerkToken(`user_it_${run}_a`), "DELETE", `/api/keys/${b.keyId}`)).status).toBe(404);
+      expect((await call(keyB, "DELETE", `/api/keys/${b.keyId}`)).status).toBe(403); // a key can't revoke (or mint) keys
       expect((await call(keyB, "GET", "/api/me")).status).toBe(200); // still valid
       // A key never reaches another workspace's MCP URL.
       expect((await tool(keyB, "get_status", {}, `/mcp?ws=${A}`)).status).toBe(403);
@@ -589,15 +594,25 @@ suite("workspaces (database, faked Naive)", () => {
     expect(reply.detail).toMatchObject({ lead_id: b.lead, matched_by: "thread", label: "unsubscribe" });
     expect((await sql`select workspace_id from suppressions where email = ${b.email}`).map((r) => r.workspace_id)).toEqual([B]);
     expect((await sql`select stage from leads where workspace_id = ${A} and email = ${b.email}`)[0]!.stage).not.toBe("unsubscribed");
-    // The same address is a lead in A and B: a new thread from it cannot say whose it is.
+    // The address is also a lead in A, but only B has emailed it: adding a lead does not route that person's mail,
+    // so a new thread from it is B's.
     const loose = await handleAgentMailEvent(sql, {
       event_id: `ws-${run}-e2`,
       event_type: "message.received",
       message: { thread_id: `thr_ws_${run}_new`, message_id: `ws-${run}-in2`, from: b.email, subject: "Hello", text: "hi" },
     });
-    expect(loose.detail).toMatchObject({ matched: false });
-    expect((await sql`select workspace_id from messages where provider_message_id = ${`ws-${run}-in2`}`)[0]!.workspace_id).toBe("ws_owner");
-    await sql`delete from messages where provider_message_id = ${`ws-${run}-in2`}`;
+    expect(loose.detail).toMatchObject({ lead_id: b.lead, matched_by: "sender" });
+    // Once A has emailed it too, a new thread from it cannot say whose it is: unmatched, kept in the owner workspace.
+    const aLead = (await sql`select id from leads where workspace_id = ${A} and email = ${b.email}`)[0]!.id as string;
+    await sql`insert into messages (workspace_id, lead_id, direction, provider_message_id, thread_id, to_addr) values (${A}, ${aLead}, 'out', ${`ws-${run}-out-a`}, ${`thr_ws_${run}_out_a`}, ${b.email})`;
+    const ambiguous = await handleAgentMailEvent(sql, {
+      event_id: `ws-${run}-e3`,
+      event_type: "message.received",
+      message: { thread_id: `thr_ws_${run}_new3`, message_id: `ws-${run}-in3`, from: b.email, subject: "Hello again", text: "hi" },
+    });
+    expect(ambiguous.detail).toMatchObject({ matched: false });
+    expect((await sql`select workspace_id from messages where provider_message_id = ${`ws-${run}-in3`}`)[0]!.workspace_id).toBe("ws_owner");
+    await sql`delete from messages where provider_message_id = ${`ws-${run}-in3`}`;
   });
 
   // ---------- platform admins ----------

@@ -7,6 +7,7 @@ import { approvals } from "./approvals.ts";
 import { requireAuth } from "./auth.ts";
 import { billing } from "./billing.ts";
 import { dashboard } from "./dashboard.ts";
+import { guardHumanRoutes } from "./guards.ts";
 import { integrations } from "./integrations.ts";
 import { keys } from "./keys.ts";
 import { leads } from "./leads.ts";
@@ -19,6 +20,8 @@ import { workflows } from "./workflows.ts";
 export const api = new Hono<AppEnv>();
 
 api.use("*", requireAuth);
+// Decisions an agent holding an API key must not make through REST either (src/api/guards.ts).
+guardHumanRoutes(api);
 api.route("/leads", leads);
 // Notes on a lead and excluding it: /leads/:id/notes, /leads/:id/exclude.
 api.route("/leads", notes);

@@ -71,6 +71,7 @@ suite("database integration (mocked providers)", () => {
   beforeAll(async () => {
     sql = getSql(url);
     WS = await createTestWorkspace(sql, `db_${run}`);
+    env.SEND_WORKSPACE_IDS = WS; // not the owner workspace: sending must be enabled for it
   });
 
   afterAll(async () => {
