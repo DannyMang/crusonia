@@ -1,11 +1,17 @@
-// "Connect your agent" > API keys card: list, create (full key shown once) and revoke keys for MCP clients.
+// Settings · API keys (/app/settings/keys): list, create (full key shown once) and revoke the keys MCP clients use.
+// The Connect your agent popover creates keys too and links here ("Manage keys").
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import { isApiError, type ApiKey } from "../../api.ts";
 import { useApi } from "../../auth.tsx";
+import { Page } from "../../components/AppShell.tsx";
 import { Card, CopyButton, EmptyState, errorCopy, QueryError, Skeleton } from "../../components/ui.tsx";
+import { exportLine } from "../../lib/agent-install.ts";
 import { cx, longDate, shortDate } from "../../lib/format.ts";
 import { keys, useApiKeys } from "../../queries.ts";
+import { CrumbBar } from "../connect/CrumbBar.tsx";
+import { SettingsTabs } from "./SettingsTabs.tsx";
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -28,23 +34,58 @@ export type CreatedKey = { api_key: ApiKey; key: string };
 
 const limeButton = "flex h-8.75 shrink-0 items-center rounded-lg bg-lime px-5 text-sm/4.5 font-medium text-ink hover:bg-[#b3de7a] disabled:opacity-60";
 
-export function ApiKeysCard({ created, onCreated }: { created: CreatedKey | null; onCreated: (k: CreatedKey | null) => void }) {
+/** Opens the Connect your agent popover in place (components/ConnectAgentPopover.tsx reads ?connect=1). */
+const connectLink =
+  "flex h-8.75 shrink-0 items-center rounded-lg border border-[#200D0D26] bg-white px-4 text-sm/4.5 font-medium text-ink hover:bg-[#200D0D08]";
+
+export default function SettingsApiKeys() {
+  const [created, setCreated] = useState<CreatedKey | null>(null);
+  const [creating, setCreating] = useState(false);
   const list = useApiKeys();
   const missing = isApiError(list.error) && list.error.missingRoute;
-  const [creating, setCreating] = useState(false);
+  return (
+    <>
+      <CrumbBar here="API keys" parent={{ label: "Settings", to: "/app/settings" }} />
+      <Page>
+        <div className="flex w-240 max-w-full flex-col gap-4 px-4 pb-14 pt-6 sm:px-12 sm:pt-8">
+          <SettingsTabs />
+          <div className="flex items-end justify-between gap-4 pb-2 pt-3">
+            <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">API keys</h1>
+            <div className="flex shrink-0 items-center gap-2">
+              <Link to="?connect=1" className={connectLink}>
+                Connect your agent
+              </Link>
+              {!missing ? (
+                <button type="button" className={limeButton} onClick={() => setCreating(true)} disabled={creating || list.isPending}>
+                  Create key
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <ApiKeysCard created={created} onCreated={setCreated} creating={creating} onCreating={setCreating} />
+        </div>
+      </Page>
+    </>
+  );
+}
+
+export function ApiKeysCard({
+  created,
+  onCreated,
+  creating,
+  onCreating: setCreating,
+}: {
+  created: CreatedKey | null;
+  onCreated: (k: CreatedKey | null) => void;
+  creating: boolean;
+  onCreating: (v: boolean) => void;
+}) {
+  const list = useApiKeys();
+  const missing = isApiError(list.error) && list.error.missingRoute;
   // Active keys first (newest first), revoked ones after them for the record.
   const data = [...(list.data ?? [])].sort((a, b) => Number(a.status === "revoked") - Number(b.status === "revoked"));
   return (
-    <Card className="flex flex-col px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
-      <div className="flex items-center justify-between pb-3.5">
-        <h2 className="text-[15px]/4.5 font-medium text-ink">API keys</h2>
-        {!missing ? (
-          <button type="button" className={limeButton} onClick={() => setCreating(true)} disabled={creating || list.isPending}>
-            Create key
-          </button>
-        ) : null}
-      </div>
-
+    <Card className="flex flex-col px-4 pb-2 pt-4 sm:px-6 sm:pt-5">
       {creating ? (
         <CreateKeyForm
           onCancel={() => setCreating(false)}
@@ -87,7 +128,7 @@ export function ApiKeysCard({ created, onCreated }: { created: CreatedKey | null
           <EmptyState
             className="py-9"
             title="No API keys yet"
-            body="Create one key per agent or machine, then put it in CRUSONIA_MCP_TOKEN (see Setup). You can revoke one without breaking the others."
+            body="Create one per agent or machine, so you can revoke one without breaking the others."
           />
         </div>
       )}
@@ -138,7 +179,7 @@ function CreateKeyForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
         </button>
       </div>
       <p className={cx("text-xs/4 font-medium", err && !err.calm ? "text-[#B42318]" : "text-faint")}>
-        {err ? `${err.title}. ${err.body}` : "Name it after where it runs, so you know which one to revoke later."}
+        {err ? `${err.title}. ${err.body}` : "Name it after where it runs."}
       </p>
     </form>
   );
@@ -157,12 +198,10 @@ function NewKey({ k, onDone }: { k: CreatedKey; onDone: () => void }) {
           Done
         </button>
       </div>
+      {/* Shown as the line that sets it where the agents read it (CRUSONIA_MCP_TOKEN). */}
       <div className="flex items-center gap-3 rounded-lg border border-[#200D0D1A] bg-white py-2 pl-3.5 pr-2">
-        <code className="min-w-0 grow break-all text-[13px]/4.5 font-medium text-ink">{k.key}</code>
-        <CopyButton text={k.key} className="h-6" />
-      </div>
-      <div className="text-xs/4 font-medium text-[#200D0DB3]">
-        The export line under Setup now has it filled in: run it in your shell, then add Crusonia to your agent.
+        <code className="min-w-0 grow break-all text-[13px]/4.5 font-medium text-ink">{exportLine(k.key)}</code>
+        <CopyButton text={exportLine(k.key)} className="h-6" />
       </div>
     </div>
   );
@@ -173,10 +212,10 @@ function KeyTable({ rows }: { rows: ApiKey[] }) {
   return (
     <table className="w-full table-fixed border-collapse">
       <colgroup>
-        {/* Narrower below 1440px so "Last used" keeps room next to the tools card. Phones show Name, Last used and the action. */}
-        <col className="w-37.5 max-sm:w-auto min-[1440px]:w-42.5" />
-        <col className="hidden w-32.5 sm:table-column min-[1440px]:w-37.5" />
-        <col className="hidden w-25 sm:table-column min-[1440px]:w-30" />
+        {/* Phones show Name, Last used and the action. */}
+        <col className="w-50 max-sm:w-auto" />
+        <col className="hidden w-45 sm:table-column" />
+        <col className="hidden w-35 sm:table-column" />
         <col />
         <col className="w-16" />
       </colgroup>
@@ -208,7 +247,7 @@ function KeyTable({ rows }: { rows: ApiKey[] }) {
               <td className={cx("h-14 truncate p-0 pr-3 text-sm/4.5 font-medium", revoked ? "text-faint" : "text-ink")} title={k.name}>
                 {k.name}
               </td>
-              <td className="hidden truncate p-0 pr-3 text-xs/4 font-medium tabular-nums text-faint sm:table-cell">{k.prefix}…</td>
+              <td className="hidden truncate p-0 pr-3 text-xs/4 font-medium text-faint sm:table-cell">{k.prefix}…</td>
               <td className="hidden p-0 text-xs/4 font-medium text-muted sm:table-cell">{longDate(k.created_at)}</td>
               <td className="p-0 text-xs/4 font-medium">
                 {revoked ? (

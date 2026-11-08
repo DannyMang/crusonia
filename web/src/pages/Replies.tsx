@@ -57,7 +57,7 @@ export default function Replies() {
               className={cx("flex h-7 items-center gap-2 rounded-full pr-2", on ? "bg-lime pl-3.5" : "pl-3 hover:bg-[#200D0D08]")}
             >
               <span className={cx("text-[13px]/4 font-medium", on ? "text-ink" : "text-faint")}>{f.label}</span>
-              <span className={cx("flex h-4 items-center rounded-full px-1.5 tabular-nums text-xs/3 font-medium", on ? "bg-[#BDE6893D] text-ink" : "bg-[#200D0D14] text-muted")}>
+              <span className={cx("flex h-4 items-center rounded-full px-1.5 text-xs/3 font-medium", on ? "bg-[#BDE6893D] text-ink" : "bg-[#200D0D14] text-muted")}>
                 {counts[f.id] ?? 0}
               </span>
             </button>

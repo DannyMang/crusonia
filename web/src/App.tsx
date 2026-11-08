@@ -17,7 +17,6 @@ const pages = {
   SignIn: () => import("./pages/auth/SignIn.tsx"),
   SignUp: () => import("./pages/auth/SignUp.tsx"),
   SsoCallback: () => import("./pages/auth/SsoCallback.tsx"),
-  Connect: () => import("./pages/Connect.tsx"),
   Home: () => import("./pages/Home.tsx"),
   Integrations: () => import("./pages/Integrations.tsx"),
   LeadDetail: () => import("./pages/LeadDetail.tsx"),
@@ -35,6 +34,7 @@ const pages = {
   Settings: () => import("./pages/Settings.tsx"),
   SettingsBilling: () => import("./pages/settings/Billing.tsx"),
   SettingsCompany: () => import("./pages/settings/CompanySummary.tsx"),
+  SettingsKeys: () => import("./pages/settings/ApiKeys.tsx"),
   WorkflowRun: () => import("./pages/WorkflowRun.tsx"),
   Workflows: () => import("./pages/workflows/List.tsx"),
   WorkflowBuilder: () => import("./pages/workflows/Builder.tsx"),
@@ -188,11 +188,13 @@ export function App() {
                   <Route path="experiments/*" element={<Navigate to="/app" replace />} />
                   <Route path="replies" element={page(L.Replies)} />
                   <Route path="integrations" element={page(L.Integrations)} />
-                  <Route path="connect" element={page(L.Connect)} />
+                  {/* The Connect your agent page became the popover in the app shell (components/ConnectAgentPopover.tsx). */}
+                  <Route path="connect" element={<Navigate to="/app?connect=1" replace />} />
                   <Route path="settings" element={page(L.Settings)} />
                   {/* Stripe Checkout success/cancel and the portal return here (src/billing/constants.ts BILLING_APP_PATH). */}
                   <Route path="settings/billing" element={page(L.SettingsBilling)} />
                   <Route path="settings/company" element={page(L.SettingsCompany)} />
+                  <Route path="settings/keys" element={page(L.SettingsKeys)} />
                   <Route path="*" element={page(L.NotFound)} />
                 </Route>
               </Route>

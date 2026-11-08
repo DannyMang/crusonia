@@ -67,7 +67,7 @@ export function TraceDialog({ run, onClose }: { run: FlowRun | null; onClose: ()
                   <span className="w-32 shrink-0 truncate text-xs/4 font-medium text-ink">{e.type}</span>
                   <span className="min-w-0 grow truncate">{summary(e)}</span>
                 </summary>
-                <pre className="mb-2 ml-11 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[#200D0D06] px-3 py-2 font-sans text-xs/4.5 tabular-nums text-ink">
+                <pre className="mb-2 ml-11 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[#200D0D06] px-3 py-2 font-sans text-xs/4.5 text-ink">
                   {JSON.stringify(e.data, null, 2)}
                 </pre>
               </details>

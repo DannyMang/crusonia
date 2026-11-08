@@ -154,7 +154,7 @@ export default function Workflows() {
                 <ButtonLink to="/onboarding/1" variant="outline">
                   Set up your company
                 </ButtonLink>
-                <ButtonLink to="/app/connect" variant="soft">
+                <ButtonLink to="?connect=1" variant="soft">
                   Connect your agent
                 </ButtonLink>
               </div>

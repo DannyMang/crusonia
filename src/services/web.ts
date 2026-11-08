@@ -186,7 +186,13 @@ async function fetchPage(url: URL, fetchFn: FetchFn): Promise<Extracted | Servic
     return new ServiceError("upstream", `Could not fetch ${url.href}: ${describeError(err)}`);
   }
   if (!res.ok) {
-    await res.body?.cancel();
+    // Free the connection. Some runtimes cannot cancel a body that is already buffered (older Bun throws
+    // "null is not an object" for a string body), and that must not hide the HTTP status below.
+    try {
+      await res.body?.cancel();
+    } catch {
+      // Nothing left to free.
+    }
     return new ServiceError("upstream", `Fetching ${url.href} returned HTTP ${res.status}.`);
   }
   const type = res.headers.get("content-type") ?? "";

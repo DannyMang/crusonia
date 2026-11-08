@@ -1,6 +1,7 @@
 // S2 "Infrastructure for all your GTM needs." (Paper: Landing v2 > S2 · Infrastructure). Four columns, each a
 // small static illustration of the product over a title and a line. "How it works" in the nav scrolls here.
 import type { ReactNode } from "react";
+import { BrandLogo, type BrandName } from "../components/BrandLogo.tsx";
 import { SECTIONS } from "./sections.ts";
 
 const chip = "flex items-center rounded-full bg-lime";
@@ -31,7 +32,7 @@ const workflowArt = (
       <span className="text-xs/4 text-green-dark">done</span>
     </Row>
     <Row label="Score fit">
-      <span className="text-xs/4 text-green-dark tabular-nums">92</span>
+      <span className="text-xs/4 text-green-dark">92</span>
     </Row>
     <Row label="Write draft">
       <span className={`h-5.5 px-2.25 text-xs/4 font-medium ${chip}`}>ready</span>
@@ -39,21 +40,25 @@ const workflowArt = (
   </div>
 );
 
-const Tile = ({ children }: { children: string }) => (
-  <div className={`flex h-14 grow basis-0 items-center justify-center text-[11px]/3.5 font-medium ${card}`}>{children}</div>
+// Sentence case with no letter-spacing (owner rule: Inter only, no caps labels), with the real brand marks.
+const Tile = ({ logo, children }: { logo?: BrandName; children: string }) => (
+  <div className={`flex h-14 min-w-0 grow basis-0 items-center justify-center gap-1.5 text-xs/4 font-medium ${card}`}>
+    {logo ? <BrandLogo name={logo} size={16} /> : null}
+    {children}
+  </div>
 );
 
 const stackArt = (
   <div className="flex flex-col gap-2.5">
     <div className="flex gap-2.5">
-      <Tile>HUBSPOT</Tile>
-      <Tile>NOTION</Tile>
+      <Tile logo="hubspot">HubSpot</Tile>
+      <Tile logo="notion">Notion</Tile>
     </div>
-    <div className="flex h-14 shrink-0 items-center justify-center rounded-lg bg-lime text-[11px]/3.5 font-semibold">CRUSONIA AGENT</div>
+    <div className="flex h-14 shrink-0 items-center justify-center rounded-lg bg-lime text-xs/4 font-semibold">Crusonia agent</div>
     <div className="flex gap-2.5">
-      <Tile>INBOX</Tile>
-      <Tile>APIFY</Tile>
-      <Tile>WEB</Tile>
+      <Tile>Inbox</Tile>
+      <Tile logo="apify">Apify</Tile>
+      <Tile>Web</Tile>
     </div>
   </div>
 );
