@@ -408,7 +408,8 @@ export async function reconcileSessions(sql: Sql, env: Env, fetchFn?: FetchFn): 
   if (!env.NAIVE_API_KEY) return 0;
   const sessions = (await sql`
     select id, workspace_id, lead_id, purpose, status, last_seq from naive_sessions
-    where status = 'running' and updated_at < now() - interval '2 minutes'
+    where (status = 'running' and updated_at < now() - interval '2 minutes')
+       or (purpose = 'onboarding' and status = 'idle' and stop_reason = 'awaiting_answer')
     order by updated_at limit 10`) as SessionRow[];
   const client = naiveFrom(env, fetchFn);
   let handled = 0;
