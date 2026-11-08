@@ -215,6 +215,19 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     expect(calls.length).toBe(sent + 1);
   });
 
+  test("👍 can't approve a draft the text cut short: it stays open and sends nothing; 👎 still rejects it", async () => {
+    const lead = await newLead("long");
+    const { approval } = await createDraft(sql, WS, { lead_id: lead.id, subject: "Long one", body: `Start. ${"word ".repeat(300)}Hidden ending.` }, { ttlMinutes: 60 * 24, via: "api", actor: "test" });
+    const code = approval.code as string;
+    const n = (await pollFor([`approval:${code}`])).get(`approval:${code}`)!;
+    const sent = calls.length;
+    expect(await thumb("like", n.bubble)).toMatchObject({ ok: false, error: "draft_cut_off", code, reply: `Request ${code} was too long to show in full, so a 👍 can't send it. Open Crusonia to approve.` });
+    expect(calls.length).toBe(sent);
+    expect(await approvalRow(code)).toMatchObject({ status: "pending" });
+    expect(await thumb("dislike", n.bubble)).toMatchObject({ ok: true, code });
+    expect(await approvalRow(code)).toMatchObject({ status: "rejected", decided_via: "imessage" });
+  });
+
   test("a retried delivery of the same tapback returns the first reply without acting again", async () => {
     const { code } = await newSendApproval("dupe");
     const n = (await pollFor([`approval:${code}`])).get(`approval:${code}`)!;
