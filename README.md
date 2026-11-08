@@ -196,7 +196,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/tasks/:id/sent` | `{body?, note?}`: the owner sent it (`body` = the text actually sent). Records an outbound message on the task's channel and moves the lead to `sent`; once |
 | POST | `/api/tasks/:id/skip` | `{reason?}`: not sending it; the stage is unchanged |
 | POST | `/api/tasks/:id/regenerate` | `{instructions?}` -> `{session_id}`: a Naive session writes a new version on the same channel (paid like research) |
-| GET | `/api/approvals` | `status` (default `pending`), `kind`, `lead_id` |
+| GET | `/api/approvals` | `status` (default `pending`), `kind`, `lead_id`. Rows carry `texted_at` (when the iMessage notice went out, else null) |
 | GET | `/api/approvals/:code` | One approval |
 | POST | `/api/approvals/:code/approve` | send: re-checks every rule, then sends via AgentMail. tool: allow (`scope`) |
 | POST | `/api/approvals/:code/reject` | send: reject the draft. tool: deny |
@@ -208,7 +208,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | DELETE | `/api/suppressions/:email` | Remove |
 | GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token"}` |
 | GET | `/api/summary` | Home: `pipeline` (cumulative: how many leads got at least to found, researched, drafted, sent, replied, meetings; plus `awaiting_approval` now), `pipeline_now` (where leads are now, one bucket each), `tasks_open`, top 5 `pending_approvals`, `pending_approvals_total`, `pending_sends_total` (send approvals only), `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` and `week_credits`: credits charged in the last 7 days; `provider_usd`: the raw Naive + Apify cost behind them; `budget_usd` from `WEEKLY_BUDGET_USD`), `paused` |
-| GET | `/api/status` | `get_status` data plus `inbox_address`, `naive_agent_configured`, `mcp_url`, `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error), `imessage` (`enabled`, `active`, `missing`, `bridge` as last reported with `online`, `undeliverable_notices`) |
+| GET | `/api/status` | `get_status` data plus `inbox_address`, `naive_agent_configured`, `mcp_url`, `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error), `imessage` (`enabled`, `active`, `missing`, `owner_phone_hint` (last 4 digits only), `bridge` as last reported with `online`, `undeliverable_notices`) |
 | GET, PUT | `/api/profile` | `{profile}`: company, website, sells, icp_description, segments, signals, sources (PUT replaces it) |
 | POST | `/api/onboarding/read-website` | `{url, max_pages?, render_js?}` -> `{pages: [{url, title, text}], mode, rendered?, note?}`. Synchronous; Apify crawler with `APIFY_TOKEN` (a few cents, metered), retried with JavaScript rendering when it finds no text, else a plain fetch |
 | POST | `/api/onboarding/propose` | `{url?, description?}` -> `{session_id}`: a Naive session reads the site and saves a proposed profile |
@@ -541,6 +541,10 @@ Codes are the approvals' 4-character short codes, and case doesn't matter. Other
    - It also writes the five settings to a root-only env file and, with `SEND_TEST_MESSAGE=1`, texts the owner once.
    - There is no SSH. Check the conversation read-only with
      `cd bridge && bun --env-file=<creds> deploy/check-history.ts`.
+   - Before a real `up`, validate the first-boot script locally: `bridge/deploy/test-bootstrap.sh` runs it in a privileged
+     `ubuntu:24.04` container (Docker in Docker) and can never text anyone.
+   - `WORKER_URL` picks the Worker the bridge serves (for example a staging Worker for a rehearsal; production later). Each
+     Worker has its own `BRIDGE_SECRET`. There is one bridge, so point it at one Worker at a time.
    - Ship a new commit or rotate secrets with `bridge/deploy/aws.sh recreate` (the bridge keeps no state), and remove
      everything with `bridge/deploy/aws.sh down --yes`.
    - The settings travel in the instance's launch script, which AWS keeps as instance data, and processes on the box can
