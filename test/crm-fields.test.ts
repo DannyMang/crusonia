@@ -236,7 +236,7 @@ describe("Notion mapping", () => {
     expect(props["Evidence count"]).toEqual({ number: 2 });
     expect(props["Last activity"]).toEqual({ date: { start: "2026-11-07T10:00:00.000Z" } });
     expect(props.Source.rich_text[0].text.content).toBe("google_search");
-    expect(props["Crusonia link"]).toEqual({ url: "https://crusonia.example/leads/lead_1" });
+    expect(props["Crusonia link"]).toEqual({ url: "https://crusonia.example/app/leads/lead_1" });
     expect(props["Lead ID"].rich_text[0].text.content).toBe("lead_1");
   });
 

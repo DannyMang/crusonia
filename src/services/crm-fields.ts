@@ -379,8 +379,8 @@ export function notionSchema(): Record<string, unknown> {
 const truncate = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s);
 const richText = (s: string | null | undefined, max = 2000) => (s ? [{ type: "text", text: { content: truncate(s, max) } }] : []);
 
-/** The lead's page in the web app. */
-export const leadUrl = (publicUrl: string, id: string) => `${publicUrl.replace(/\/+$/, "")}/leads/${encodeURIComponent(id)}`;
+/** The lead's page in the web app (route `/app/leads/:id`, web/src/App.tsx). */
+export const leadUrl = (publicUrl: string, id: string) => `${publicUrl.replace(/\/+$/, "")}/app/leads/${encodeURIComponent(id)}`;
 
 export function notionProperties(lead: SyncLead, publicUrl: string): Record<string, unknown> {
   const contact = [lead.name, lead.title].filter(Boolean).join(" · ");

@@ -128,7 +128,7 @@ suite("CRM sync (database, faked HubSpot and Notion)", () => {
     expect(contact).toMatchObject({ crusonia_fit_score: "81", crusonia_stage: "qualified", crusonia_source: "it_crm", hs_lead_status: "OPEN" });
     const page = [...p.nt.pages.values()][0]!.properties;
     expect(page["Evidence count"]).toEqual({ number: 3 });
-    expect(page["Crusonia link"]).toEqual({ url: `https://crusonia.example/leads/${lead.id}` });
+    expect(page["Crusonia link"]).toEqual({ url: `https://crusonia.example/app/leads/${lead.id}` });
 
     const notes = await sql`select hubspot_note_id from evidence where lead_id = ${lead.id} order by id`;
     expect(notes.every((n) => n.hubspot_note_id)).toBe(true);
