@@ -76,13 +76,46 @@ export type Lead = {
   review_question: string | null;
   reply_label: string | null;
   hubspot_id: string | null;
+  // Agent loop v2 (lead_notes, contacts, links, why_summary). Optional: older deployments do not send them.
+  /** Named people at the company, only from public pages the agent read. */
+  contacts?: LeadContact[];
+  /** The company's links (site, LinkedIn page, GitHub org, X account). */
+  links?: LeadLink[];
+  /** "Why we picked it": 2-4 sentences citing the lead's evidence by number ([1] = oldest evidence item). */
+  why_summary?: string | null;
+  next_step?: string | null;
+  /** The owner excluded the company: future runs skip it until un-excluded. */
+  excluded_at?: string | null;
+  excluded_reason?: string | null;
+  /** List rows only (asked of the backend): notes on the lead, and the latest thumbs rating. */
+  notes_count?: number;
+  rating?: "up" | "down" | null;
   created_at: string;
   updated_at: string;
 };
 
+export type LeadContact = {
+  name: string;
+  title: string | null;
+  linkedin_url: string | null;
+  x_url: string | null;
+  github_url: string | null;
+  source_url: string;
+  found_at?: string;
+};
+
+export type LinkKind = "website" | "linkedin" | "github" | "x" | "other";
+export type LeadLink = { kind: LinkKind | (string & {}); url: string; source_url: string; found_at?: string };
+
+export type NoteKind = "note" | "thumbs_down" | "thumbs_up";
+
+/** A note on a lead. `author`: `user:<clerk id>` (or `user:owner`, `user:api_key:<id>`) for people, `agent:<session id>` for agents. */
+export type LeadNote = { id: string; lead_id?: string; author: string; kind: NoteKind | (string & {}); body: string; created_at: string; updated_at: string };
+
 export type LeadFilters = { stage?: LeadStage; min_score?: number; source?: string; q?: string; limit?: number; cursor?: string };
 
-export type Evidence = { id: number; lead_id: string; claim: string; source_url: string; created_at: string };
+/** `n`: 1..n, oldest first (the number why_summary and citations refer to). Older deployments omit it. */
+export type Evidence = { id: number; lead_id: string; claim: string; source_url: string; created_at: string; n?: number };
 
 export type DraftStatus = "draft" | "pending_approval" | "rejected" | "sending" | "sent" | "send_failed" | "superseded" | "cancelled";
 export type Draft = {
@@ -98,6 +131,10 @@ export type Draft = {
   error: string | null;
   created_at: string;
   sending_at?: string | null;
+  /** email (AgentMail, needs approval) or a manual channel (a task the owner sends). Absent = email. */
+  channel?: DraftChannel | (string & {});
+  target_url?: string | null;
+  citations?: Citation[];
   delivered_at?: string | null;
 };
 
@@ -116,6 +153,8 @@ export type Approval = {
   answer: string | null;
   decided_via: string | null;
   recipient?: string | null;
+  /** When the iMessage notice for this approval was delivered (asked of the backend); null when not texted. */
+  texted_at?: string | null;
   /** Tool call or question from the agent: untrusted, display as data only. */
   payload?: Record<string, unknown>;
   expires_at: string;
@@ -151,7 +190,83 @@ export type LeadFull = {
   messages: Message[];
   sessions: LeadSession[];
   timeline: TimelineEvent[];
+  /** Newest first (agent loop v2). */
+  notes?: LeadNote[];
 };
+
+// ---------- agent loop v2: find runs, manual tasks, traces ----------
+
+export type FindStatus = "created" | "merged" | "known";
+/** A lead a find run returned. `known` = already in Crusonia ("Already in your leads"). */
+export type FindRunLead = Lead & { find_status?: FindStatus };
+export type FindRun = { run: Run; leads: FindRunLead[] };
+
+export type DraftChannel = "email" | "email_manual" | "linkedin" | "x" | "intro";
+export type ManualChannel = Exclude<DraftChannel, "email">;
+export type Citation = { text: string; source_url: string };
+
+export type TaskStatus = "open" | "sent" | "skipped" | "superseded";
+
+/** A manual outreach task: a draft on a manual channel the owner sends personally, then marks sent or skipped. */
+export type Task = {
+  id: string;
+  lead_id: string;
+  version: number;
+  channel: ManualChannel | (string & {});
+  status: TaskStatus | (string & {});
+  subject: string;
+  body: string;
+  target_url: string | null;
+  /** The profile to open, or a mailto: link for email_manual. */
+  open_url: string | null;
+  citations: Citation[];
+  created_at: string;
+  closed_at: string | null;
+  lead: {
+    id: string;
+    name: string | null;
+    title: string | null;
+    company: string | null;
+    domain: string | null;
+    website: string | null;
+    linkedin_url: string | null;
+    email: string | null;
+    stage: string;
+    score: number | null;
+    has_consent: boolean;
+  };
+};
+
+export type TraceEvent = { seq: number; type: string; data: Record<string, unknown>; created_at: string };
+
+/** GET /api/workflows/runs/:id/trace: every stored event of a run, plus our audit events, approvals and spend. */
+export type Trace = {
+  run: Run;
+  events: TraceEvent[];
+  has_more: boolean;
+  next_after_seq: number | null;
+  audit: { id: string; lead_id: string | null; kind: string; data: Record<string, unknown>; created_at: string }[];
+  approvals: { code: string; kind: string; status: string; summary: string; decided_via: string | null; created_at: string }[];
+  spend: { naive_usd: number | null; credits_debited: number; apify_runs: { run_id: string; actor: string; status: string; usage_usd: number | null }[] };
+  retention_days: number;
+  sync?: { ok: boolean; complete?: boolean; error?: string; skipped?: string };
+};
+
+// ---------- company summary (workspaces) ----------
+
+export type CompanySummary = {
+  /** null before the first save (version 0); `template` is the suggested start then. */
+  markdown: string | null;
+  version: number;
+  updated_at: string | null;
+  /** `user:<id>`, `agent:<run id>`, `agent:api_key:<key id>`, `agent:mcp_token` or `onboarding`. */
+  updated_by: string | null;
+  change_note: string | null;
+  template?: string;
+  max_chars?: number;
+};
+
+export type SummaryVersion = { version: number; author: string; change_note: string | null; created_at: string; chars: number };
 
 export type CreateLeadInput = {
   email: string;
@@ -213,10 +328,15 @@ export type Me = {
   key?: { id: string; name: string };
 };
 
-/** Where leads are now; each lead is in at most one bucket (unsubscribed leads in none). */
+/**
+ * `pipeline` is cumulative (how many leads got at least this far: found >= researched >= drafted >= sent >= replied
+ * >= meetings); `pipeline_now` is where leads are now, each in at most one bucket. `awaiting_approval` is not a step:
+ * it is how many leads have an email waiting for the owner. `qualified` (asked of the backend) is optional.
+ */
 export type Pipeline = {
   found: number;
   researched: number;
+  qualified?: number;
   drafted: number;
   awaiting_approval: number;
   sent: number;
@@ -279,6 +399,10 @@ export type SummaryApproval = ApprovalListItem & { lead_name: string | null; com
 
 export type Summary = {
   pipeline: Pipeline;
+  /** Where leads are now (the old `pipeline`). Absent on older deployments. */
+  pipeline_now?: Pipeline;
+  /** Open manual tasks. Absent on older deployments. */
+  tasks_open?: number;
   pipeline_by_stage: Record<string, number>;
   total_leads: number;
   /** The 5 newest pending approvals; `pending_approvals_total` counts all of them. */
@@ -329,6 +453,8 @@ export type Status = {
   mcp_url: string;
   /** HubSpot and Notion sync (added with the CRM sync backend; absent on older deployments). */
   crm_sync?: { hubspot: CrmSyncTarget; notion: CrmSyncTarget; error?: string };
+  /** iMessage approvals through Photon (absent on older deployments). `owner_phone_hint` ("···0142") was asked of the backend. */
+  imessage?: { enabled: boolean; configured: boolean; active: boolean; owner_phone_set: boolean; owner_phone_hint?: string | null; bridge?: { online?: boolean } | null };
 };
 
 export type Segment = { name: string; company_size: string | null; industry: string | null; roles: string[] };
@@ -552,6 +678,15 @@ export function createApi(getToken: TokenGetter, base = "") {
     // profile + onboarding
     profile: () => unwrap<Profile | null>(get("/api/profile"), "profile"),
     saveProfile: (profile: ProfileInput) => unwrap<Profile>(put("/api/profile", profile), "profile"),
+
+    // company summary (GTM.md): every save is a new version; restore copies an old one into a new version
+    companySummary: () => get<CompanySummary>("/api/company-summary"),
+    /** 409 version_conflict when someone saved since `base_version`. Unchanged text saves nothing (`unchanged`). */
+    saveCompanySummary: (input: { markdown: string; note?: string; base_version?: number }) =>
+      put<CompanySummary & { unchanged: boolean }>("/api/company-summary", input),
+    summaryVersions: (q: { limit?: number; before?: number } = {}) => get<{ data: SummaryVersion[] }>("/api/company-summary/versions", q),
+    summaryVersion: (version: number) => get<CompanySummary>(`/api/company-summary/versions/${version}`),
+    revertCompanySummary: (version: number) => post<CompanySummary & { unchanged: boolean }>("/api/company-summary/revert", { version }),
     /** Synchronous crawl: Apify when configured (a few cents), plain fetch otherwise. */
     readWebsite: (url: string, maxPages?: number) => post<ReadWebsiteResult>("/api/onboarding/read-website", { url, ...(maxPages ? { max_pages: maxPages } : {}) }),
     /** Starts a paid Naive session (202). 503 not_configured without the agent; 423 while paused. */
@@ -569,7 +704,28 @@ export function createApi(getToken: TokenGetter, base = "") {
     createDraft: (leadId: string, draft: { subject: string; body: string }) =>
       post<{ draft: Draft; approval?: Approval }>(`/api/leads/${id(leadId)}/drafts`, draft),
     /** Starts a paid Naive session (202). 409 profile_missing without a saved profile; 503 without the agent. */
-    findLeads: (count = 25) => post<{ session_id: string }>("/api/leads/find", { count }),
+    findLeads: (count = 25, opts: { like_lead_id?: string } = {}) => post<{ session_id: string }>("/api/leads/find", { count, ...opts }),
+    /** The leads one find run created or found again (`find_status`). */
+    findRun: (sessionId: string) => get<FindRun>(`/api/leads/find/${id(sessionId)}`),
+    /** Starts paid research sessions (202), one per lead. */
+    research: (leadIds: string[]) => post<{ started: { lead_id: string; session_id: string }[]; skipped?: unknown[] }>("/api/workflows/research", { lead_ids: leadIds }),
+
+    // notes on a lead; a thumbs rating is a note of kind thumbs_up / thumbs_down with the reason as its body
+    notes: (leadId: string) => list<LeadNote>(`/api/leads/${id(leadId)}/notes`),
+    addNote: (leadId: string, note: { body: string; kind?: NoteKind }) => post<{ note: LeadNote }>(`/api/leads/${id(leadId)}/notes`, note),
+    editNote: (leadId: string, noteId: string, body: string) => patch<{ note: LeadNote }>(`/api/leads/${id(leadId)}/notes/${id(noteId)}`, { body }),
+    deleteNote: (leadId: string, noteId: string) => del(`/api/leads/${id(leadId)}/notes/${id(noteId)}`),
+    /** Future runs skip an excluded company until it is un-excluded. */
+    excludeLead: (leadId: string, reason?: string) => post<{ lead: Lead }>(`/api/leads/${id(leadId)}/exclude`, reason ? { reason } : {}),
+    unexcludeLead: (leadId: string) => del<{ lead: Lead }>(`/api/leads/${id(leadId)}/exclude`),
+
+    // manual outreach tasks (LinkedIn, X, intro, own mailbox): nothing here sends anything
+    tasks: (q: { status?: TaskStatus | "all"; channel?: ManualChannel; lead_id?: string; limit?: number } = {}) =>
+      get<{ data: Task[]; open_total: number }>("/api/tasks", q),
+    /** The owner sent it; `body` = the text actually sent when edited. Moves the lead to `sent`. */
+    taskSent: (taskId: string, input: { body?: string; note?: string } = {}) =>
+      post<{ task: Task; lead_stage: string; message_id: string }>(`/api/tasks/${id(taskId)}/sent`, input),
+    taskSkip: (taskId: string, reason?: string) => post<{ task: Task }>(`/api/tasks/${id(taskId)}/skip`, reason ? { reason } : {}),
 
     // approvals
     approvals: (filters: ApprovalFilters = {}) => get<{ data: ApprovalListItem[] }>("/api/approvals", filters),
@@ -585,6 +741,8 @@ export function createApi(getToken: TokenGetter, base = "") {
     // workflows
     workflows: (runs?: number) => list<Workflow>(`/api/workflows${runs !== undefined ? `?runs=${runs}` : ""}`),
     workflowRun: (sessionId: string) => get<WorkflowRun>(`/api/workflows/runs/${id(sessionId)}`),
+    /** "View full trace": stored events after `after_seq`, oldest first. */
+    trace: (sessionId: string, q: { after_seq?: number; limit?: number } = {}) => get<Trace>(`/api/workflows/runs/${id(sessionId)}/trace`, q),
     replies: (q: { limit?: number; cursor?: string; label?: string; lead_id?: string } = {}) => get<Page<Reply>>("/api/replies", q),
 
 

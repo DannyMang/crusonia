@@ -87,7 +87,7 @@ export function Pill({ tone = "lime", className, children, mono }: { tone?: Tone
 /** Live state chip with a spinner ("researching", "drafting", "running"). */
 export function LiveChip({ children, spinning = true, className }: { children: ReactNode; spinning?: boolean; className?: string }) {
   return (
-    <span className={cx("inline-flex h-5.75 shrink-0 items-center gap-1.5 rounded-full bg-[#BDE68973] px-3 text-[13px]/4 font-medium tracking-[0.03em] text-ink", className)}>
+    <span className={cx("inline-flex h-5.75 shrink-0 items-center gap-1.5 rounded-full bg-[#BDE68973] px-3 text-[13px]/4 font-medium text-ink", className)}>
       {spinning ? <RingSpinner /> : null}
       {children}
     </span>
