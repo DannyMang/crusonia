@@ -15,7 +15,7 @@ import { FitChip, CitedText, LinksAndContacts, NoteComposer, NoteList, SourceRow
 import { Dialog } from "../components/leads/Overlay.tsx";
 import { CharCount, CitedBody, channelOf, TaskActions } from "../components/outreach/task.tsx";
 import { Button, ButtonLink, Card, QueryError, Skeleton, StageBadge } from "../components/ui.tsx";
-import { cx, leadTitle, plural, shortDate } from "../lib/format.ts";
+import { cx, leadTitle, plural, replyBody, shortDate } from "../lib/format.ts";
 import { useLead, useTasks } from "../queries.ts";
 import { DraftCard, useInvalidateLead, type ApproveMutation } from "./leads/DraftCard.tsx";
 import { groupOf } from "./leads/shared.ts";
@@ -53,6 +53,7 @@ function Detail({ data, approve }: { data: LeadFull; approve: ApproveMutation })
   const research = data.sessions.find((s) => s.purpose === "research");
   const text = lead.rationale || lead.why_summary;
   const sources = evidence.map((e) => e.source_url);
+  const replies = (data.messages ?? []).filter((m) => m.direction === "in");
 
   return (
     <Page className="gap-6 px-4 pb-14 pt-6 sm:px-8 sm:pt-8">
@@ -94,8 +95,17 @@ function Detail({ data, approve }: { data: LeadFull; approve: ApproveMutation })
           {research ? <AgentSteps sessionId={research.id} /> : null}
         </article>
 
-        {task || emailDrafts.length || sendApproval ? (
+        {task || emailDrafts.length || sendApproval || replies.length ? (
           <div className="flex w-full shrink-0 flex-col gap-5 lg:w-110">
+            {replies.map((m) => (
+              <section key={m.id} aria-label="Reply" className="flex flex-col overflow-clip rounded-xl border border-[#200D0D1A]">
+                <div className="flex items-center justify-between gap-3 border-b border-b-[#200D0D14] px-5 py-4">
+                  <h2 className="text-[15px]/4.5 font-medium text-ink">Reply</h2>
+                  <span className="shrink-0 text-xs/4 text-muted">{shortDate(m.created_at)}</span>
+                </div>
+                <p className="whitespace-pre-wrap px-5 py-4.5 text-sm/5.5 font-[450] text-ink [overflow-wrap:anywhere]">{replyBody(m.body)}</p>
+              </section>
+            ))}
             {task ? (
               <section aria-label={channelOf(task.channel).label} className="flex flex-col overflow-clip rounded-xl border border-[#200D0D1A]">
                 <div className="flex items-baseline gap-2 border-b border-b-[#200D0D14] px-5 py-4">

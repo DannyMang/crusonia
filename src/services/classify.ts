@@ -92,7 +92,7 @@ export function replyText(message: { extracted_text?: string | null; text?: stri
   const text = message.text?.trim() ? message.text : htmlToText(message.html ?? "");
   const lines: string[] = [];
   for (const line of text.split(/\r?\n/)) {
-    if (/^On .+wrote:\s*$/.test(line.trim()) || /^-{2,}\s*Original Message/i.test(line.trim())) break;
+    if (/^On .+wrote:\s*$/.test(line.trim()) || /^-{2,}\s*Original Message/i.test(line.trim()) || /^--\s*(Sent via .*)?$/.test(line.trim())) break;
     if (line.trimStart().startsWith(">")) continue;
     lines.push(line);
   }

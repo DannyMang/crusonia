@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { describeAuthor } from "../web/src/lib/authors.ts";
 import { citeBody, citedParts, sourceLabel, uniqueSources } from "../web/src/lib/citations.ts";
-import { creditsLabel } from "../web/src/lib/format.ts";
+import { creditsLabel, plainStep, replyBody } from "../web/src/lib/format.ts";
 import { sourceLabel as leadSource } from "../web/src/pages/leads/shared.ts";
 import { parseInline, parseMarkdown, safeHref } from "../web/src/lib/markdown-parse.ts";
 
@@ -140,5 +140,29 @@ describe("spend is shown in credits", () => {
     expect(creditsLabel(0.64)).toBe("0.6 credits");
     expect(creditsLabel(0.01)).toBe("0.1 credits");
     expect(creditsLabel(null)).toBe("—");
+  });
+});
+
+describe("agent text on a lead page", () => {
+  test("no markdown marks or raw lead ids", () => {
+    expect(plainStep("Agent: **Complete:** Glean (`lead_2f8aef56349c478c`) is qualified at **88/100**.")).toBe("Agent: Complete: Glean is qualified at 88/100.");
+    expect(plainStep("Agent: Research is complete for **lead_1018b010ff25462b** and saved for review.")).toBe("Agent: Research is complete and saved for review.");
+  });
+  test("a tool name reads as words, without its lead id", () => {
+    expect(plainStep("create_draft: lead_2f8aef56349c478c")).toBe("Create draft");
+    expect(plainStep("crusonia.search_web: Acme hiring")).toBe("Search web: Acme hiring");
+  });
+  test("ordinary text is left alone", () => {
+    expect(plainStep("Manual intro message in the owner's queue")).toBe("Manual intro message in the owner's queue");
+  });
+});
+
+describe("a reply's body", () => {
+  test("stops at the signature line and the quoted email", () => {
+    expect(replyBody("Can we talk next week?\n\n-- \nSent via AgentMail\n\nOn Sun, Nov 8, 2026 at 3:25 PM UTC Crusonia <c@a.to> wrote:\n> Hi")).toBe("Can we talk next week?");
+    expect(replyBody("Yes.\n\nOn Sun, Nov 8 Crusonia wrote:\n> Hi")).toBe("Yes.");
+  });
+  test("nothing there is empty", () => {
+    expect(replyBody(null)).toBe("");
   });
 });

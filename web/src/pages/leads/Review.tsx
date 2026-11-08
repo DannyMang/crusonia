@@ -319,6 +319,9 @@ function FocusLead({ full, onDone }: { full: LeadFull; onDone: (id: string) => v
       </header>
 
       <section className="flex flex-col gap-3 border-b border-b-[#200D0D14] px-5.5 py-4.5">
+        {lead.stage === "needs_review" && lead.review_question && text ? (
+          <p className="rounded-[10px] border border-panel-line bg-panel px-3.5 py-2.5 text-[13px]/5 font-medium text-ink [overflow-wrap:anywhere]">{lead.review_question}</p>
+        ) : null}
         {text ? (
           <p className="text-base/5.75 font-medium text-ink [overflow-wrap:anywhere]">
             <CitedText text={text} evidence={evidence} />

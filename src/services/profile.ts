@@ -143,6 +143,13 @@ export function normalizeProfile(raw: Record<string, unknown>): Profile {
 export async function saveProfile(sql: Sql, ws: string, input: ProfileInput, author: string): Promise<Profile> {
   const profile = normalizeProfile(input as Record<string, unknown>);
   const current = await getCompanySummary(sql, ws);
+  // Saving the structured view unchanged keeps the document as it is: rendering it again would drop anything written by
+  // hand inside a section, and there's no history to get it back from.
+  if (current.markdown) {
+    const { updated_at: _a, ...before } = normalizeProfile(markdownToProfile(current.markdown, current.updated_at) as unknown as Record<string, unknown>) as Profile & { updated_at?: unknown };
+    const { updated_at: _b, ...after } = profile as Profile & { updated_at?: unknown };
+    if (JSON.stringify(before) === JSON.stringify(after)) return markdownToProfile(current.markdown, current.updated_at);
+  }
   const saved = await writeCompanySummary(sql, ws, { markdown: profileToMarkdown(profile, current.markdown), author });
   return markdownToProfile(saved.markdown ?? "", saved.updated_at);
 }

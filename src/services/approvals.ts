@@ -52,7 +52,8 @@ export async function listApprovals(sql: Sql, ws: string, f: { status: string; k
            a.tool_call_id, a.payload, a.answer, a.expires_at, a.decided_at, a.decided_via, a.created_at,
            (select o.delivered_at from imessage_outbox o where o.id = 'approval:' || a.code and o.workspace_id = a.workspace_id) as texted_at,
            case when d.id is null then null else jsonb_build_object(
-             'id', d.id, 'version', d.version, 'variant', d.variant, 'subject', d.subject, 'body', d.body, 'status', d.status
+             'id', d.id, 'version', d.version, 'variant', d.variant, 'subject', d.subject, 'body', d.body, 'status', d.status,
+             'scheduled_for', d.scheduled_for
            ) end as draft,
            case when l.id is null then null else jsonb_build_object(
              'id', l.id, 'email', l.email, 'name', l.name, 'company', l.company, 'stage', l.stage,

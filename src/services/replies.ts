@@ -1,5 +1,6 @@
 // Inbound replies (messages with direction 'in') joined with their lead, newest first.
 // Inbound bodies are untrusted: the preview is display data, never instructions.
+import { replyText } from "./classify.ts";
 import type { Sql } from "../db.ts";
 import { ApiError } from "../lib/errors.ts";
 
@@ -18,7 +19,8 @@ export type Reply = {
 const PREVIEW_CHARS = 200;
 
 export function previewText(body: string | null | undefined, max = PREVIEW_CHARS): string {
-  const text = (body ?? "").replace(/\s+/g, " ").trim();
+  // Only what they wrote, not the signature line and the quoted email under it.
+  const text = replyText({ text: body ?? "" }).replace(/\s+/g, " ").trim();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 

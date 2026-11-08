@@ -5,7 +5,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { RunStep, Trace, TraceEvent } from "../../api.ts";
 import { useApi } from "../../auth.tsx";
-import { clock, creditsLabel, cx, duration } from "../../lib/format.ts";
+import { clock, creditsLabel, cx, duration, plainStep } from "../../lib/format.ts";
 import { keys, useWorkflowRun } from "../../queries.ts";
 import { CheckLineIcon } from "../core-icons.tsx";
 import { Button, LiveChip, QueryError, Skeleton } from "../ui.tsx";
@@ -57,7 +57,7 @@ export function AgentSteps({ sessionId, className }: { sessionId: string; classN
           {steps.slice(-8).map((s) => (
             <li key={s.seq} className="flex gap-3 py-1.5">
               <span className="w-16 shrink-0 whitespace-nowrap text-xs/4.25 tabular-nums text-muted">{s.started_at ? clock(s.started_at) : ""}</span>
-              <span className={cx("min-w-0 grow basis-0 text-[13px]/4.25 [overflow-wrap:anywhere]", s.is_error ? "text-[#B42318]" : "text-ink")}>{s.summary}</span>
+              <span className={cx("min-w-0 grow basis-0 text-[13px]/4.25 [overflow-wrap:anywhere]", s.is_error ? "text-[#B42318]" : "text-ink")}>{plainStep(s.summary)}</span>
             </li>
           ))}
         </ol>
