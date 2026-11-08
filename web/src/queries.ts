@@ -16,6 +16,9 @@ export const queryClient = new QueryClient({
 
 export const keys = {
   me: ["me"] as const,
+  workspaces: ["workspaces"] as const,
+  members: ["team", "members"] as const,
+  invites: ["team", "invites"] as const,
   summary: ["summary"] as const,
   status: ["status"] as const,
   pause: ["pause"] as const,
@@ -39,6 +42,18 @@ export const keys = {
 export function useMe() {
   const api = useApi();
   return useQuery({ queryKey: keys.me, queryFn: () => api.me(), staleTime: 5 * 60_000 });
+}
+
+export function useWorkspaces() {
+  const api = useApi();
+  return useQuery({ queryKey: keys.workspaces, queryFn: () => api.workspaces(), staleTime: 60_000 });
+}
+
+/** The caller's role in the current workspace. `canManage`: billing, API keys and the team. False until it's known. */
+export function useRole() {
+  const list = useWorkspaces();
+  const role = list.data?.data.find((w) => w.id === list.data?.current)?.role;
+  return { role, canManage: role === "owner" || role === "admin", isOwner: role === "owner" };
 }
 
 export function useSummary() {

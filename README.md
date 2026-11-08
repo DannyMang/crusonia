@@ -343,6 +343,10 @@ database on every request, with no cache, so someone removed is out on their nex
 to their workspace, and an agent can't reach `/api/team`. Removing someone (or them leaving) also revokes the API keys they
 made and the invites they sent there.
 
+In the app: the switcher at the top of the sidebar (and Create workspace), Settings > Team (invite, roles, pending invites,
+leave), the workspace's name in Settings > General, and `/invite/:token` for the link in the email, which takes someone
+signed out through sign-in or sign-up and back. Members don't see the buttons for what they can't do.
+
 **Invites.** A token is 32 random bytes, sent only in the email and stored only as a hash. It works once, for 7 days, and
 only for a signed-in Clerk user with the invited address among their verified emails (read from Clerk). Resending mints a
 new token and the old link stops working. Accepting works while `SIGNUPS_OPEN=false`, and makes no workspace of the

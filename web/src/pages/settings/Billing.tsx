@@ -14,7 +14,7 @@ import { CheckIcon, Spinner } from "../../components/icons.tsx";
 import { Card, EmptyState, QueryError, RingSpinner, Skeleton } from "../../components/ui.tsx";
 import { hasLiveSubscription, ledgerLine, planLabel, planStatus, PLAN_TAGS, priceAmount, signedCredits, type StatusChip } from "../../lib/billing.ts";
 import { clock, cx, longDate, num, plural, shortDate, usd } from "../../lib/format.ts";
-import { useBilling } from "../../queries.ts";
+import { useBilling, useRole } from "../../queries.ts";
 import { CrumbBar } from "../connect/CrumbBar.tsx";
 import { SettingsTabs } from "./SettingsTabs.tsx";
 
@@ -37,6 +37,8 @@ export default function Billing() {
   const api = useApi();
   const [params, setParams] = useSearchParams();
   const checkout = params.get("checkout");
+  // Members can see the balance and the plan, but not buy or change anything.
+  const { canManage } = useRole();
   const [arrivedAt] = useState(() => Date.now());
   const [timedOut, setTimedOut] = useState(false);
   const [landedSeen, setLandedSeen] = useState(false);
@@ -112,7 +114,7 @@ export default function Billing() {
                 Credits pay for hosted agent work, at 1 credit = $0.01. Payments, invoices and cards are handled by Stripe.
               </p>
             </div>
-            {b?.has_customer && configured ? (
+            {b?.has_customer && configured && canManage ? (
               <button type="button" className={outlineButton} onClick={openPortal} disabled={anyBusy} aria-busy={busy({ kind: "portal" }) || undefined}>
                 {busy({ kind: "portal" }) ? <Spinner size={12} /> : null}
                 Manage billing
@@ -154,17 +156,19 @@ export default function Billing() {
                         <div className="tabular-nums text-[26px]/7.5 font-semibold tracking-[-0.03em] text-ink">{p.price}</div>
                         <div className="tabular-nums text-[13px]/4 font-medium text-muted">{num(p.credits)} credits</div>
                       </div>
-                      <button
-                        type="button"
-                        className={outlineButton}
-                        disabled={!configured || anyBusy}
-                        aria-busy={busy({ kind: "checkout", key: p.key }) || undefined}
-                        aria-label={`Buy ${num(p.credits)} credits for ${p.price}`}
-                        onClick={() => startCheckout({ pack: p.key })}
-                      >
-                        {busy({ kind: "checkout", key: p.key }) ? <Spinner size={12} /> : null}
-                        Buy
-                      </button>
+                      {canManage ? (
+                        <button
+                          type="button"
+                          className={outlineButton}
+                          disabled={!configured || anyBusy}
+                          aria-busy={busy({ kind: "checkout", key: p.key }) || undefined}
+                          aria-label={`Buy ${num(p.credits)} credits for ${p.price}`}
+                          onClick={() => startCheckout({ pack: p.key })}
+                        >
+                          {busy({ kind: "checkout", key: p.key }) ? <Spinner size={12} /> : null}
+                          Buy
+                        </button>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -205,7 +209,7 @@ export default function Billing() {
                           <p className="text-[13px]/5 font-medium text-muted">{p.description}</p>
                           {p.current ? (
                             <div className="mt-auto flex h-9 items-center justify-center rounded-lg bg-pill text-[13px]/4 font-medium text-muted">You're on {name}</div>
-                          ) : (
+                          ) : !canManage ? null : (
                             <button
                               type="button"
                               className="mt-auto inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-lime text-[13px]/4 font-medium text-ink transition-colors hover:bg-[#b3de7a] disabled:cursor-default disabled:opacity-50"

@@ -6,7 +6,7 @@ import { isApiError } from "../../api.ts";
 import { AgentButtons } from "../../components/AgentButtons.tsx";
 import { Page } from "../../components/AppShell.tsx";
 import { MCP_URL } from "../../lib/agent-install.ts";
-import { useApiKeys, useStatus } from "../../queries.ts";
+import { useApiKeys, useRole, useStatus } from "../../queries.ts";
 import { CrumbBar } from "../connect/CrumbBar.tsx";
 import { ApiKeysCard, limeButton, type CreatedKey } from "./ApiKeys.tsx";
 import { SettingsTabs } from "./SettingsTabs.tsx";
@@ -17,6 +17,9 @@ export default function SettingsConnectAgent() {
   const status = useStatus();
   const list = useApiKeys();
   const missing = isApiError(list.error) && list.error.missingRoute;
+  // Members can see the keys (their names label notes and summary versions) but can't make or revoke them.
+  const { role } = useRole();
+  const member = role === "member";
   return (
     <>
       <CrumbBar here="Connect your agent" parent={{ label: "Settings", to: "/app/settings" }} />
@@ -25,16 +28,16 @@ export default function SettingsConnectAgent() {
           <SettingsTabs />
           <h1 className="pb-1 pt-3 text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Connect your agent</h1>
           {/* The endpoint this Worker reports: staging has its own. */}
-          <AgentButtons size="row" mcpUrl={status.data?.mcp_url || MCP_URL} className="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap" />
+          {member ? null : <AgentButtons size="row" mcpUrl={status.data?.mcp_url || MCP_URL} className="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap" />}
           <div className="flex items-center justify-between gap-4 pt-4">
             <h2 className="text-[15px]/4.5 font-medium text-ink">API keys</h2>
-            {!missing ? (
+            {!missing && !member ? (
               <button type="button" className={limeButton} onClick={() => setCreating(true)} disabled={creating || list.isPending}>
                 Create key
               </button>
             ) : null}
           </div>
-          <ApiKeysCard created={created} onCreated={setCreated} creating={creating} onCreating={setCreating} />
+          <ApiKeysCard created={created} onCreated={setCreated} creating={creating} onCreating={setCreating} readOnly={member} />
         </div>
       </Page>
     </>

@@ -8,7 +8,7 @@ import { useApi, useSession } from "../auth.tsx";
 import { Page } from "../components/AppShell.tsx";
 import { Button, Card, EmptyState, QueryError, Skeleton } from "../components/ui.tsx";
 import { cx, longDate } from "../lib/format.ts";
-import { keys, usePause, useProfile, useSetPause } from "../queries.ts";
+import { keys, usePause, useProfile, useRole, useSetPause, useWorkspaces } from "../queries.ts";
 import { CrumbBar } from "./connect/CrumbBar.tsx";
 import { SettingsTabs } from "./settings/SettingsTabs.tsx";
 
@@ -28,6 +28,7 @@ export default function Settings() {
             <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">General</h1>
           </div>
           <div className="flex flex-col gap-6">
+            <WorkspaceNameCard />
             <PauseCard />
             <ProfileCard />
             <Suppressions />
@@ -36,6 +37,52 @@ export default function Settings() {
         </div>
       </Page>
     </>
+  );
+}
+
+/** Owners and admins name the workspace; it's what the switcher and the invite email show. */
+function WorkspaceNameCard() {
+  const api = useApi();
+  const qc = useQueryClient();
+  const { canManage } = useRole();
+  const list = useWorkspaces();
+  const current = list.data?.data.find((w) => w.id === list.data?.current);
+  const [draft, setDraft] = useState<string | null>(null);
+  const name = draft ?? current?.name ?? "";
+  const rename = useMutation({
+    mutationFn: () => api.renameWorkspace(name.trim()),
+    onSuccess: () => {
+      setDraft(null);
+      void qc.invalidateQueries({ queryKey: keys.workspaces });
+    },
+  });
+  if (!canManage || !current) return null;
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (name.trim() && name.trim() !== current.name) rename.mutate();
+  };
+  return (
+    <Card className={rowCard}>
+      <div className="flex shrink-0 flex-col gap-1">
+        <h2 className={cardTitle}>Workspace name</h2>
+      </div>
+      <form onSubmit={submit} className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:grow sm:justify-end">
+        <input
+          value={name}
+          maxLength={80}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            rename.reset();
+          }}
+          aria-label="Workspace name"
+          className="h-9 min-w-0 grow rounded-lg border border-[#200D0D24] px-3 text-[13px]/4 font-medium text-ink outline-none focus:border-ink sm:max-w-72"
+        />
+        <Button type="submit" variant="outline" size="md" loading={rename.isPending} disabled={!name.trim() || name.trim() === current.name}>
+          Save
+        </Button>
+      </form>
+      {rename.isError ? <QueryError error={rename.error} /> : null}
+    </Card>
   );
 }
 

@@ -31,7 +31,9 @@ const pages = {
   Step4Leads: () => import("./pages/onboarding/Step4Leads.tsx"),
   Pricing: () => import("./landing/Pricing.tsx"),
   Replies: () => import("./pages/Replies.tsx"),
+  InviteAccept: () => import("./pages/InviteAccept.tsx"),
   Settings: () => import("./pages/Settings.tsx"),
+  SettingsTeam: () => import("./pages/settings/Team.tsx"),
   SettingsBilling: () => import("./pages/settings/Billing.tsx"),
   SettingsCompany: () => import("./pages/settings/CompanySummary.tsx"),
   SettingsAgent: () => import("./pages/settings/ConnectAgent.tsx"),
@@ -154,6 +156,8 @@ export function App() {
               <Route path="sign-in/*" element={<RedirectIfSignedIn>{screen(L.SignIn)}</RedirectIfSignedIn>} />
               <Route path="sign-up/*" element={<RedirectIfSignedIn fallback="/onboarding/1">{screen(L.SignUp)}</RedirectIfSignedIn>} />
               <Route path="sso-callback" element={screen(L.SsoCallback)} />
+              {/* The link in an invite email: public, because the person following it may not have an account yet. */}
+              <Route path="invite/:token" element={screen(L.InviteAccept)} />
 
               <Route element={<Protected />}>
                 <Route path="onboarding" element={screen(L.OnboardingLayout)}>
@@ -194,6 +198,7 @@ export function App() {
                   {/* Stripe Checkout success/cancel and the portal return here (src/billing/constants.ts BILLING_APP_PATH). */}
                   <Route path="settings/billing" element={page(L.SettingsBilling)} />
                   <Route path="settings/company" element={page(L.SettingsCompany)} />
+                  <Route path="settings/team" element={page(L.SettingsTeam)} />
                   <Route path="settings/agent" element={page(L.SettingsAgent)} />
                   <Route path="settings/keys" element={<Navigate to="/app/settings/agent" replace />} />
                   <Route path="*" element={page(L.NotFound)} />
