@@ -170,8 +170,10 @@ webhooks.post("/photon", async (c) => {
   if (raw instanceof Response) return raw;
   const event = parseBody(c, raw, PhotonEventSchema);
   if (event instanceof Response) return event;
-  // Defense in depth: the bridge already drops every other sender.
-  if (c.env.OWNER_PHONE && normalizeHandle(event.from) !== normalizeHandle(c.env.OWNER_PHONE)) {
+  // Defense in depth: the bridge already drops every other sender. A tap sends real email, and IMESSAGE_ENABLED=false
+  // does not stop this route (it only stops new notices), so with no OWNER_PHONE to check against it stays shut.
+  if (!c.env.OWNER_PHONE) return c.json(errorBody("not_configured", "OWNER_PHONE is not set"), 503);
+  if (normalizeHandle(event.from) !== normalizeHandle(c.env.OWNER_PHONE)) {
     console.warn("photon: command from a handle that is not OWNER_PHONE refused");
     return c.json(errorBody("forbidden_sender", "Only the owner can send commands"), 403);
   }

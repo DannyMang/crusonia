@@ -2,8 +2,8 @@ import type { MiddlewareHandler } from "hono";
 import { getSql } from "./db.ts";
 import type { Env } from "./env.ts";
 import { secretEquals } from "./lib/crypto.ts";
-import { isApiKey, verifyApiKey, type ApiKeyLookup } from "./services/api-keys.ts";
-import { OWNER_WORKSPACE_ID, WORKSPACE_HEADER, workspaceRef, type Workspace } from "./services/workspaces.ts";
+import { apiKeyBlocked, isApiKey, verifyApiKey, type ApiKeyLookup } from "./services/api-keys.ts";
+import { blockedUserIds, OWNER_WORKSPACE_ID, WORKSPACE_HEADER, workspaceRef, type Workspace } from "./services/workspaces.ts";
 
 // Bearer tokens accepted by /mcp and /api: the shared MCP_TOKEN (the owner workspace) or a workspace API key
 // (`crs_live_...`, see src/services/api-keys.ts), looked up by its SHA-256 hash. Each resolves to one workspace.
@@ -25,6 +25,8 @@ export async function resolveBearer(env: Env, token: string, lookup?: ApiKeyLook
   const find = lookup ?? ((t: string) => verifyApiKey(getSql(env.DATABASE_URL), t));
   const key = await find(token);
   if (!key) return null;
+  const blocked = blockedUserIds(env);
+  if (blocked.length && env.DATABASE_URL && (await apiKeyBlocked(getSql(env.DATABASE_URL), key, blocked))) return null;
   const agentRole = key.kind === "agent" ? "researcher" : key.kind === "operator" ? "operator" : null;
   return { kind: "api_key", keyId: key.id, name: key.name, workspaceId: key.workspace_id, agent: agentRole !== null, agentRole };
 }

@@ -10,6 +10,9 @@ import type { AppEnv, Principal } from "../src/lib/context.ts";
 import { ApiError } from "../src/lib/errors.ts";
 import { approveAndSend } from "../src/services/send.ts";
 import { canSendEmail, type WorkspaceRole } from "../src/services/workspaces.ts";
+import { shortCode } from "../src/ids.ts";
+import { readFileSync } from "node:fs";
+import { safeNext } from "../web/src/lib/safe-next.ts";
 
 const PRINCIPALS: Record<string, Principal> = {
   api_key: { kind: "api_key", keyId: "key_1", name: "agent", workspaceId: "ws_a" },
@@ -40,6 +43,9 @@ async function call(as: string, method: string, path: string, body?: unknown, ro
 }
 
 const REFUSED_FOR_KEYS: [string, string, unknown?][] = [
+  ["PUT", "/settings/pause", { paused: false }],
+  ["PATCH", "/workflow-definitions/wf_1", { cap_usd: 10_000 }],
+  ["PATCH", "/workflow-definitions/wf_1", { spend: { cap_usd: 10_000, period: "week" } }],
   ["POST", "/approvals/ABCD/approve"],
   ["POST", "/approvals/ABCD/reject", {}],
   ["POST", "/approvals/ABCD/edit", { body: "new text" }],
@@ -121,6 +127,26 @@ describe("human-only routes (src/api/guards.ts)", () => {
   });
 });
 
+describe("the kill switch and spend caps", () => {
+  test("anyone may pause; only an owner or admin may resume", async () => {
+    for (const as of ["api_key", "clerk", "owner_token"]) expect((await call(as, "PUT", "/settings/pause", { paused: true }, as === "clerk" ? "member" : undefined)).status).toBe(200);
+    expect((await call("clerk", "PUT", "/settings/pause", { paused: false }, "member")).json.error?.code).toBe("forbidden_role");
+    for (const role of ["admin", "owner"] as const) expect((await call("clerk", "PUT", "/settings/pause", { paused: false }, role)).status).toBe(200);
+  });
+
+  test("a member can run and toggle a workflow but not change its spend cap", async () => {
+    expect((await call("clerk", "PATCH", "/workflow-definitions/wf_1", { enabled: false }, "member")).status).toBe(200);
+    expect((await call("api_key", "PATCH", "/workflow-definitions/wf_1", { enabled: false })).status).toBe(200);
+    expect((await call("clerk", "PATCH", "/workflow-definitions/wf_1", { cap_usd: 50 }, "member")).json.error?.code).toBe("forbidden_role");
+    expect((await call("clerk", "PATCH", "/workflow-definitions/wf_1", { cap_usd: 50 }, "admin")).status).toBe(200);
+  });
+
+  test("the route still reads the body after these guards", async () => {
+    const res = await call("clerk", "PATCH", "/workflow-definitions/wf_1", { cap_usd: 50 }, "owner");
+    expect(res.json.body).toBe(JSON.stringify({ cap_usd: 50 }));
+  });
+});
+
 describe("sending from the shared inbox (canSendEmail)", () => {
   const env = (over: Partial<Env> = {}): Env => ({ PUBLIC_URL: "https://example.test", AGENTMAIL_API_KEY: "am", AGENTMAIL_INBOX_ID: "it@agentmail.to", ...over });
 
@@ -144,5 +170,24 @@ describe("sending from the shared inbox (canSendEmail)", () => {
     // Listed: it gets past the gate (and here hits the stub database).
     const listed = await approveAndSend({ sql, ws: "ws_signup", env: env({ SEND_WORKSPACE_IDS: "ws_signup" }), actor: "test" }, "ABCD").catch((e) => e);
     expect((listed as Error).message).toBe("database touched");
+  });
+});
+
+describe("redirect_url after sign-in", () => {
+  test("only same-origin paths survive, however a browser would read them", () => {
+    for (const ok of ["/app", "/app/leads?x=1", "/invite/inv_abc", "/"]) expect(safeNext(ok)).toBe(ok);
+    for (const bad of ["//evil.test", "/\\evil.test", "/\t/evil.test", "/\n/evil.test", "/\r//evil.test", "https://evil.test", "javascript:alert(1)", "evil.test", "", null, undefined]) {
+      expect({ bad, next: safeNext(bad) }).toEqual({ bad, next: null });
+    }
+  });
+
+  test("a signed-in visitor's redirect goes through it too", () => {
+    expect(readFileSync("web/src/auth.tsx", "utf8")).toContain("const target = safeNext(next) ?? fallback;");
+  });
+});
+
+describe("approval codes", () => {
+  test("6 characters from the readable alphabet, so one workspace can't use up the shared namespace", () => {
+    for (let i = 0; i < 50; i++) expect(shortCode()).toMatch(/^[2-9A-HJKMNP-Z]{6}$/);
   });
 });

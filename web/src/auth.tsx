@@ -7,6 +7,7 @@
 import { createContext, lazy, Suspense, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router";
 import { createApi, type Api, type TokenGetter } from "./api.ts";
+import { safeNext } from "./lib/safe-next.ts";
 
 const ClerkAuth = lazy(() => import("./auth-clerk.tsx"));
 
@@ -162,7 +163,7 @@ export function RedirectIfSignedIn({ children, fallback = "/app" }: { children: 
   if (isLoaded && isSignedIn) {
     const next = new URLSearchParams(location.search).get("redirect_url");
     const website = new URLSearchParams(location.search).get("website");
-    const target = next && next.startsWith("/") && !next.startsWith("//") ? next : fallback;
+    const target = safeNext(next) ?? fallback;
     // A signed-in visitor from the landing page (/sign-up?website=…) keeps the website for onboarding.
     return <Navigate to={website && !next ? `${target}?website=${encodeURIComponent(website)}` : target} replace />;
   }

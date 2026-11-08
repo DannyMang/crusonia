@@ -4,7 +4,10 @@
 //   researcher  reads the web (search_web, read_website, Apify's page reader) and sees only its target lead. It has
 //               no tool that lists the pipeline, and every lead tool needs the run id of a session on that lead.
 //   operator    reads the whole pipeline and starts or manages work, with no web tool and no outbound fetch at all.
-//               What it hands to a researcher is structured (lead ids, a count), never free text.
+//               What it hands to a researcher is structured (lead ids, a count), never free text. It reads text that
+//               came from web pages and email, so nothing it writes may become something a researcher fetches or follows:
+//               it can't add leads, evidence or links, set a lead's website, or write a workflow (a research session
+//               follows a workflow's text as the owner's), and its other text can't carry a link or address.
 //   full        a person's own agent (Claude Code, Cursor) on a user API key or MCP_TOKEN: every tool.
 //
 // The role comes from the credential (an 'agent' key is a researcher, an 'operator' key an operator) or, for the owner
@@ -55,17 +58,12 @@ export const OPERATOR_TOOLS = [
   "get_billing_balance",
   // Keep what Crusonia knows current.
   "update_company_summary",
-  "add_leads",
   "update_lead",
   "merge_leads",
-  "import_leads",
-  "save_evidence",
   "score_lead",
-  "save_research",
   "add_note",
   "flag_for_review",
   // Start and manage work (every start passes the pause switch, the caps and the credit check).
-  "create_workflow",
   "update_workflow",
   "run_workflow",
   "find_more_leads",
@@ -77,8 +75,14 @@ export const OPERATOR_TOOLS = [
   "log_cycle",
 ] as const;
 
-/** Tools only a person's own agent has: older aliases, kept for connected agents. */
-export const FULL_ONLY_TOOLS = ["save_profile"] as const;
+/**
+ * Tools only a person's own agent and research sessions have. Lead-finding and evidence writes carry URLs and domains, so a
+ * research session would fetch what they name; a workflow's text reaches research sessions as the owner's instructions.
+ */
+export const OPERATOR_MUST_NOT_HAVE = ["add_leads", "import_leads", "save_evidence", "save_research", "create_workflow"] as const;
+
+/** Tools only a person's own agent has: older aliases and imports, kept for connected agents. */
+export const FULL_ONLY_TOOLS = ["save_profile", "import_leads", "create_workflow"] as const;
 
 export const ALL_TOOLS = [...new Set<string>([...RESEARCHER_TOOLS, ...OPERATOR_TOOLS, ...FULL_ONLY_TOOLS])];
 

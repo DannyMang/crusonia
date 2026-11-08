@@ -1,13 +1,10 @@
 // Helpers for the Clerk custom flows (sign in, sign up, SSO callback). No Clerk imports here, so the static
 // variant can use them too.
 import type { NavigateFunction } from "react-router";
+import { safeNext } from "../../lib/safe-next.ts";
 import { cleanWebsite } from "../../lib/website.ts";
 
-/** Only same-origin paths ("/app/leads"), never "//evil.com" or "https://…". */
-export function safeNext(v: string | null | undefined): string | null {
-  if (!v || !v.startsWith("/") || v.startsWith("//") || v.startsWith("/\\")) return null;
-  return v;
-}
+export { safeNext };
 
 /** Where to come back to and which address to use, for moving between /sign-in and /sign-up (an invite link sets them). */
 export function carriedParams(params: URLSearchParams): string {

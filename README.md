@@ -160,7 +160,7 @@ section of the Company summary with a note (a new version the owner can revert).
   the prompt cache, so the playbook batches independent calls in one turn and the batch tools (`add_leads` with
   inline evidence and scores, `save_research`) replace per-item calls.
 - **Tools**: the crusonia tools, Apify's single-page reader (`apify--rag-web-browser`) and its run-result readers
-  run without asking; `ask_operator` and everything else (Naive built-ins) ask first. The agent's Apify MCP URL loads
+  run without asking; `ask_operator` asks, and anything else is denied: Naive doesn't offer its other built-ins (`email.send`, `card.spend`, ...) to the model at all. The agent's Apify MCP URL loads
   no Actor-run tools (`call-actor`, the crawler and search Actors): our `read_website` and `search_web` wrap those with
   limits, a cost cap and metering. `handoffs` is off. Asked tool calls then go through `AUTO_CONFIRM_TOOLS`: an
   allowlisted call is allowed automatically (all of a session's calls in parallel), any other becomes a tool approval.
@@ -304,15 +304,16 @@ than `TRACE_RETENTION_DAYS`.
 
 Anyone can sign up: a new Clerk user gets their own private workspace on first sign-in, and can join others (see
 [Teams](#teams)), with its own Company summary, leads, approvals, runs, budget and credits, plus the free sample credits once.
-`SIGNUPS_OPEN=false` closes sign-up (existing members still get in), `BLOCKED_USER_IDS` refuses accounts. The instance
+`SIGNUPS_OPEN=false` closes sign-up (existing members still get in). `BLOCKED_USER_IDS` refuses accounts, the API keys they made and every key of a workspace whose owners are all blocked (remove such a workspace from `AUTOPILOT_WORKSPACES` too). The instance
 owner's workspace (`ws_owner`) holds everything from before workspaces; `OWNER_CLERK_USER_ID` and `MCP_TOKEN` resolve
 to it. Every workspace sends from the one `AGENTMAIL_INBOX_ID` (the owner's address), so only the owner's workspace
 sends email; list other workspace ids in `SEND_WORKSPACE_IDS` to let them send too (otherwise approving their email
 draft answers 403 `sending_not_enabled`).
 
 API keys go to agents, so the REST routes that make a person's decisions refuse them with 403 `human_required`:
-deciding approvals, creating or revoking keys, setting a lead's consent, removing a suppression, and billing
-(`src/api/guards.ts`). A Clerk session (the app) or `MCP_TOKEN` can do all of these.
+deciding approvals, creating or revoking keys, setting a lead's consent, removing a suppression, billing, resuming after
+a pause, and changing a workflow's spend cap (`src/api/guards.ts`). A Clerk session (the app) or `MCP_TOKEN` can do all of
+these; resuming and spend caps also need the admin role. Anyone may pause.
 
 | Caller | Workspace |
 | --- | --- |
@@ -639,8 +640,8 @@ message per 10 minutes.
 
 - **Owner only.** The bridge acts only on direct messages from `OWNER_PHONE` (plus optional `OWNER_ALIASES`, such as the
   owner's Apple ID email). Everything else is logged with a masked handle and dropped. It only ever texts `OWNER_PHONE`,
-  and the Worker's notices carry no recipient. Setting `OWNER_PHONE` on the Worker too makes `/webhooks/photon` refuse
-  any other sender.
+  and the Worker's notices carry no recipient. `OWNER_PHONE` on the Worker makes `/webhooks/photon` refuse any other
+  sender; without it the route answers 503, since a tap sends real email.
 - **Signed calls.** Every bridge call is signed with HMAC-SHA256 over `<timestamp>.<path>.<raw body>`, using `BRIDGE_SECRET`:
   - Headers: `X-Crusonia-Timestamp` and `X-Crusonia-Signature: v1=<hex>`.
   - The 5-minute window rejects replays.
@@ -670,7 +671,7 @@ message per 10 minutes.
    the bridge.
 3. **Worker:**
    - `bun run migrate` (adds `imessage_outbox`).
-   - Set the secrets `BRIDGE_SECRET`, `IMESSAGE_ENABLED=true` and optionally `OWNER_PHONE`.
+   - Set the secrets `BRIDGE_SECRET`, `IMESSAGE_ENABLED=true` and `OWNER_PHONE`.
    - Deploy.
    - `GET /api/status` shows `imessage.bridge.online` once the bridge polls.
 4. **Bridge** on AWS Lightsail, $5/month (`nano_3_0`: 512 MB, public IPv4 included):
@@ -755,5 +756,5 @@ What a session reads and where it can send data must not meet, so there are two 
 | Starts work | no | lead ids and counts only, through the same gates, at most `AUTOPILOT_AGENT_STARTS_PER_HOUR` |
 | MCP URL | `/mcp?role=researcher` (a workspace copy: an `agent` key on `/mcp?ws=<id>`) | `/mcp?role=operator` (a workspace copy: an `operator` key on `/mcp?ws=<id>&role=operator`) |
 
-The tools a role lacks don't exist on its connection, and its Naive tool policy withholds them as well. Text the Operator writes that a researcher later reads (summary sections, notes, workflow text) may not add a link or an address. Neither agent, and no tool at all, can send email, decide an approval, change consent, raise a spend cap, or touch billing, API keys or suppressions. Starts go through our Worker over REST rather than Naive handoffs, because a handoff would skip the caps. `bun run setup --agent` creates or updates both agents and their vault credentials.
+The tools a role lacks don't exist on its connection, and its Naive tool policy withholds them as well. The Operator reads text that came from web pages and email, so nothing it writes may become something a researcher fetches or follows: it can't add leads or evidence, set a lead's website or LinkedIn URL, or write a workflow (a research session follows a workflow's text as the owner's), and text it writes that a researcher later reads (summary sections, notes, lead fields) may not add a link, a domain or an address. A Naive agent's key works only on `/mcp`. Neither agent, and no tool at all, can send email, decide an approval, change consent, raise a spend cap, or touch billing, API keys or suppressions. Starts go through our Worker over REST rather than Naive handoffs, because a handoff would skip the caps. `bun run setup --agent` creates or updates both agents and their vault credentials.
 

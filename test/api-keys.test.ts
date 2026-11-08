@@ -10,7 +10,7 @@ import type { Env } from "../src/env.ts";
 import worker from "../src/index.ts";
 import { actorOf } from "../src/lib/context.ts";
 import { ApiError } from "../src/lib/errors.ts";
-import { API_KEY_PREFIX, generateApiKey, hashApiKey, isApiKey, type ApiKeyLookup } from "../src/services/api-keys.ts";
+import { API_KEY_PREFIX, apiKeyBlocked, generateApiKey, hashApiKey, isApiKey, type ApiKeyLookup } from "../src/services/api-keys.ts";
 
 const env = (over: Partial<Env> = {}): Env => ({ PUBLIC_URL: "https://example.test", MCP_TOKEN: "owner-token", ...over });
 
@@ -167,5 +167,35 @@ describe("/mcp bearer middleware", () => {
       {} as ExecutionContext,
     );
     expect(res.status).toBe(401);
+  });
+});
+
+describe("BLOCKED_USER_IDS and API keys", () => {
+  const key = { id: "key_1", workspace_id: "ws_a" };
+  const stub = (blocked: boolean) => {
+    const calls: unknown[][] = [];
+    const sql = ((_: TemplateStringsArray, ...values: unknown[]) => {
+      calls.push(values);
+      return Promise.resolve([{ blocked }]);
+    }) as never;
+    return { sql, calls };
+  };
+
+  test("asks the database about the key and the workspace, with the audit actor form of each blocked id", async () => {
+    const { sql, calls } = stub(true);
+    expect(await apiKeyBlocked(sql, key, ["user_bad"])).toBe(true);
+    expect(calls[0]).toContainEqual(["clerk:user_bad"]);
+    expect(calls[0]).toContainEqual(["user_bad"]);
+    expect(calls[0]).toContain("key_1");
+    expect(calls[0]).toContain("ws_a");
+    expect(await apiKeyBlocked(stub(false).sql, key, ["user_bad"])).toBe(false);
+  });
+
+  test("the bearer check never looks when nobody is blocked", async () => {
+    const lookup = async () => ({ id: "key_1", name: "n", workspace_id: "ws_a", kind: "user" as const });
+    const token = `crs_live_${"a".repeat(64)}`;
+    // No DATABASE_URL: reaching apiKeyBlocked here would throw.
+    expect(await resolveBearer({ PUBLIC_URL: "https://x.test" }, token, lookup)).toMatchObject({ kind: "api_key", keyId: "key_1" });
+    expect(await resolveBearer({ PUBLIC_URL: "https://x.test", BLOCKED_USER_IDS: "" }, token, lookup)).toMatchObject({ kind: "api_key" });
   });
 });

@@ -54,6 +54,17 @@ async function failure(promise: Promise<unknown>) {
 }
 
 describe("authenticate", () => {
+  test("a Naive agent's key only works on /mcp: /api refuses it, and a person's key still passes", async () => {
+    const e = { ...env(), DATABASE_URL: undefined };
+    const key = `crs_live_${"a".repeat(64)}`;
+    for (const kind of ["agent", "operator"] as const) {
+      const lookup = async () => ({ id: "key_1", name: "Naive agent", workspace_id: "ws_a", kind });
+      expect(await failure(authenticate(e, `Bearer ${key}`, { lookupApiKey: lookup }))).toBe("403 agent_key_mcp_only");
+    }
+    const mine = async () => ({ id: "key_1", name: "Mine", workspace_id: "ws_a", kind: "user" as const });
+    expect(await authenticate(e, `Bearer ${key}`, { lookupApiKey: mine })).toMatchObject({ kind: "api_key", keyId: "key_1", workspaceId: "ws_a" });
+  });
+
   test("missing or non-Bearer Authorization is a 401", async () => {
     expect(await failure(authenticate(env(), undefined))).toBe("401 unauthorized");
     expect(await failure(authenticate(env(), "Basic abc"))).toBe("401 unauthorized");
