@@ -108,7 +108,7 @@ function Editor({ id, data, latest }: { id: string | null; data: ReturnType<type
               onChange={(e) => setName(e.target.value)}
               placeholder="Name"
               aria-label="Workflow name"
-              className="w-72 max-w-full rounded-md bg-transparent text-xl/7 font-semibold tracking-[-0.01em] text-ink outline-none placeholder:text-faint"
+              className="-mx-1.5 w-72 max-w-full rounded-md bg-transparent px-1.5 text-xl/7 font-semibold tracking-[-0.01em] text-ink outline-none placeholder:text-faint hover:bg-[#200D0D08] focus:bg-[#200D0D0A]"
             />
           )
         }
