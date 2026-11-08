@@ -856,3 +856,149 @@ from (select workspace_id from billing_accounts group by workspace_id having cou
       select workspace_id from credit_ledger where reason = 'grant' and source like 'signup:%'
       group by workspace_id having count(*) > 1) w;
 create unique index if not exists billing_accounts_ws_uq on billing_accounts (workspace_id);
+
+-- ---------------------------------------------------------------------------
+-- Demo backend: import cohorts, versioned workflow definitions, workflow runs, follow-ups. Additive and idempotent.
+-- Per workspace like everything above (the run tables reach their workspace through workflow_runs).
+-- ---------------------------------------------------------------------------
+
+-- `cohort`: the batch a lead first came in with. A CSV import (POST /api/import/commit) records its `source` label;
+-- the run history groups by it. Set once, never changed. `import_meta`: where an imported contact came from
+-- ({file, row, batch, source}: file name, 1-based row as a spreadsheet shows it, import batch id, the row's own
+-- source column). The consent text and timestamp per contact stay in consent_text / consent_at.
+alter table leads add column if not exists cohort text;
+alter table leads add column if not exists import_meta jsonb;
+-- leads_ws_cohort_idx (above) covers lookups by cohort.
+drop index if exists leads_cohort_idx;
+
+-- Qualification workflow definitions (src/services/workflow-defs.ts). A definition is a name, a trigger and a spend
+-- cap; its content lives in immutable versions: the ICP (the Company summary by default), research questions,
+-- evidence requirements, completion criteria ("done when"), the steps the builder shows, and the A/B variant arms
+-- (each an optional angle the drafting agent receives). Editing = a new version; runs pin the version they used.
+create table if not exists workflow_defs (
+  id             text primary key,
+  workspace_id   text not null references workspaces(id),
+  name           text not null,
+  source         text not null default 'user' check (source in ('user', 'claude_code', 'template')),
+  enabled        boolean not null default true,
+  trigger        jsonb not null default '{"kind": "manual", "label": "Run manually"}',
+  spend_cap_usd  numeric,
+  spend_period   text not null default 'week' check (spend_period in ('week', 'run')),
+  latest_version int not null default 1,
+  -- The workspace's default definition: what research follows for leads never run under a workflow, and what
+  -- GET/PUT /api/workflows/qualification read and write.
+  is_default     boolean not null default false,
+  created_by     text,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+create index if not exists workflow_defs_ws_idx on workflow_defs (workspace_id, updated_at desc);
+create unique index if not exists workflow_defs_default_uq on workflow_defs (workspace_id) where is_default;
+
+create table if not exists workflow_def_versions (
+  workflow_id        text not null references workflow_defs(id) on delete cascade,
+  version            int not null,
+  label              text,
+  steps              jsonb not null default '[]',
+  icp                jsonb not null default '{"source": "company_summary"}',
+  research_questions jsonb not null default '[]',
+  evidence_required  jsonb not null default '[]',
+  done_when          text,
+  variants           jsonb not null default '[]',
+  created_by         text,
+  created_at         timestamptz not null default now(),
+  primary key (workflow_id, version)
+);
+create or replace function workflow_def_versions_immutable() returns trigger language plpgsql as $$
+begin
+  raise exception 'workflow versions are immutable: create a new version instead';
+end
+$$;
+drop trigger if exists workflow_def_versions_no_update on workflow_def_versions;
+create trigger workflow_def_versions_no_update before update on workflow_def_versions
+  for each row execute function workflow_def_versions_immutable();
+
+-- A workspace's single qualification workflow (settings 'qualification_workflow:<workspace id>', from before
+-- definitions) becomes its default definition, version 1, keeping the requirement ids. Runs once per workspace.
+insert into workflow_defs (id, workspace_id, name, is_default, created_by)
+select 'wf_q_' || substr(md5(s.key), 1, 16), w.id, coalesce(s.value->>'name', 'Qualification'), true, 'migration'
+from settings s join workspaces w on s.key = 'qualification_workflow:' || w.id
+where not exists (select 1 from workflow_defs d where d.workspace_id = w.id and d.is_default)
+on conflict (id) do nothing;
+insert into workflow_def_versions (workflow_id, version, label, research_questions, evidence_required, done_when, created_by)
+select d.id, 1, 'Qualification workflow v' || coalesce(s.value->>'version', '1'),
+       coalesce(s.value->'research_questions', '[]'), coalesce(s.value->'evidence_requirements', '[]'),
+       nullif(array_to_string(array(select jsonb_array_elements_text(coalesce(s.value->'completion_criteria', '[]'))), E'\n'), ''),
+       'migration'
+from settings s join workflow_defs d on d.id = 'wf_q_' || substr(md5(s.key), 1, 16)
+where s.key like 'qualification_workflow:%'
+on conflict do nothing;
+
+-- One run of a workflow version on a cohort or a set of leads. Each lead in it keeps the variant it had when the
+-- run started and the research session started for it.
+create table if not exists workflow_runs (
+  id           text primary key,
+  workspace_id text not null references workspaces(id),
+  workflow_id  text not null references workflow_defs(id) on delete cascade,
+  version      int not null,
+  cohort       text,
+  test         boolean not null default false,
+  actor        text,
+  started_at   timestamptz not null default now(),
+  foreign key (workflow_id, version) references workflow_def_versions (workflow_id, version)
+);
+create index if not exists workflow_runs_wf_idx on workflow_runs (workflow_id, started_at desc);
+
+create table if not exists workflow_run_leads (
+  run_id     text not null references workflow_runs(id) on delete cascade,
+  lead_id    text not null references leads(id) on delete cascade,
+  variant    text not null,
+  cohort     text,
+  session_id text,
+  -- started | skipped | failed
+  status     text not null default 'started',
+  reason     text,
+  created_at timestamptz not null default now(),
+  primary key (run_id, lead_id)
+);
+create index if not exists workflow_run_leads_lead_idx on workflow_run_leads (lead_id, created_at desc);
+
+-- The workflow version a lead was last run under: its research brief and the missing-evidence gate follow it. Drafts
+-- and research sessions record the run, version, cohort (and drafts their variant) current when they were created.
+alter table leads add column if not exists workflow_id text;
+alter table leads add column if not exists workflow_version int;
+alter table leads add column if not exists workflow_run_id text;
+alter table drafts add column if not exists workflow_run_id text;
+alter table drafts add column if not exists workflow_id text;
+alter table drafts add column if not exists workflow_def_version int;
+alter table drafts add column if not exists cohort text;
+alter table naive_sessions add column if not exists workflow_run_id text;
+alter table naive_sessions add column if not exists workflow_id text;
+alter table naive_sessions add column if not exists workflow_def_version int;
+alter table naive_sessions add column if not exists cohort text;
+create index if not exists drafts_workflow_run_idx on drafts (workflow_run_id) where workflow_run_id is not null;
+create index if not exists naive_sessions_workflow_run_idx on naive_sessions (workflow_run_id) where workflow_run_id is not null;
+
+create or replace function record_workflow_run() returns trigger language plpgsql as $$
+begin
+  if new.lead_id is not null and new.workflow_run_id is null then
+    select l.workflow_run_id, l.workflow_id, l.workflow_version, l.cohort
+      into new.workflow_run_id, new.workflow_id, new.workflow_def_version, new.cohort
+    from leads l where l.id = new.lead_id;
+  end if;
+  return new;
+end
+$$;
+drop trigger if exists drafts_record_workflow_run on drafts;
+create trigger drafts_record_workflow_run before insert on drafts for each row execute function record_workflow_run();
+drop trigger if exists naive_sessions_record_workflow_run on naive_sessions;
+create trigger naive_sessions_record_workflow_run before insert on naive_sessions
+  for each row execute function record_workflow_run();
+
+-- Follow-ups (src/services/followups.ts): an email draft that follows up on a sent one, sent at `scheduled_for`. Each
+-- needs its own send approval. Approving one that isn't due yet moves it to status 'scheduled'; the minute cron sends
+-- it when due unless the lead replied, unsubscribed, the address was suppressed or Crusonia is paused. A real inbound
+-- reply cancels every pending or scheduled follow-up of the lead (src/services/inbound.ts).
+alter table drafts add column if not exists followup_of text references drafts(id) on delete cascade;
+alter table drafts add column if not exists scheduled_for timestamptz;
+create index if not exists drafts_scheduled_idx on drafts (scheduled_for) where status = 'scheduled';

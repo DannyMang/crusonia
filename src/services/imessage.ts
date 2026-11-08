@@ -477,6 +477,9 @@ export async function handleOwnerCommand(ctx: { sql: Sql; env: Env; fetch?: Fetc
       const c = await contextOf(sql, approval.code);
       const result = await approveAndSend({ sql, ws: WS, env, fetch: ctx.fetch, actor: IMESSAGE_ACTOR, via: "imessage" }, approval.code);
       const to = leadLabel(c);
+      if (result.status === "scheduled") {
+        return { ok: true, reply: `Approved. The follow-up to ${to} goes out ${result.send_at.slice(0, 16).replace("T", " ")} UTC unless they reply first.` };
+      }
       return result.status === "sent"
         ? { ok: true, reply: `Approved. Sent "${oneLine(c.draft_subject, 80)}" to ${to}.` }
         : { ok: true, reply: `Approved. Sending to ${to}; AgentMail hasn't confirmed yet, Crusonia checks again within minutes.` };

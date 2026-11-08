@@ -105,9 +105,9 @@ function Panel({ title, value }: { title: string; value: unknown }) {
   return (
     <div className="flex min-w-0 grow basis-0 flex-col overflow-clip rounded-lg border border-[#200D0D14] bg-white">
       <div className="flex h-6.5 shrink-0 items-center border-b border-b-[#200D0D14] bg-[#200D0D08] px-3">
-        <h4 className="text-[11px]/3.5 font-semibold tracking-[0.08em] text-faint">{title}</h4>
+        <h4 className="text-[11px]/3.5 font-semibold text-faint">{title}</h4>
       </div>
-      <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words px-3 py-2.5 font-sans text-xs/4.5 font-medium tabular-nums text-ink">
+      <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words px-3 py-2.5 font-sans text-xs/4.5 font-medium text-ink">
         {text || <span className="text-faint">Nothing recorded</span>}
       </pre>
     </div>
@@ -271,8 +271,8 @@ export function Timeline({
                   <tr id={id} className="border-b border-b-[#200D0D14] bg-[#BDE6891A]">
                     <td colSpan={colSpan} className="pb-3.5 pl-4 pr-4 sm:pl-13">
                       <div className="flex flex-col gap-2.5 sm:flex-row">
-                        <Panel title="INPUT" value={step.input} />
-                        <Panel title="OUTPUT" value={step.output} />
+                        <Panel title="Input" value={step.input} />
+                        <Panel title="Output" value={step.output} />
                       </div>
                     </td>
                   </tr>

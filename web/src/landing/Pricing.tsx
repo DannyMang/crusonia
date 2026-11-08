@@ -142,7 +142,7 @@ function TierCard({ plan: p }: { plan: CatalogPlan }) {
         ) : null}
       </div>
       <div className="flex flex-col gap-1.5">
-        <div className="tabular-nums text-6xl/14.25 font-semibold tracking-tighter text-ink">{priceAmount(p.price)}</div>
+        <div className="text-6xl/14.25 font-semibold tracking-tighter text-ink">{priceAmount(p.price)}</div>
         <div className="text-sm/4.5 font-medium text-muted">
           {p.kind === "free" ? `no monthly fee · credits from ${SMALLEST_PACK.price}` : `per month · includes ${credits$(p.monthly_credits)} of credit`}
         </div>
@@ -166,7 +166,7 @@ function TierCard({ plan: p }: { plan: CatalogPlan }) {
         {bulletsFor(p).map((b) => (
           <li key={b.text} className="flex items-center gap-2.5 text-sm/4.5">
             <span aria-hidden className="size-1.5 shrink-0 bg-ink" />
-            <span className="tabular-nums font-semibold text-ink">{b.value}</span>
+            <span className="font-semibold text-ink">{b.value}</span>
             <span className="font-medium text-muted">{b.text}</span>
           </li>
         ))}
@@ -178,7 +178,7 @@ function TierCard({ plan: p }: { plan: CatalogPlan }) {
 function Figure({ value, label }: { value: string; label: string }) {
   return (
     <div className="flex grow basis-0 flex-col items-center gap-0.75">
-      <span className="tabular-nums text-xl/6 font-semibold tracking-[-0.03em] text-ink">{value}</span>
+      <span className="text-xl/6 font-semibold tracking-[-0.03em] text-ink">{value}</span>
       <span className="text-[13px]/4 font-medium text-muted">{label}</span>
     </div>
   );

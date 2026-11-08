@@ -5,7 +5,7 @@ import type { Sql } from "../db.ts";
 import { OWNER_WORKSPACE_ID } from "./workspaces.ts";
 import { ProviderError, RateLimitError } from "../providers/http.ts";
 import { missingScopes } from "../providers/hubspot.ts";
-import { ENGAGED_STAGES, type CrmTarget, type SyncScope } from "./crm-fields.ts";
+import { ENGAGED_STAGES, REPLIED_SYNC_STAGES, type CrmTarget, type SyncScope } from "./crm-fields.ts";
 import { describeError } from "./errors.ts";
 
 export type QueueEntity = "lead" | "import";
@@ -159,6 +159,7 @@ export async function drain(
 /** SQL predicate over `leads l`: is the lead in this target's sync scope. */
 export function scopeSql(sql: Sql, target: CrmTarget, scope: SyncScope) {
   if (scope === "all") return sql`(l.email is not null or l.domain is not null)`;
+  if (scope === "replied") return sql`((l.email is not null or l.domain is not null) and l.stage = any(${[...REPLIED_SYNC_STAGES]}::text[]))`;
   return sql`((l.email is not null or l.domain is not null) and (
     l.consent_at is not null or l.qualified is true or l.stage = any(${[...ENGAGED_STAGES]}::text[])
     or (${target === "hubspot"}::boolean and (l.hubspot_id is not null or l.hubspot_company_id is not null) and l.score is not null)))`;

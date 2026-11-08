@@ -12,6 +12,7 @@ import type { Env } from "../src/env.ts";
 import worker from "../src/index.ts";
 import type { FetchFn } from "../src/providers/http.ts";
 import { verifyApiKey } from "../src/services/api-keys.ts";
+import { patchLead } from "../src/services/crm.ts";
 import { createDraft } from "../src/services/drafts.ts";
 import { handleAgentMailEvent } from "../src/services/inbound.ts";
 import { addLeads } from "../src/services/leads.ts";
@@ -433,7 +434,8 @@ suite("workspaces (database, faked Naive)", () => {
     await tool(keyA, "add_leads", { leads: [{ email: `c3-${run}@it.example.com`, source: "it", source_url: "https://example.com/z" }] });
     expect((await sql`select variant from leads where workspace_id = ${A} and email = ${`c3-${run}@it.example.com`}`)[0]!.variant).toBe(before);
     // A draft written in a run records the run and its workflow version; one written by a person records none.
-    await call(key, "PATCH", `/api/leads/${leadId}`, { consent: { text: "opted in" } });
+    // Consent is a person's decision (an API key gets 403 human_required, src/api/guards.ts): grant it as the owner would.
+    await patchLead(sql, ws, leadId, { consent: { text: "opted in" } }, "test");
     await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input, workflow_version)
               values (${`ses_ws_${run}_res`}, ${ws}, ${leadId}, 'research', 'running', ${JSON.stringify({ run_id: `run_${run}_res` })}::jsonb, 'research@3, agent v8')`;
     const draft = (await tool(key, "create_draft", { run_id: `run_${run}_res`, lead_id: leadId, subject: "Hi", body: "Body" })).data.draft;

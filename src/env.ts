@@ -85,6 +85,9 @@ export interface Env {
   // Which leads are pushed: "qualified" (default: opted in, qualified, in the send flow, or already in HubSpot
   // and scored) or "all".
   HUBSPOT_SYNC_SCOPE?: string;
+  // Comma list of cohorts (leads.cohort, the import source) HubSpot sync writes; unset = every cohort. With
+  // HUBSPOT_SYNC_SCOPE=replied this limits a demo to the contacts of one import that actually replied.
+  HUBSPOT_SYNC_COHORTS?: string;
   NOTION_SYNC_SCOPE?: string;
   // HubSpot import: the contact property that records an email opt-in, and the values that count as yes
   // (comma list, case-insensitive; default yes/true/1/...). Unset = imported contacts never get consent.

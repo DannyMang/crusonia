@@ -11,6 +11,8 @@ import { listWorkflows, microToUsd } from "./runs.ts";
 export type Pipeline = {
   found: number;
   researched: number;
+  /** Cumulative pipeline only: scored as qualified, or any later step. */
+  qualified?: number;
   drafted: number;
   awaiting_approval: number;
   sent: number;
@@ -19,13 +21,14 @@ export type Pipeline = {
 };
 
 /** How many leads ever reached each step (a lead that reached a later step counts in every earlier one). */
-export type FunnelCounts = { found: number; researched: number; drafted: number; sent: number; replied: number; meetings: number };
+export type FunnelCounts = { found: number; researched: number; qualified?: number; drafted: number; sent: number; replied: number; meetings: number };
 
 /**
- * The funnel, cumulative: found >= researched >= drafted >= sent >= replied >= meetings, so each number reads as
+ * The funnel, cumulative: found >= researched >= qualified >= drafted >= sent >= replied >= meetings, so each number reads as
  * "how many got this far". `awaiting_approval` is not a funnel step: it is how many leads have an email waiting for
  * the owner right now.
  *   found: every lead                       researched: scored, or any later step
+ *   qualified: scored as qualified, or any later step
  *   drafted: has a draft (any channel), or any later step
  *   sent: an outbound message (email, or a manual task marked sent), or any later step
  *   replied: an inbound reply or a reply stage, or a meeting        meetings: meeting_booked
@@ -35,9 +38,10 @@ export function cumulativePipeline(c: FunnelCounts, awaitingWithOpenApproval: nu
   const replied = Math.max(c.replied, meetings);
   const sent = Math.max(c.sent, replied);
   const drafted = Math.max(c.drafted, sent);
-  const researched = Math.max(c.researched, drafted);
+  const qualified = Math.max(c.qualified ?? 0, drafted);
+  const researched = Math.max(c.researched, qualified);
   const found = Math.max(c.found, researched);
-  return { found, researched, drafted, awaiting_approval: Math.max(0, awaitingWithOpenApproval), sent, replied, meetings };
+  return { found, researched, qualified, drafted, awaiting_approval: Math.max(0, awaitingWithOpenApproval), sent, replied, meetings };
 }
 
 /**
@@ -100,7 +104,7 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
           (select sum(usage_micro_usd)::text from apify_runs where workspace_id = ${ws} and created_at >= now() - interval '7 days') as week_apify_micro,
           coalesce((select paused from workspaces where id = ${ws}), false) as paused`,
     sql`with base as (
-          select l.stage, l.score,
+          select l.stage, l.score, l.qualified,
                  exists (select 1 from messages m where m.lead_id = l.id and m.direction = 'in') as has_in,
                  exists (select 1 from messages m where m.lead_id = l.id and m.direction = 'out') as has_out,
                  exists (select 1 from drafts d where d.lead_id = l.id) as has_draft
@@ -108,7 +112,7 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
           where l.workspace_id = ${ws}
         ),
         flags as (
-          select stage, score, has_draft,
+          select stage, score, qualified, has_draft,
                  stage = 'meeting_booked' as meeting,
                  (stage in ('replied', 'interested', 'not_interested', 'meeting_booked') or has_in) as replied,
                  (stage in ('sent', 'replied', 'interested', 'not_interested', 'meeting_booked') or has_in or has_out) as sent
@@ -117,6 +121,7 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
         select count(*)::int as found,
                (count(*) filter (where score is not null or stage in ('qualified', 'disqualified', 'needs_review', 'awaiting_approval')
                                    or has_draft or sent))::int as researched,
+               (count(*) filter (where qualified is true or has_draft or stage = 'awaiting_approval' or sent))::int as qualified,
                (count(*) filter (where has_draft or stage = 'awaiting_approval' or sent))::int as drafted,
                (count(*) filter (where sent))::int as sent,
                (count(*) filter (where replied))::int as replied,

@@ -60,12 +60,15 @@ const STAGE_FOR_LABEL: Record<ReplyLabel, string> = {
 
 const MAX_BODY = 50_000;
 
-/** Queries that stop pending follow-ups for a lead: open drafts are cancelled, pending send approvals closed. */
+/**
+ * Queries that stop pending follow-ups for a lead: open email drafts and approved follow-ups waiting for their send
+ * time ('scheduled', src/services/followups.ts) are cancelled, pending send approvals closed.
+ */
 function stopFollowUps(sql: Sql, ws: string, leadId: string, reason: string) {
   return [
     sql`with c as (
           update drafts set status = 'cancelled'
-          where workspace_id = ${ws} and lead_id = ${leadId} and status in ('draft', 'pending_approval')
+          where workspace_id = ${ws} and lead_id = ${leadId} and status in ('draft', 'pending_approval', 'scheduled')
           returning id
         )
         insert into events (workspace_id, lead_id, kind, data)

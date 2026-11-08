@@ -7,7 +7,8 @@ import { z } from "zod";
 import type { Approval, Draft, Lead, Sql } from "../db.ts";
 import { newId, variantFor } from "../ids.ts";
 import { normalizeDomain, whyNoDomain } from "./domains.ts";
-import { getQualificationWorkflow, missingEvidenceQuestion, missingRequirements, type RequirementGap } from "./qualification.ts";
+import { missingEvidenceQuestion, missingRequirements, type RequirementGap } from "./qualification.ts";
+import { workflowForLead } from "./workflow-defs.ts";
 import { ServiceError } from "./errors.ts";
 // Every function here acts on one workspace (`ws`): reads are filtered by it, writes are stamped with it, and a lead
 // id from another workspace is "not found".
@@ -611,9 +612,12 @@ export const scoreInputSchema = z.object({
   qualified: z.boolean().describe("Your verdict: is this lead worth pursuing?"),
 });
 
-/** Required evidence the lead doesn't have yet (the qualification workflow's), counting `adding` (this call's items). */
+/**
+ * Required evidence the lead doesn't have yet, counting `adding` (this call's items). The requirements are those of
+ * the workflow version the lead was run under, else the workspace's default workflow (./workflow-defs.ts).
+ */
 async function evidenceGaps(sql: Sql, ws: string, leadId: string, adding: { requirement?: string | null }[] = []): Promise<RequirementGap[]> {
-  const workflow = await getQualificationWorkflow(sql, ws);
+  const workflow = await workflowForLead(sql, ws, leadId);
   if (!workflow?.evidence_requirements.some((r) => r.required !== false)) return [];
   const rows = await sql`select distinct requirement from evidence where workspace_id = ${ws} and lead_id = ${leadId} and requirement is not null`;
   return missingRequirements(workflow, [...rows.map((r) => r.requirement as string), ...adding.map((e) => e.requirement)]);

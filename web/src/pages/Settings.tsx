@@ -121,7 +121,7 @@ function Suppressions() {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="name@company.com"
             aria-label="Email to suppress"
-            className="h-9 min-w-0 grow rounded-lg border border-[#200D0D24] px-3 tabular-nums text-[13px]/4 text-ink outline-none placeholder:text-[#200D0D73] focus:border-ink"
+            className="h-9 min-w-0 grow rounded-lg border border-[#200D0D24] px-3 text-[13px]/4 text-ink outline-none placeholder:text-[#200D0D73] focus:border-ink"
           />
           <Button type="submit" variant="outline" size="md" loading={add.isPending} disabled={!email.trim()}>
             Add
@@ -148,7 +148,7 @@ function Suppressions() {
           <div key={r.email} className="flex items-center gap-4 border-t border-t-[#200D0D0F] px-4 py-3 sm:px-6">
             {/* Phones: reason and date go under the address; from `sm` the three sit in one row. */}
             <div className="flex min-w-0 grow flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-4">
-              <div className="truncate tabular-nums text-[13px]/4 text-ink sm:grow">{r.email}</div>
+              <div className="truncate text-[13px]/4 text-ink sm:grow">{r.email}</div>
               <div className="flex gap-2 sm:contents">
                 <div className="text-xs/4 font-medium text-muted sm:w-28">{r.reason}</div>
                 <div className="text-xs/4 font-medium text-muted sm:w-28">{longDate(r.created_at)}</div>
@@ -175,7 +175,7 @@ function AccountCard() {
       <div className="flex min-w-0 flex-col gap-1">
         <h2 className={cardTitle}>Account</h2>
         <p className={muted}>
-          Signed in as <span className="tabular-nums text-ink">{user?.email ?? "—"}</span>
+          Signed in as <span className="text-ink">{user?.email ?? "—"}</span>
         </p>
       </div>
       <Button variant="soft" size="md" onClick={() => void signOut()}>
