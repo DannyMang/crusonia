@@ -36,7 +36,8 @@ export function feedItem(r: FeedRow): FeedItem | null {
   const row = (text: string, by: FeedItem["by"] = "agent"): FeedItem => ({ id: r.id, at: new Date(r.created_at).toISOString(), text, by, lead_id: r.lead_id });
   switch (r.kind) {
     case "lead_added": {
-      const why = shortWhy(r.why);
+      // The summary usually opens with the company's name: don't say it twice.
+      const why = shortWhy(r.why?.startsWith(`${name} `) ? r.why.slice(name.length + 1) : r.why);
       return d.via === "mcp" ? row(`Found ${name}${why ? ` · ${why}` : ""}`) : null;
     }
     case "find_leads_started":
@@ -129,6 +130,20 @@ const FEED_KINDS = [
   "autopilot_off",
 ];
 
+/**
+ * A lead-finding run scores a lead in the same call that adds it. That first score isn't research, and "Found" already
+ * says it, so it gets no row of its own: only a score at least this long after the lead was found does. Pure.
+ */
+const INLINE_SCORE_MS = 30_000;
+export function dropInlineScores(rows: FeedRow[]): FeedRow[] {
+  const found = new Map(rows.filter((r) => r.kind === "lead_added" && r.lead_id).map((r) => [r.lead_id!, new Date(r.created_at).getTime()]));
+  return rows.filter((r) => {
+    if (r.kind !== "lead_scored" || !r.lead_id) return true;
+    const at = found.get(r.lead_id);
+    return at === undefined || Math.abs(new Date(r.created_at).getTime() - at) > INLINE_SCORE_MS;
+  });
+}
+
 /** Newest first. `limit` rows are read; rows that say nothing are dropped. */
 export async function activityFeed(sql: Sql, ws: string, opts: { limit?: number } = {}): Promise<FeedItem[]> {
   const limit = Math.min(Math.max(opts.limit ?? 40, 1), 200);
@@ -138,7 +153,7 @@ export async function activityFeed(sql: Sql, ws: string, opts: { limit?: number 
     from events e left join leads l on l.id = e.lead_id
     where e.workspace_id = ${ws} and e.kind = any(${FEED_KINDS}::text[])
     order by e.id desc limit ${limit}`) as FeedRow[];
-  return rows.map(feedItem).filter((x): x is FeedItem => x !== null);
+  return dropInlineScores(rows).map(feedItem).filter((x): x is FeedItem => x !== null);
 }
 
 /** Things the agents did and times a person stepped in, over the last `days` days. */
@@ -170,12 +185,12 @@ const RUNNING_TEXT: Record<string, string> = {
   onboarding: "Writing the Company summary",
 };
 
-/** The sessions open right now, in plain words. */
+/** The sessions open right now, in plain words. One out of budget isn't open: it won't go on, and nothing waits on the owner. */
 export async function runningNow(sql: Sql, ws: string) {
   const rows = await sql`
     select s.id, s.purpose, s.status, s.stop_reason, s.lead_id, coalesce(l.company, l.name, l.domain, l.email) as who
     from naive_sessions s left join leads l on l.id = s.lead_id
-    where s.workspace_id = ${ws} and s.status in ('running', 'idle')
+    where s.workspace_id = ${ws} and s.status in ('running', 'idle') and coalesce(s.stop_reason, '') <> 'budget_paused'
     order by s.created_at desc limit 20`;
   return rows.map((r) => ({
     session_id: r.id as string,
@@ -183,9 +198,7 @@ export async function runningNow(sql: Sql, ws: string) {
     waiting_on_you: r.status === "idle",
     text:
       r.status === "idle"
-        ? r.stop_reason === "budget_paused"
-          ? `${r.who ?? "A run"} hit its budget`
-          : `Waiting for you${r.who ? ` on ${r.who}` : ""}`
+        ? `Waiting for you${r.who ? ` on ${r.who}` : ""}`
         : r.purpose === "research"
           ? `Researching ${r.who ?? "a lead"}`
           : r.purpose === "redraft"

@@ -16,6 +16,7 @@ import { activityFeed, autonomyCounts } from "../src/services/activity.ts";
 import { ensureAutopilotWorkflow, getAutopilot, operatorSnapshot, runAutopilot, setAutopilot } from "../src/services/autopilot.ts";
 import { writeCompanySummary } from "../src/services/company-summary.ts";
 import { addLeads } from "../src/services/leads.ts";
+import { spendStatus } from "../src/services/limits.ts";
 import { addNote } from "../src/services/notes.ts";
 import { handleSessionIdle } from "../src/services/workflows.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
@@ -202,7 +203,7 @@ suite("autopilot (database, mocked Naive)", () => {
     // The feed and the tally.
     const feed = await activityFeed(sql, ws);
     const lines = feed.map((f) => f.text);
-    expect(lines.some((l) => l.startsWith("Found alpha · alpha is hiring"))).toBe(true);
+    expect(lines.some((l) => l.startsWith("Found alpha · is hiring"))).toBe(true);
     expect(lines).toContain("Autopilot on");
     expect(lines.some((l) => l.startsWith("Finished a run"))).toBe(true);
     const counts = await autonomyCounts(sql, ws);
@@ -316,6 +317,10 @@ suite("autopilot (database, mocked Naive)", () => {
     await runAutopilot(sql, env, n.fn);
     const [r] = await sql`select phase from workflow_runs where workspace_id = ${ws}`;
     expect(r!.phase).toBe("done");
+    // Nothing waits on the owner, and these sessions don't use up the workspace's active limit.
+    await sql`update naive_sessions set status = 'done' where workspace_id = ${ws} and purpose = 'operate'`;
+    expect((await getAutopilot(sql, env, ws)).running).toEqual([]);
+    expect((await spendStatus(sql, env, ws)).active_sessions).toBe(0);
   }, 60_000);
 
   test("imports nobody ran start by themselves on the default workflow; consented ones first", async () => {
