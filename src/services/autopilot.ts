@@ -354,7 +354,7 @@ async function provisionNew(sql: Sql, env: Env, tick: Tick): Promise<string[]> {
     select w.id from workspaces w
     where w.autopilot_provisioned_at is null
       and ${canRun(sql, { ...tick, capReached: false })}
-      and exists (select 1 from company_summary_versions v where v.workspace_id = w.id)
+      and exists (select 1 from company_summaries v where v.workspace_id = w.id)
       and not exists (select 1 from naive_sessions s where s.workspace_id = w.id and s.purpose = 'onboarding' and s.status in ('running', 'idle'))
     order by w.created_at
     limit ${MAX_WORKSPACES_PER_TICK}`;
@@ -749,7 +749,7 @@ async function runOperators(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
               and (e.kind in ('workflow_run_finished', 'email_received') or (e.kind = 'note_added' and e.data->>'author' like 'user:%'))) as changed
     from workspaces w
     where w.autopilot and not w.paused and ${canRun(sql, tick)} and ${hasCredits(sql)}
-      and exists (select 1 from company_summary_versions v where v.workspace_id = w.id)
+      and exists (select 1 from company_summaries v where v.workspace_id = w.id)
     ) x
     where not x.open_session and not x.active_run and (x.changed or x.next_at is null or x.next_at <= now())
     order by x.next_at nulls first

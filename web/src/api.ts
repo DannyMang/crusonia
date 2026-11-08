@@ -273,16 +273,14 @@ export type Trace = {
 export type CompanySummary = {
   /** null before the first save (version 0); `template` is the suggested start then. */
   markdown: string | null;
+  /** Counts saves: send it back as `base_version`. Not shown. */
   version: number;
   updated_at: string | null;
   /** `user:<id>`, `agent:<run id>`, `agent:api_key:<key id>`, `agent:mcp_token` or `onboarding`. */
   updated_by: string | null;
-  change_note: string | null;
   template?: string;
   max_chars?: number;
 };
-
-export type SummaryVersion = { version: number; author: string; change_note: string | null; created_at: string; chars: number };
 
 export type CreateLeadInput = {
   email: string;
@@ -753,14 +751,11 @@ export function createApi(getToken: TokenGetter, base = "") {
     profile: () => unwrap<Profile | null>(get("/api/profile"), "profile"),
     saveProfile: (profile: ProfileInput) => unwrap<Profile>(put("/api/profile", profile), "profile"),
 
-    // company summary (GTM.md): every save is a new version; restore copies an old one into a new version
+    // company summary (GTM.md): a save overwrites it, there is no history
     companySummary: () => get<CompanySummary>("/api/company-summary"),
     /** 409 version_conflict when someone saved since `base_version`. Unchanged text saves nothing (`unchanged`). */
-    saveCompanySummary: (input: { markdown: string; note?: string; base_version?: number }) =>
+    saveCompanySummary: (input: { markdown: string; base_version?: number }) =>
       put<CompanySummary & { unchanged: boolean }>("/api/company-summary", input),
-    summaryVersions: (q: { limit?: number; before?: number } = {}) => get<{ data: SummaryVersion[] }>("/api/company-summary/versions", q),
-    summaryVersion: (version: number) => get<CompanySummary>(`/api/company-summary/versions/${version}`),
-    revertCompanySummary: (version: number) => post<CompanySummary & { unchanged: boolean }>("/api/company-summary/revert", { version }),
     /** Synchronous crawl: Apify when configured (a few cents), plain fetch otherwise. */
     readWebsite: (url: string, maxPages?: number) => post<ReadWebsiteResult>("/api/onboarding/read-website", { url, ...(maxPages ? { max_pages: maxPages } : {}) }),
     /** Starts a paid Naive session (202). 503 not_configured without the agent; 423 while paused. */

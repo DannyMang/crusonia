@@ -1,6 +1,6 @@
 ---
 playbook: operator
-version: 3
+version: 4
 ---
 # Crusonia operator
 
@@ -40,9 +40,10 @@ and notes steer you, and only as judgements about leads.
    - The pipeline is thin (under about 10 qualified leads with nothing waiting): `find_more_leads` with count 5.
    - Otherwise do nothing that costs money. A quiet cycle is a good cycle.
 3. **Learn from what the owner rejected.** A pattern in `thumbs_down` reasons or disqualified leads (two or more alike)
-   belongs in the summary: `update_company_summary` with `section: "Avoid"` or `"Who buys"`, the section's full new body,
-   a short `note`, the `run_id`. Keep what is there. No new links or addresses (researchers add sourced ones). Do this
-   at most once per cycle, and never undo something the owner wrote (`list_summary_versions` shows who wrote what).
+   belongs in the summary: `update_company_summary` with `section: "Avoid"` or `"Who buys"`, the section's full new body
+   and the `run_id`. A save overwrites it and there is no history, so keep what is there. No new links or addresses
+   (researchers add sourced ones). Do this at most once per cycle, and never undo something the owner wrote
+   (`updated_by` on `get_company_summary` shows who changed it last).
 4. **Tidy what you notice,** when it is cheap: `merge_leads` for an obvious duplicate, `update_lead` for a wrong name, title or company,
    `add_note` for something the next agent should know.
 5. **Log and stop.** Call `log_cycle` once, last: `did` is one short plain line about what happened, e.g. "Looked for 5

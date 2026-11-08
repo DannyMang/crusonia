@@ -204,14 +204,13 @@ describe("the feed", () => {
 });
 
 describe("the feed's Company summary row", () => {
-  const row = (note: string) =>
-    feedItem({ id: "1", kind: "company_summary_updated", data: { author: "agent:s", note }, created_at: "2026-11-08T00:00:00Z", lead_id: null, who: null, score: null, why: null });
-  test("a long note is cut with an ellipsis, not mid-word", () => {
-    const text = row("Proposed initial profile from the product and pricing pages; unspecified markets were left open")!.text;
-    expect(text.endsWith("…")).toBe(true);
-    expect(text.length).toBeLessThanOrEqual("Updated the Company summary · ".length + 80);
+  const row = (data: Record<string, unknown>) =>
+    feedItem({ id: "1", kind: "company_summary_updated", data, created_at: "2026-11-08T00:00:00Z", lead_id: null, who: null, score: null, why: null });
+  test("it says an agent updated the summary; an old event's note isn't shown", () => {
+    expect(row({ author: "agent:s" })!.text).toBe("Updated the Company summary");
+    expect(row({ author: "agent:s", note: "Added Series B+ to Avoid" })!.text).toBe("Updated the Company summary");
   });
-  test("a short note stays whole", () => {
-    expect(row("Saved")!.text).toBe("Updated the Company summary · Saved");
+  test("a person's edit is theirs", () => {
+    expect(row({ author: "user:u" })!.text).toBe("You edited the Company summary");
   });
 });

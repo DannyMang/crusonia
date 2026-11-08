@@ -136,6 +136,8 @@ function ProfileCard() {
 function Suppressions() {
   const api = useApi();
   const qc = useQueryClient();
+  // Anyone may add an address; only owners and admins may take one off (the server answers 403 forbidden_role).
+  const { canManage } = useRole();
   const [q, setQ] = useState("");
   const [email, setEmail] = useState("");
   const list = useQuery({ queryKey: keys.suppressions(q), queryFn: () => api.suppressions({ q: q || undefined, limit: 100 }) });
@@ -202,9 +204,11 @@ function Suppressions() {
                 <div className="text-xs/4 font-medium text-muted sm:w-28">{longDate(r.created_at)}</div>
               </div>
             </div>
-            <Button variant="danger" size="sm" onClick={() => window.confirm(`Allow ${r.email} to be contacted again?`) && remove.mutate(r.email)}>
-              Remove
-            </Button>
+            {canManage ? (
+              <Button variant="danger" size="sm" onClick={() => window.confirm(`Allow ${r.email} to be contacted again?`) && remove.mutate(r.email)}>
+                Remove
+              </Button>
+            ) : null}
           </div>
         ))
       ) : (

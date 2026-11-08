@@ -42,7 +42,6 @@ export const OPERATOR_TOOLS = [
   "get_activity",
   "get_autopilot",
   "get_company_summary",
-  "list_summary_versions",
   "get_profile",
   "list_leads",
   "get_lead",

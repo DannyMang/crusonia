@@ -8,7 +8,8 @@ import { UploadIcon } from "../../components/icons.tsx";
 import { Button, ButtonLink, EmptyState, QueryError, Skeleton } from "../../components/ui.tsx";
 import { csvColumns, csvRowCount } from "../../lib/csv.ts";
 import { cx, num, shortDate } from "../../lib/format.ts";
-import { assignField, guessMapping, IMPORT_FIELDS, toMapping, type ImportMapField } from "../../lib/import-mapping.ts";
+import { assignField, guessMapping, importFields, toMapping, type ImportMapField } from "../../lib/import-mapping.ts";
+import { useRole } from "../../queries.ts";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -41,6 +42,9 @@ export default function ImportCsv() {
   const [map, setMap] = useState<Record<string, ImportMapField | "">>({});
   const [source, setSource] = useState("");
   const commit = useImportCommit();
+  // Consent decides who may be emailed: only owners and admins map it or see it in the preview.
+  const { canManage } = useRole();
+  const fields = useMemo(() => importFields(canManage), [canManage]);
 
   async function pick(f: File | undefined) {
     setPickError(null);
@@ -56,7 +60,7 @@ export default function ImportCsv() {
     commit.reset();
   }
 
-  const mapping = useMemo<ImportMapping>(() => toMapping(map), [map]);
+  const mapping = useMemo<ImportMapping>(() => toMapping(map, fields), [map, fields]);
   const debouncedSource = useDebounced(source);
   // The debounce is still empty right after a pick, and an empty source is refused: use what's in the field until it catches up.
   const body: ImportBody | null = file ? { csv: file.csv, mapping, source: (debouncedSource.trim() || source).trim(), file_name: file.name } : null;
@@ -134,7 +138,8 @@ export default function ImportCsv() {
               <div className="w-37.5 shrink-0">Crusonia field</div>
             </div>
             {file.columns.map((col, i) => {
-              const field = map[col] ?? "";
+              const guessed = map[col] ?? "";
+              const field = guessed && fields.includes(guessed) ? guessed : "";
               return (
                 <div key={col} className={cx("flex h-11.5 shrink-0 items-center gap-2 px-4", i > 0 && "border-t border-t-[#200D0D0F]")}>
                   <div className={cx("min-w-0 grow basis-0 truncate text-[13px]/4", field ? "text-ink" : "text-muted")}>{col}</div>
@@ -149,7 +154,7 @@ export default function ImportCsv() {
                       )}
                     >
                       <option value="">Skip</option>
-                      {IMPORT_FIELDS.map((f) => (
+                      {fields.map((f) => (
                         <option key={f} value={f}>
                           {FIELD_LABEL[f]}
                         </option>
@@ -172,7 +177,7 @@ export default function ImportCsv() {
             </label>
           </section>
 
-          <PreviewTable rows={preview.data?.rows ?? null} counts={counts ?? null} loading={preview.isPending} error={preview.error} onRetry={() => void preview.refetch()} />
+          <PreviewTable rows={preview.data?.rows ?? null} counts={counts ?? null} loading={preview.isPending} error={preview.error} onRetry={() => void preview.refetch()} showConsent={canManage} />
         </div>
       )}
     </Page>
@@ -254,12 +259,14 @@ function PreviewTable({
   loading,
   error,
   onRetry,
+  showConsent,
 }: {
   rows: ImportPreviewRow[] | null;
   counts: { new: number; duplicate: number; invalid: number } | null;
   loading: boolean;
   error: unknown;
   onRetry: () => void;
+  showConsent: boolean;
 }) {
   const [all, setAll] = useState(false);
   const shown = rows ? (all ? rows : rows.slice(0, SHOWN)) : [];
@@ -300,9 +307,11 @@ function PreviewTable({
                 <th scope="col" className="w-28 font-medium xl:w-33">
                   Company
                 </th>
-                <th scope="col" className="w-25 font-medium">
-                  Consent
-                </th>
+                {showConsent ? (
+                  <th scope="col" className="w-25 font-medium">
+                    Consent
+                  </th>
+                ) : null}
                 <th scope="col" className="w-26 pr-4 font-medium xl:w-33.5">
                   Source
                 </th>
@@ -310,7 +319,7 @@ function PreviewTable({
             </thead>
             <tbody>
               {shown.map((r, i) => (
-                <PreviewRow key={r.row} r={r} first={i === 0} />
+                <PreviewRow key={r.row} r={r} first={i === 0} showConsent={showConsent} />
               ))}
             </tbody>
           </table>
@@ -325,7 +334,7 @@ function PreviewTable({
   );
 }
 
-function PreviewRow({ r, first }: { r: ImportPreviewRow; first: boolean }) {
+function PreviewRow({ r, first, showConsent }: { r: ImportPreviewRow; first: boolean; showConsent: boolean }) {
   const pill = STATUS_PILL[r.status];
   const sub =
     r.status === "invalid"
@@ -345,7 +354,9 @@ function PreviewRow({ r, first }: { r: ImportPreviewRow; first: boolean }) {
         <div className={cx("truncate text-xs/4", r.status === "invalid" ? "text-[#B42318]" : "text-muted")}>{sub}</div>
       </td>
       <td className={cx("max-w-0 truncate pr-3 text-[13px]/4", r.company || r.domain ? "text-ink" : "text-muted")}>{r.company ?? r.domain ?? "—"}</td>
-      <td className={cx("whitespace-nowrap pr-3 text-[13px]/4", r.consent ? "text-ink" : "text-muted")}>{r.consent ? `Yes${r.consent_at ? ` · ${dayLabel(r.consent_at)}` : ""}` : "No"}</td>
+      {showConsent ? (
+        <td className={cx("whitespace-nowrap pr-3 text-[13px]/4", r.consent ? "text-ink" : "text-muted")}>{r.consent ? `Yes${r.consent_at ? ` · ${dayLabel(r.consent_at)}` : ""}` : "No"}</td>
+      ) : null}
       <td className="max-w-0 truncate pr-4 text-xs/4 text-muted">{r.source ?? "—"}</td>
     </tr>
   );

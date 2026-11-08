@@ -51,10 +51,10 @@ describe("research playbook", () => {
     expect(body).toContain("Don't call `get_status`");
   });
 
-  test("v4 reads the Company summary first, keeps it current by section with a note, and passes the run id", () => {
+  test("it reads the Company summary first, keeps it current by section, and passes the run id", () => {
     const { body, version } = parsePlaybook(playbookText);
     expect(Number(version)).toBeGreaterThanOrEqual(4);
-    for (const phrase of ["`get_company_summary`", "`update_company_summary`", "Read it first, every session", "`section`", "`note`", "`run_id`", "Avoid section"]) {
+    for (const phrase of ["`get_company_summary`", "`update_company_summary`", "Read it first, every session", "`section`", "`run_id`", "Avoid section", "no history"]) {
       expect(body).toContain(phrase);
     }
   });

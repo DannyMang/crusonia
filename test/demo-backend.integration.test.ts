@@ -17,6 +17,7 @@ import { handleAgentMailEvent } from "../src/services/inbound.ts";
 import { saveResearch } from "../src/services/leads.ts";
 import { approveAndSend } from "../src/services/send.ts";
 import { listRuns, runWorkflow } from "../src/services/workflow-runs.ts";
+import { testClerk } from "./helpers/clerk.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -31,6 +32,8 @@ let key = "";
 // A second workspace: must never see or change the first one's data.
 let WS_B = "";
 let keyB = "";
+/** A Clerk session of the workspace's owner: what an API key may not do (src/api/guards.ts). */
+let session = "";
 const env: Env = {
   PUBLIC_URL: "https://example.test",
   DATABASE_URL: url,
@@ -112,8 +115,11 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
   beforeAll(async () => {
     sql = getSql(url);
     // Everything happens in a throwaway workspace, deleted afterwards.
-    WS = await createTestWorkspace(sql, `demo_${run}`);
+    const clerk = await testClerk();
+    env.CLERK_JWT_KEY = clerk.pem;
+    WS = await createTestWorkspace(sql, `demo_${run}`, { clerkUserId: `user_it_demo_${run}` });
     key = await testKey(sql, WS);
+    session = await clerk.token(`user_it_demo_${run}`);
     WS_B = await createTestWorkspace(sql, `demob_${run}`);
     keyB = await testKey(sql, WS_B);
     // A workspace other than the owner's runs on its own copy of the template agent; pretend it exists.
@@ -228,7 +234,11 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     });
     expect(bad.status).toBe(422);
 
-    const off = (await api("PATCH", `/api/workflow-definitions/${workflowId}`, { enabled: false, cap_usd: 3 })).json;
+    // A spend cap takes a person: an API key is refused, whatever else it asks for.
+    const refused = await api("PATCH", `/api/workflow-definitions/${workflowId}`, { enabled: false, cap_usd: 3 });
+    expect([refused.status, refused.json.error.code]).toEqual([403, "human_required"]);
+    expect((await api("GET", `/api/workflow-definitions/${workflowId}`)).json.workflow).toMatchObject({ enabled: true });
+    const off = (await api("PATCH", `/api/workflow-definitions/${workflowId}`, { enabled: false, cap_usd: 3 }, () => session)).json;
     expect(off.workflow).toMatchObject({ enabled: false, status: "off", spend: { cap_usd: 3, period: "week" } });
     await api("PATCH", `/api/workflow-definitions/${workflowId}`, { enabled: true });
     expect((await api("GET", "/api/workflow-definitions")).json.data.some((d: { id: string }) => d.id === workflowId)).toBe(true);

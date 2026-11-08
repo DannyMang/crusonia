@@ -55,7 +55,7 @@ describe("plans", () => {
     expect(PACKS.every((p) => p.credits > 0)).toBe(true);
   });
 
-  test("placeholder tiers (Free / Pro $20 / Scale $100): 1 credit = $0.01, Pro 2,000 credits, Scale 10,000 credits", () => {
+  test("the tiers (Free / Pro $20 / Scale $100): 1 credit = $0.01, Pro 2,000 credits, Scale 10,000 credits", () => {
     expect(planByKey("pro")).toMatchObject({ unitAmount: 2_000, monthlyCredits: 2_000, interval: "month", lookupKey: "crusonia_pro_monthly" });
     expect(planByKey("scale")).toMatchObject({ unitAmount: 10_000, monthlyCredits: 10_000, interval: "month", lookupKey: "crusonia_scale_monthly" });
     expect(FREE_PLAN).toMatchObject({ key: "free", unitAmount: 0 });
