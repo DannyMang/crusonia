@@ -158,6 +158,13 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     expect(refused.status).toBe(403);
     expect(refused.json.error.code).toBe("human_required");
     expect((await sql`select count(*)::int as n from leads where workspace_id = ${WS} and cohort = ${cohort}`)[0]!.n).toBe(0);
+    // The legacy POST /api/leads/import follows the same rule: a mapped consent column is refused, a guessed one ignored.
+    const legacyCsv = `Email,Opted in\n${mail("legacy")},yes\n`;
+    const legacy = await api("POST", "/api/leads/import", { csv: legacyCsv, mapping: { email: "Email", consent: "Opted in" }, source: "it_demo" });
+    expect(legacy.status).toBe(403);
+    expect((await api("POST", "/api/leads/import", { csv: legacyCsv, source: "it_demo" })).json).toMatchObject({ created: 1 });
+    expect((await sql`select consent_at, stage from leads where workspace_id = ${WS} and email = ${mail("legacy")}`)[0]).toMatchObject({ consent_at: null, stage: "no_consent" });
+
     const committed = await commitImport(sql, WS, body, "test");
     expect(committed).toMatchObject({ created: 2, updated: 1, skipped: 2, cohort });
     const leads = await sql`select id, email, domain, stage, cohort, source, consent_text, consent_at, import_meta from leads
