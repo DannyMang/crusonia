@@ -3,8 +3,8 @@
 // purpose; a run is one session (src/services/runs.ts).
 import { Hono } from "hono";
 import { z } from "zod";
-import { billingOwnerOf, requireCredits } from "../billing/accounts.ts";
-import { actorOf, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
+import { requireCredits } from "../billing/accounts.ts";
+import { actorOf, parseJson, parseQuery, sqlFor, wsOf, type AppEnv } from "../lib/context.ts";
 import { LEAD_STAGES } from "../services/crm.ts";
 import { getRunDetail, listWorkflows } from "../services/runs.ts";
 import { MAX_RESEARCH_BATCH, startResearch } from "../services/workflows.ts";
@@ -15,11 +15,11 @@ const ListQuery = z.object({ runs: z.coerce.number().int().min(0).max(50).defaul
 
 workflows.get("/", async (c) => {
   const q = parseQuery(c, ListQuery);
-  return c.json({ data: await listWorkflows(sqlFor(c.env), { recentRuns: q.runs }) });
+  return c.json({ data: await listWorkflows(sqlFor(c.env), wsOf(c), { recentRuns: q.runs }) });
 });
 
 // Steps come from cached Naive events (refreshed from Naive's free events API) plus our audit events.
-workflows.get("/runs/:session_id", async (c) => c.json(await getRunDetail(sqlFor(c.env), c.env, c.req.param("session_id"))));
+workflows.get("/runs/:session_id", async (c) => c.json(await getRunDetail(sqlFor(c.env), c.env, wsOf(c), c.req.param("session_id"))));
 
 const ResearchBody = z
   .object({
@@ -40,7 +40,7 @@ const ResearchBody = z
 workflows.post("/research", async (c) => {
   const body = await parseJson(c, ResearchBody);
   const principal = c.get("principal");
-  await requireCredits(c.env, principal); // 402 insufficient_credits when BILLING_ENFORCED and the balance is <= 0
-  const result = await startResearch(sqlFor(c.env), c.env, body, actorOf(principal), undefined, { billingOwnerId: billingOwnerOf(principal) });
+  await requireCredits(c.env, principal, wsOf(c)); // 402 insufficient_credits when the workspace's balance is <= 0
+  const result = await startResearch(sqlFor(c.env), c.env, wsOf(c), body, actorOf(principal));
   return c.json(result, result.started.length ? 202 : 200);
 });

@@ -1,8 +1,11 @@
 // Leads: agent-found people/companies (no consent), listing, detail, evidence and scoring.
-// Every write also appends an `events` row in the same statement or transaction.
+// Every write also appends an `events` row in the same statement or transaction. Every function acts on one
+// workspace (`ws`): reads are filtered by it, writes are stamped with it, and a lead id from another workspace is
+// "not found".
 import { z } from "zod";
 import type { Approval, Draft, Lead, Sql } from "../db.ts";
 import { newId, variantFor } from "../ids.ts";
+import { registrableDomain } from "./domains.ts";
 import { ServiceError } from "./errors.ts";
 
 // Stages a lead can be in (see schema.sql). Agent-found leads start (and stay) in `no_consent`.
@@ -55,17 +58,12 @@ export type AddLeadResult = {
   reason?: string;
 };
 
-/** "https://www.Acme.com/about" or "WWW.acme.com" -> "acme.com". Returns null if it doesn't look like a domain. */
+/**
+ * "https://www.Acme.com/about", "WWW.acme.com" or "blog.acme.com" -> "acme.com": the registrable domain, so a
+ * company is stored once per workspace (./domains.ts). Null if it doesn't look like a domain.
+ */
 export function normalizeDomain(value: string | null | undefined): string | null {
-  if (!value) return null;
-  let host = value.trim().toLowerCase();
-  try {
-    host = new URL(/^[a-z][a-z0-9+.-]*:\/\//.test(host) ? host : `https://${host}`).hostname;
-  } catch {
-    return null;
-  }
-  host = host.replace(/^www\./, "").replace(/\.$/, "");
-  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) ? host : null;
+  return registrableDomain(value);
 }
 
 type Row = {
@@ -88,7 +86,7 @@ type Row = {
  * company, website and LinkedIn values replace older ones. New leads get stage
  * `no_consent`: Crusonia never emails them (sends require recorded consent).
  */
-export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results: AddLeadResult[]; counts: Record<string, number> }> {
+export async function addLeads(sql: Sql, ws: string, inputs: LeadInput[]): Promise<{ results: AddLeadResult[]; counts: Record<string, number> }> {
   if (inputs.length > MAX_LEADS_PER_CALL) {
     throw new ServiceError("invalid", `Send at most ${MAX_LEADS_PER_CALL} leads per call (got ${inputs.length}).`);
   }
@@ -142,7 +140,7 @@ export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results
   // People who asked not to be contacted are not stored again.
   const suppressed = new Set<string>();
   if (withEmail.length) {
-    const found = await sql`select email from suppressions where email = any(${withEmail.map((r) => r.email)}::text[])`;
+    const found = await sql`select email from suppressions where workspace_id = ${ws} and email = any(${withEmail.map((r) => r.email)}::text[])`;
     for (const r of found) suppressed.add(r.email as string);
   }
   const emailRows = withEmail.filter((r) => !suppressed.has(r.email!));
@@ -158,13 +156,13 @@ export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results
       promoted as (
         update leads l set email = i.email, updated_at = now()
         from input i
-        where l.email is null and i.domain is not null and coalesce(i.name, '') <> ''
+        where l.workspace_id = ${ws} and l.email is null and i.domain is not null and coalesce(i.name, '') <> ''
           and l.domain = i.domain and coalesce(lower(l.name), '') = lower(i.name)
-          and not exists (select 1 from leads e where e.email = i.email)
+          and not exists (select 1 from leads e where e.workspace_id = ${ws} and e.email = i.email)
         returning l.id, l.email, i.source, i.source_url
       )
-      insert into events (lead_id, kind, data)
-      select id, 'lead_email_found', jsonb_build_object('via', 'mcp', 'email', email, 'source', source, 'source_url', source_url)
+      insert into events (workspace_id, lead_id, kind, data)
+      select ${ws}, id, 'lead_email_found', jsonb_build_object('via', 'mcp', 'email', email, 'source', source, 'source_url', source_url)
       from promoted`);
     queries.push(sql`
       with input as (
@@ -173,9 +171,9 @@ export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results
           linkedin_url text, source text, source_url text, variant text)
       ),
       up as (
-        insert into leads as l (id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage)
-        select id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent' from input
-        on conflict (email) do update set
+        insert into leads as l (id, workspace_id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage)
+        select id, ${ws}, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent' from input
+        on conflict (workspace_id, email) do update set
           name = coalesce(l.name, excluded.name),
           title = coalesce(excluded.title, l.title),
           company = coalesce(excluded.company, l.company),
@@ -186,8 +184,8 @@ export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results
         returning l.id, l.email, l.stage, (l.xmax = 0) as inserted
       ),
       ev as (
-        insert into events (lead_id, kind, data)
-        select up.id, case when up.inserted then 'lead_added' else 'lead_updated' end,
+        insert into events (workspace_id, lead_id, kind, data)
+        select ${ws}, up.id, case when up.inserted then 'lead_added' else 'lead_updated' end,
                jsonb_build_object('via', 'mcp', 'source', i.source, 'source_url', i.source_url)
         from up join input i on i.email = up.email
       )
@@ -202,9 +200,9 @@ export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results
           linkedin_url text, source text, source_url text, variant text)
       ),
       up as (
-        insert into leads as l (id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage)
-        select id, null, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent' from input
-        on conflict (domain, (coalesce(lower(name), ''))) where email is null do update set
+        insert into leads as l (id, workspace_id, email, name, title, company, domain, website, linkedin_url, source, source_url, variant, stage)
+        select id, ${ws}, null, name, title, company, domain, website, linkedin_url, source, source_url, variant, 'no_consent' from input
+        on conflict (workspace_id, domain, (coalesce(lower(name), ''))) where email is null do update set
           title = coalesce(excluded.title, l.title),
           company = coalesce(excluded.company, l.company),
           website = coalesce(excluded.website, l.website),
@@ -213,8 +211,8 @@ export async function addLeads(sql: Sql, inputs: LeadInput[]): Promise<{ results
         returning l.id, l.domain, l.name, l.stage, (l.xmax = 0) as inserted
       ),
       ev as (
-        insert into events (lead_id, kind, data)
-        select up.id, case when up.inserted then 'lead_added' else 'lead_updated' end,
+        insert into events (workspace_id, lead_id, kind, data)
+        select ${ws}, up.id, case when up.inserted then 'lead_added' else 'lead_updated' end,
                jsonb_build_object('via', 'mcp', 'source', i.source, 'source_url', i.source_url)
         from up join input i on i.domain = up.domain and coalesce(lower(i.name), '') = coalesce(lower(up.name), '')
       )
@@ -253,14 +251,14 @@ export type LeadSummary = Pick<
   "id" | "email" | "name" | "title" | "company" | "domain" | "stage" | "score" | "qualified" | "source" | "updated_at"
 > & { has_consent: boolean };
 
-export async function listLeads(sql: Sql, opts: { stage?: LeadStage | null; limit?: number } = {}): Promise<LeadSummary[]> {
+export async function listLeads(sql: Sql, ws: string, opts: { stage?: LeadStage | null; limit?: number } = {}): Promise<LeadSummary[]> {
   const limit = Math.min(Math.max(opts.limit ?? 25, 1), 200);
   const stage = opts.stage ?? null;
   const rows = await sql`
     select id, email, name, title, company, domain, stage, score, qualified, source, updated_at,
            consent_at is not null as has_consent
     from leads
-    where (${stage}::text is null or stage = ${stage})
+    where workspace_id = ${ws} and (${stage}::text is null or stage = ${stage})
     order by updated_at desc, id
     limit ${limit}`;
   return rows as LeadSummary[];
@@ -275,13 +273,13 @@ export type LeadDetail = {
   approvals: Approval[];
 };
 
-export async function getLeadDetail(sql: Sql, id: string): Promise<LeadDetail> {
+export async function getLeadDetail(sql: Sql, ws: string, id: string): Promise<LeadDetail> {
   const [leads, evidence, drafts, approvals] = await sql.transaction(
     [
-      sql`select *, consent_at is not null as has_consent from leads where id = ${id}`,
-      sql`select * from evidence where lead_id = ${id} order by id`,
-      sql`select * from drafts where lead_id = ${id} order by version desc`,
-      sql`select * from approvals where lead_id = ${id} order by created_at desc`,
+      sql`select *, consent_at is not null as has_consent from leads where workspace_id = ${ws} and id = ${id}`,
+      sql`select * from evidence where workspace_id = ${ws} and lead_id = ${id} order by id`,
+      sql`select * from drafts where workspace_id = ${ws} and lead_id = ${id} order by version desc`,
+      sql`select * from approvals where workspace_id = ${ws} and lead_id = ${id} order by created_at desc`,
     ],
     { readOnly: true },
   );
@@ -301,16 +299,16 @@ export const evidenceInputSchema = z.object({
   source_url: z.httpUrl().max(2048).describe("Public URL that supports the claim."),
 });
 
-export async function saveEvidence(sql: Sql, input: z.infer<typeof evidenceInputSchema>): Promise<Evidence> {
+export async function saveEvidence(sql: Sql, ws: string, input: z.infer<typeof evidenceInputSchema>): Promise<Evidence> {
   const rows = await sql`
     with ins as (
-      insert into evidence (lead_id, claim, source_url)
-      select id, ${input.claim}, ${input.source_url} from leads where id = ${input.lead_id}
+      insert into evidence (workspace_id, lead_id, claim, source_url)
+      select workspace_id, id, ${input.claim}, ${input.source_url} from leads where workspace_id = ${ws} and id = ${input.lead_id}
       returning *
     ),
     ev as (
-      insert into events (lead_id, kind, data)
-      select lead_id, 'evidence_saved', jsonb_build_object('via', 'mcp', 'evidence_id', id, 'source_url', source_url) from ins
+      insert into events (workspace_id, lead_id, kind, data)
+      select workspace_id, lead_id, 'evidence_saved', jsonb_build_object('via', 'mcp', 'evidence_id', id, 'source_url', source_url) from ins
     ),
     touch as (update leads set updated_at = now() where id in (select lead_id from ins))
     select * from ins`;
@@ -325,7 +323,7 @@ export const scoreInputSchema = z.object({
   qualified: z.boolean().describe("Your verdict: is this lead worth pursuing?"),
 });
 
-export async function scoreLead(sql: Sql, input: z.infer<typeof scoreInputSchema>): Promise<LeadSummary> {
+export async function scoreLead(sql: Sql, ws: string, input: z.infer<typeof scoreInputSchema>): Promise<LeadSummary> {
   const rows = await sql`
     with up as (
       update leads set
@@ -336,12 +334,12 @@ export async function scoreLead(sql: Sql, input: z.infer<typeof scoreInputSchema
                      then (case when ${input.qualified}::boolean then 'qualified' else 'disqualified' end)
                      else stage end,
         updated_at = now()
-      where id = ${input.lead_id}
+      where workspace_id = ${ws} and id = ${input.lead_id}
       returning *
     ),
     ev as (
-      insert into events (lead_id, kind, data)
-      select id, 'lead_scored', jsonb_build_object('via', 'mcp', 'score', score, 'qualified', qualified, 'stage', stage) from up
+      insert into events (workspace_id, lead_id, kind, data)
+      select workspace_id, id, 'lead_scored', jsonb_build_object('via', 'mcp', 'score', score, 'qualified', qualified, 'stage', stage) from up
     )
     select id, email, name, title, company, domain, stage, score, qualified, source, updated_at,
            consent_at is not null as has_consent

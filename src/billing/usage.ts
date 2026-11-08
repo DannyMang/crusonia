@@ -1,5 +1,6 @@
 // Metered usage: a finished Naive session debits its reported spend (naive_sessions.consumed_micro_usd) times
-// the markup in src/billing/plans.ts, from the billing owner that started it. Idempotent per session: the debit
+// the markup in src/billing/plans.ts, from the workspace that started it (a session with billing_owner_id set is
+// billable; it holds the workspace id, or the legacy owner id for older sessions). Idempotent per session: the debit
 // is the difference between what the spend is worth now and what was already debited for the session, written
 // under a per-session advisory lock, so a session that resumes and spends more is topped up, never double-charged.
 import type { Sql } from "../db.ts";
@@ -18,13 +19,13 @@ export async function settleSessionUsage(sql: Sql, sessionId: string): Promise<n
     sql`select pg_advisory_xact_lock(hashtext(${`usage:${sessionId}`}))::text as locked`,
     sql`
       with s as (
-        select id, lead_id, purpose, billing_owner_id, consumed_micro_usd, ${target(sql, "consumed_micro_usd")} as total
+        select id, workspace_id, lead_id, purpose, billing_owner_id, consumed_micro_usd, ${target(sql, "consumed_micro_usd")} as total
         from naive_sessions
         where id = ${sessionId} and billing_owner_id is not null and status in ('done', 'error') and consumed_micro_usd > 0
       ),
       d as (select coalesce(-sum(amount), 0)::bigint as debited from credit_ledger where session_id = ${sessionId} and reason = 'usage')
-      insert into credit_ledger (owner_id, amount, reason, source, session_id, data)
-      select s.billing_owner_id, -(s.total - d.debited), 'usage',
+      insert into credit_ledger (workspace_id, owner_id, amount, reason, source, session_id, data)
+      select s.workspace_id, s.billing_owner_id, -(s.total - d.debited), 'usage',
              case when d.debited = 0 then 'usage:' || s.id else 'usage:' || s.id || ':' || s.consumed_micro_usd end,
              s.id,
              jsonb_build_object('purpose', s.purpose, 'lead_id', s.lead_id, 'consumed_micro_usd', s.consumed_micro_usd,
@@ -32,14 +33,13 @@ export async function settleSessionUsage(sql: Sql, sessionId: string): Promise<n
       from s, d
       where s.total > d.debited
       on conflict (source) do nothing
-      returning owner_id, amount::text, (data->>'lead_id') as lead_id, (data->>'consumed_micro_usd') as consumed`,
+      returning workspace_id, amount::text, (data->>'lead_id') as lead_id, (data->>'consumed_micro_usd') as consumed`,
   ]);
   const row = rows?.[0];
   if (!row) return 0;
   const credits = -Number(row.amount);
-  await sql`insert into events (lead_id, kind, data) values (${row.lead_id ?? null}, 'billing_usage_debited', ${JSON.stringify({
+  await sql`insert into events (workspace_id, lead_id, kind, data) values (${row.workspace_id}, ${row.lead_id ?? null}, 'billing_usage_debited', ${JSON.stringify({
     session_id: sessionId,
-    owner_id: row.owner_id,
     credits,
     consumed_micro_usd: Number(row.consumed),
   })}::jsonb)`;

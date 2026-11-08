@@ -18,9 +18,9 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 | `src/auth.ts` | Bearer tokens for `/mcp` and `/api`: an API key (`crs_live_...`, looked up by SHA-256) or `MCP_TOKEN` (constant-time compare) |
 | `src/mcp/route.ts` | `/mcp`: MCP Streamable HTTP (stateless, JSON responses), fresh server per request |
 | `src/mcp/server.ts` | MCP tool definitions: a thin layer over `src/services` |
-| `src/api/*.ts` | REST routers: `auth` (Clerk, API key or `MCP_TOKEN`), `leads`, `approvals`, `workflows`, `settings`, signed `webhooks`; web app: `dashboard` (me, summary, status, replies), `onboarding` (profile, read-website, propose), `experiments`, `keys`; `billing` (Stripe); `integrations` (CRM sync) |
+| `src/api/*.ts` | REST routers: `auth` (Clerk, API key or `MCP_TOKEN`), `leads`, `approvals`, `workflows`, `settings`, signed `webhooks`; web app: `dashboard` (me, summary, status, replies), `onboarding` (Company summary, profile, read-website, propose), `keys`; `billing` (Stripe); `integrations` (CRM sync); `admin` (platform admins, read-only) |
 | `src/billing/*.ts` | Stripe billing: `plans` (tiers, packs, the credit definition: the one file to edit), `accounts` (billing owner, ledger, 402 gate), `checkout` (Checkout and Customer Portal), `webhook` (Stripe events), `usage` (debits for finished Naive sessions), `expiry` (plan credit rollover), `overview`, `constants` |
-| `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron`; web app: `runs` (workflows/runs from Naive sessions and events, onboarding and find-leads sessions), `summary`, `replies`, `experiments`, `api-keys`; CRM sync: `crm-sync` (HubSpot/Notion push, HubSpot import, status), `crm-queue` (queue, retry, backoff), `crm-fields` (field mapping and ownership) |
+| `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron`; web app: `runs` (workflows/runs from Naive sessions and events, onboarding and find-leads sessions), `summary`, `replies`, `api-keys`; workspaces: `workspaces` (resolution, first sign-in), `company-summary` (the versioned markdown document), `naive-agents` (one Naive agent per workspace), `limits` (daily cap, rate limits), `domains` (company domain normalization); CRM sync: `crm-sync` (HubSpot/Notion push, HubSpot import, status), `crm-queue` (queue, retry, backoff), `crm-fields` (field mapping and ownership) |
 | `src/providers/*.ts` | Thin REST clients: `agentmail`, `naive`, `hubspot`, `notion` (the last two paced under their rate limits, 429-aware), `stripe` (no SDK, pinned API version) |
 | `src/lib/*.ts` | Errors (`{error: {code, message}}`), request helpers, Web Crypto, webhook signatures |
 | `test/*.test.ts` | `bun test`; `db.integration.test.ts` runs only with `TEST_DATABASE_URL` (a dev branch) |
@@ -57,9 +57,9 @@ Endpoint: `https://crusonia.veri-web.workers.dev/mcp` (MCP Streamable HTTP; loca
 
 API keys: create one per agent with `POST /api/keys {"name": "Claude Code"}` (the web app's "Connect your agent"
 screen does this). The response shows the full key (`crs_live_` + 64 hex characters) once; only its SHA-256 hash is
-stored. `GET /api/keys` lists keys without secrets, `DELETE /api/keys/:id` revokes one immediately. A key has the same
-access as `MCP_TOKEN` on `/mcp` and `/api` (single workspace for now). Keep the token in an environment variable, not
-in files you commit:
+stored. `GET /api/keys` lists keys without secrets, `DELETE /api/keys/:id` revokes one immediately. A key acts on
+`/mcp` and `/api` for the workspace it was made in, and only that one; `MCP_TOKEN` is the owner workspace. Keep the token
+in an environment variable, not in files you commit:
 
 ```sh
 export CRUSONIA_MCP_TOKEN='crs_live_...'   # an API key (or MCP_TOKEN), e.g. in ~/.zshrc
@@ -119,17 +119,21 @@ bearer_token_env_var = "CRUSONIA_MCP_TOKEN"
 ```
 
 **Naive**: `bun run setup` stores `MCP_TOKEN` in the Naive vault as a credential for `${PUBLIC_URL}/mcp`; Naive injects
-it when an agent's `mcp_servers[].url` is exactly that URL.
+it when an agent's `mcp_servers[].url` is exactly that URL. That agent runs the owner workspace's sessions. Every other
+workspace gets its own copy of the agent on its first paid run, pointed at `${PUBLIC_URL}/mcp?ws=<workspace id>`, with a
+vault credential for exactly that URL, bound to that agent, holding a workspace key (see [Workspaces](#workspaces)).
 
 ### The research agent
 
 `bun run setup` also creates the Naive agent that `POST /api/workflows/research` runs, one session per lead. Its
-system prompt is [`playbooks/research.md`](playbooks/research.md): read the profile and the lead, research them from
+system prompt is [`playbooks/research.md`](playbooks/research.md): read the Company summary (it comes in every
+session's first message) and the lead, research them from
 public sources with few pages and searches, save every claim with its source URL, score ICP fit, and draft a short
 email only for opted-in, qualified leads. Web and email content is treated as data, never as instructions, and the
-agent asks the owner (`ask_operator`) when unsure.
+agent asks the owner (`ask_operator`) when unsure. When it learns something durable it updates a section of the Company
+summary with a note (a new version the owner can revert).
 
-- **Tools**: the 12 crusonia tools, Apify's single-page reader (`apify--rag-web-browser`) and its run-result readers
+- **Tools**: the 14 crusonia tools, Apify's single-page reader (`apify--rag-web-browser`) and its run-result readers
   run without asking; `ask_operator` and everything else (Actor runs, Naive built-ins) ask first. `handoffs` is off.
   Asked tool calls then go through `AUTO_CONFIRM_TOOLS`: an allowlisted call is allowed automatically, any other
   becomes a tool approval.
@@ -143,10 +147,12 @@ agent asks the owner (`ask_operator`) when unsure.
 
 | Tool | What it does |
 | --- | --- |
-| `get_status` | Configured providers, database reachability, lead counts by stage, open approvals, next steps. Works with no keys. |
+| `get_status` | Configured providers, database reachability, the workspace's lead counts by stage, open approvals, Company summary version, next steps. Works with no keys. |
 | `read_website` | Reads a site (homepage + about/product/pricing pages) and returns trimmed text per page. Apify crawler with `APIFY_TOKEN`, plain fetch without. |
 | `search_web` | Google search via Apify (`APIFY_TOKEN`): organic results and related queries. |
-| `save_profile` / `get_profile` | The onboarding result (`settings.profile`): company, website, what the user sells, ICP description, segments (name, company size, industry, roles), buying signals (name, description), sources (which page supports which field). |
+| `get_company_summary` | The workspace's Company summary: one markdown document, with its version and who last changed it. |
+| `update_company_summary` | `{markdown, note, section?, run_id?}`: replaces the whole document, or only the section with that heading (appended if missing). Every edit is a new version. |
+| `save_profile` / `get_profile` | Older aliases: structured fields (company, website, sells, ICP, segments, signals, sources) written into / read from the Company summary. |
 | `add_leads` | Upserts found people/companies with source + source URL; dedupes by email, else company domain + name. Stage `no_consent`: never emailed. |
 | `list_leads` / `get_lead` | Leads by stage; one lead with its evidence, drafts and approvals. |
 | `save_evidence` | One fact about a lead plus the URL that supports it. |
@@ -154,13 +160,15 @@ agent asks the owner (`ask_operator`) when unsure.
 | `create_draft` | New immutable draft version + pending send approval (short code, 7 days by default). Opted-in leads only. Sends nothing. |
 | `list_pending_approvals` | Approvals waiting for a human, with the draft. |
 
-Every write also appends an `events` row. No tool sends email or decides an approval: a send happens only after a
-human approves it.
+Every tool acts on the caller's workspace only. Every write also appends an `events` row. No tool sends email or decides
+an approval: a send happens only after a human approves it. For workspaces other than the owner's, `search_web` and
+`read_website` (when they use Apify) need credits and are rate-limited (`WEB_CALLS_PER_HOUR`).
 
 ## REST API
 
-The dashboard (`web/`) is built on this API. Every `/api/*` call needs `Authorization: Bearer <token>`: a Clerk session token for a user in
-`CLERK_ALLOWED_USER_IDS`, an API key (`crs_live_...`), or `MCP_TOKEN` as the owner/dev bypass. Single workspace for now.
+The dashboard (`web/`) is built on this API. Every `/api/*` call needs `Authorization: Bearer <token>`: a Clerk session
+token (any user who signs up; see [Workspaces](#workspaces)), an API key (`crs_live_...`), or `MCP_TOKEN` (the owner
+workspace). Every call acts on exactly one workspace, and every row it reads or writes belongs to it.
 Errors are always `{"error": {"code", "message", "details?"}}`; a missing key answers 503 `not_configured` naming it.
 Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 
@@ -180,23 +188,25 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/approvals/:code/edit` | New draft version + new approval (also the retry after expiry or a failed send) |
 | POST | `/api/approvals/:code/answer` | tool: `{decision, reason?, scope?}`; question: `{answers: {field: text}}`, forwarded to Naive |
 | POST | `/api/workflows/research` | `{lead_ids}` or `{cohort}`: one Naive session per lead (`NAIVE_AGENT_ID`) |
-| GET, PUT | `/api/settings/pause` | Global kill switch: no sends, no new sessions, no auto-allowed tools |
+| GET, PUT | `/api/settings/pause` | The workspace's kill switch: no sends, no new sessions, no auto-allowed tools |
 | GET, POST | `/api/suppressions` | List (`q`, `cursor`) / add `{email, reason?}` |
 | DELETE | `/api/suppressions/:email` | Remove |
-| GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token"}` |
-| GET | `/api/summary` | Home: `pipeline` (found, researched, drafted, awaiting_approval, sent, replied, meetings: where leads are now), top 5 `pending_approvals`, `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` from Naive session usage, `budget_usd` from `WEEKLY_BUDGET_USD`), `paused` |
-| GET | `/api/status` | `get_status` data plus `inbox_address`, `naive_agent_configured`, `mcp_url`, `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error) |
-| GET, PUT | `/api/profile` | `{profile}`: company, website, sells, icp_description, segments, signals, sources (PUT replaces it) |
+| GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token", workspace: {id, name, owner}}` |
+| GET | `/api/summary` | Home: `pipeline` (found, researched, drafted, awaiting_approval, sent, replied, meetings: where leads are now), top 5 `pending_approvals`, `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` from Naive session usage, `budget_usd` from `WEEKLY_BUDGET_USD`, `day_usd` and `daily_cap_usd` for the workspace's daily cap), `paused` |
+| GET | `/api/status` | `get_status` data plus `workspace_id`, `inbox_address`, `naive_agent_configured`, `mcp_url`, `agent_mcp_url` (the workspace's Naive agent URL), `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error) |
+| GET | `/api/company-summary` | `{markdown, version, updated_at, updated_by, change_note}` (version 0 and a suggested `template` before the first save) |
+| PUT | `/api/company-summary` | `{markdown, note?, base_version?}`: a new version (409 `version_conflict` if `base_version` is stale; 413 over 20,000 characters; an unchanged document saves nothing) |
+| GET | `/api/company-summary/versions` | Versions newest first, without bodies: `{version, author, change_note, created_at, chars}` (`limit`, `before`) |
+| GET | `/api/company-summary/versions/:version` | One version with its markdown |
+| POST | `/api/company-summary/revert` | `{version}`: a new version copied from that one |
+| GET, PUT | `/api/profile` | Older alias: `{profile}` (company, website, sells, icp_description, segments, signals, sources) read from the Company summary; PUT writes those parts into it as a new version and keeps its other sections |
 | POST | `/api/onboarding/read-website` | `{url}` -> `{pages: [{url, title, text}]}`. Synchronous; Apify crawler with `APIFY_TOKEN` (a few cents), else a plain fetch |
-| POST | `/api/onboarding/propose` | `{url?, description?}` -> `{session_id}`: a Naive session reads the site and saves a proposed profile |
+| POST | `/api/onboarding/propose` | `{url?, description?}` -> `{session_id}`: a Naive session reads the site / description and writes the Company summary (author `onboarding`; a description is also saved as v1 right away) |
 | GET | `/api/onboarding/propose/:session_id` | `{status: "running" \| "done" \| "error", profile?}`; poll it (refreshes from Naive while active) |
-| POST | `/api/leads/find` | `{count?}` (25, max 50) -> `{session_id}`: a Naive session finds leads for the saved profile, adds and researches them |
+| POST | `/api/leads/find` | `{count?}` (25, max 50) -> `{session_id}`: a Naive session finds leads matching the Company summary, adds and scores them |
 | GET | `/api/workflows` | Naive sessions grouped by purpose: `{id, name, purpose, status, started_at, leads_processed, cost_usd, last_event_at, runs}` |
 | GET | `/api/workflows/runs/:session_id` | `{run, steps, lead, approvals}`. Steps from Naive's events API (free, cached in `naive_session_events`) and our audit events |
 | GET | `/api/replies` | Inbound replies with their lead: `{id, lead_id, from, subject, preview, label, received_at}`; `limit`, `cursor`, `label`, `lead_id` |
-| GET, POST | `/api/experiments` | List with per-arm `stats: {A, B}` (`sent`, `replies`, `positive`, `cost_usd`) / create `{name, hypothesis?, segment?, metric?, stop_rule_sends_per_arm?, stop_rule_days?, variants?, lead_ids?}` |
-| GET, PATCH | `/api/experiments/:id` | `{experiment, daily: [{date, A_replies, B_replies}]}` / `{status: "stopped"}` |
-| POST | `/api/experiments/:id/leads` | Enroll more leads `{lead_ids}` (each keeps its variant; leads in another running experiment are skipped) |
 | GET, POST | `/api/keys` | API keys for `/mcp` and `/api`: list (no secrets) / create `{name}` (full key returned once) |
 | DELETE | `/api/keys/:id` | Revoke |
 | GET | `/api/billing` | The caller's `plan` (key, status, `current_period_end`, `cancel_at_period_end`), `balance` (credits) and `balance_usd`, `expiring` included credits, the last 20 `ledger` rows, and the `plans` and `packs` with display prices |
@@ -204,7 +214,9 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/billing/portal` | -> `{url}`: the Stripe Customer Portal (change or cancel the plan, invoices, payment methods) |
 | GET | `/api/integrations/crm` | CRM sync per target (`hubspot`, `notion`): `enabled`, `configured`, `active`, `missing`, `scope`, `last_success_at`, `last_error`, `queue {pending, due, failed}`, `recent_errors`, `warnings`; HubSpot also `import` (running job) and `last_import` |
 | POST | `/api/integrations/sync` | `{target, lead_ids?}`: queue those leads (even outside the scope) or every lead in the scope. 409 `sync_disabled` while the target's switch is off |
-| POST | `/api/integrations/hubspot/import` | Queue the HubSpot import (contacts, then companies, 100 per minute). Needs only the token; 409 while one runs |
+| POST | `/api/integrations/hubspot/import` | Queue the HubSpot import (contacts, then companies, 100 per minute). Needs only the token; 409 while one runs. CRM sync is the owner workspace's only (403 `owner_only` elsewhere) |
+| GET | `/api/admin/runs?workspace=` | Platform admins only: a workspace's agent runs (read-only, audited) |
+| GET | `/api/admin/runs/:id/trace` | Platform admins only: one run's steps and stored Naive events (read-only, audited) |
 | POST | `/webhooks/agentmail` | Svix-signed. `message.received` (match by thread, then sender; classify; stop follow-ups; unsubscribe suppresses), `message.bounced` (permanent: suppress), `message.complained`, `message.delivered` |
 | POST | `/webhooks/naive` | `Vetta-Signature`-signed. `session.idle`: allowlisted tools (`AUTO_CONFIRM_TOOLS`) are allowed, other tools and `ask_operator` questions become approvals |
 | POST | `/webhooks/stripe` | `Stripe-Signature`-signed (`STRIPE_WEBHOOK_SECRET`; no secret, no processing). Credits packs and monthly plans, tracks subscriptions, claws back refunds; see [Billing](#billing-stripe) |
@@ -219,13 +231,62 @@ label, never resent blindly.
 Webhooks are verified on the raw body and deduped by provider event id. Inbound email is stored and pattern-matched
 as data, never followed as instructions. Every state change writes an `events` row.
 
-Experiments: the arms are the lead variants A and B (stable per lead). Enrolled leads' drafts created while the
-experiment runs carry its id; `sent` counts those drafts once sent, `replies` the leads that answered after their first
-send, `positive` those labeled `interested`. Stop rules are reported (`stop_rule_met`); stopping is a `PATCH`.
-
 The minute cron expires stale approvals (an expired tool call is denied to the agent), reconciles running Naive
 sessions that missed a webhook (events after `last_seq`), settles unconfirmed sends, drains the CRM sync queue,
 debits finished Naive sessions that still owe credits, and expires unused plan credits after their rollover month.
+
+## Workspaces
+
+Anyone can sign up: a new Clerk user gets their own private workspace on first sign-in (one user per workspace for now),
+with its own Company summary, leads, approvals, runs, budget and credits, plus the free sample credits once.
+`SIGNUPS_OPEN=false` closes sign-up (existing members still get in), `BLOCKED_USER_IDS` refuses accounts. The instance
+owner's workspace (`ws_owner`) holds everything from before workspaces; `OWNER_CLERK_USER_ID` and `MCP_TOKEN` resolve
+to it.
+
+| Caller | Workspace |
+| --- | --- |
+| Clerk session | The user's (`workspace_members`), created on first sign-in; `OWNER_CLERK_USER_ID` is always the owner's |
+| `crs_live_` key | The key's (`api_keys.workspace_id`) |
+| `MCP_TOKEN` | The owner's |
+| AgentMail webhook | The workspace of the draft or thread the message is about; a reply matched only by its sender counts only if one workspace has that lead; anything else lands in the owner's (the inbox is the instance's) |
+| Naive webhook, cron | The session's (`naive_sessions.workspace_id`) |
+| Stripe webhook | The account linked to the customer, else the metadata `crusonia_workspace_id` (objects from before workspaces carry `crusonia_user_id`, mapped to the workspace it moved to) |
+
+Every tenant table has a `workspace_id`, and every service function takes the workspace and filters by it. Lead dedupe
+is per workspace: by email, else by company domain + name, where the domain is normalized to the registrable domain
+(`blog.acme.co.uk` -> `acme.co.uk`, also enforced by a trigger), so a company is stored once per workspace.
+
+**Naive, per workspace.** Naive matches vault credentials to an agent's MCP URL and can bind one to a single agent, but
+has no per-session credentials yet, so each workspace runs on its own agent: a copy of the owner's template agent
+(`NAIVE_AGENT_ID`, same playbook, tools, model and Naive budget) whose crusonia server is
+`${PUBLIC_URL}/mcp?ws=<id>`, with a vault credential (`NAIVE_VAULT_ID`) for exactly that URL, bound to that agent,
+holding a workspace key of kind `agent`. The key decides the workspace; `/mcp` also refuses a `ws` that names another
+one. The copy is made on the workspace's first paid run and re-synced when the template's version changes (after
+`bun run setup --agent`). The Worker's `NAIVE_API_KEY` needs the scope to create agents and vault credentials.
+
+**Guardrails.** Paid work (onboarding propose, lead finding, research) needs credits in every workspace except the
+owner's (`BILLING_ENFORCED=true` gates the owner too). On top of each agent's Naive budget, every workspace has a daily
+Naive spend cap over the last 24 hours (`WORKSPACE_DAILY_CAP_USD`, default $5; `workspaces.daily_cap_micro_usd`
+overrides it), and every workspace but the owner's is limited to `PAID_STARTS_PER_HOUR` (20) runs per hour and
+`MAX_ACTIVE_SESSIONS` (5) at once. CRM sync (the instance's own HubSpot and Notion) is the owner workspace's only.
+
+## Company summary
+
+What Crusonia knows about the business: one markdown document per workspace (like a GTM.md), with suggested headings
+What we sell, Who buys (with a Segments list), Buying signals, Proof points, Voice, Avoid and Pricing. Every edit is a
+new version in `company_summary_versions` (author `user:<id>`, `agent:<session id>`, `agent:api_key:<id>` or
+`onboarding`, plus a change note); the current summary is the latest version, and a revert writes a new version copied
+from an old one. Agents edit it directly, without an approval: the whole document, or one section by its heading. Every
+Naive session gets the current summary in its first message, and the playbook makes the agent read it first and update
+it (with a note) when it learns something durable. Capped at 20,000 characters; it is data, rendered as sanitized
+markdown, never instructions. `/api/profile` and the `get_profile` / `save_profile` tools remain as structured aliases.
+
+## Privacy
+
+The people who operate a Crusonia instance can view agent runs and traces (the steps, tool calls and outputs of each
+Naive session) in any workspace, for debugging and quality: the platform admins in `PLATFORM_ADMIN_USER_IDS` and the
+owner (`OWNER_CLERK_USER_ID`). That access is read-only (`/api/admin/*`), and every view is recorded in the viewed
+workspace's audit trail (`events` kind `admin_viewed`). Admins have no write access to other workspaces.
 
 ## Billing (Stripe)
 
@@ -254,9 +315,9 @@ To change pricing: edit `plans.ts`, run `bun run setup --stripe`, deploy. Prices
 Stripe ids live in this repo; a changed amount gets a new price that takes over the lookup key (existing
 subscribers keep their old price, which still maps to its plan through its metadata).
 
-**Who pays.** The billing owner is the Clerk user, or `owner` for `MCP_TOKEN` and API-key callers. Each owner has one
-Stripe customer, created by us and found by owner id only (never matched by email). Every object we create carries
-metadata `app: crusonia` and `crusonia_user_id` (customers, Checkout Sessions, subscriptions through
+**Who pays.** The workspace (whichever way its people or agents sign in). Each workspace has one billing account and one
+Stripe customer, created by us and found by workspace only (never matched by email). Every object we create carries
+metadata `app: crusonia` and `crusonia_workspace_id` (objects from before workspaces carry `crusonia_user_id`) (customers, Checkout Sessions, subscriptions through
 `subscription_data.metadata`, payment intents), and the webhook ignores objects without `app: crusonia`.
 
 **Ledger.** `credit_ledger` is append-only (a trigger refuses updates and deletes); the balance is the sum per owner.
@@ -307,7 +368,7 @@ Both targets are **off by default**: nothing is written to HubSpot or Notion unt
 
 ### Field ownership
 
-HubSpot owns relationship data; Crusonia owns research, experiment and operational history. The rules
+HubSpot owns relationship data; Crusonia owns research and operational history. The rules
 (`src/services/crm-fields.ts`):
 
 | Field | Owner | Rule |
@@ -318,7 +379,7 @@ HubSpot owns relationship data; Crusonia owns research, experiment and operation
 | `lifecyclestage`, owners, deals, everything else | HubSpot | Never written |
 | Evidence | Crusonia | One HubSpot note per claim, with its source URL. Identical claims (same text and URL) share one note |
 | Sent emails and replies | Crusonia | Logged as **notes** (not email engagements): one object type and one dedupe path for everything we log, and a note says plainly that Crusonia sent it. Bodies are escaped excerpts; inbound mail stays untrusted data |
-| Our leads' evidence, score, stage, variant, experiment, consent | Crusonia | The HubSpot import never overwrites them: it fills blank fields, links the HubSpot ids, and grants consent only through a mapped opt-in property |
+| Our leads' evidence, score, stage, variant, consent | Crusonia | The HubSpot import never overwrites them: it fills blank fields, links the HubSpot ids, and grants consent only through a mapped opt-in property |
 | Notion columns (Company, Contact, Email, Stage, Fit, Signal, Evidence count, Last activity, Source, Crusonia link, Lead ID) | Crusonia | Overwritten on the next change. Add your own columns freely; the sync never touches them |
 
 Stage to `hs_lead_status`: `new` NEW; `researching`, `qualified`, `needs_review` OPEN; `awaiting_approval`
@@ -385,7 +446,6 @@ Clerk). Designs are in Paper (approved before code). The Worker serves `web/dist
 | `/app/leads`, `/app/leads/:id` | Leads (filters, CSV import, add) and lead detail (evidence, timeline, draft) |
 | `/app/approvals[/:code]` | Approve, edit or reject the exact draft |
 | `/app/workflows`, `/app/workflows/runs/:id` | Agent runs and their step-by-step timeline |
-| `/app/experiments[/:id]` | A/B experiments with per-variant stats |
 | `/app/integrations`, `/app/connect` | Provider status; MCP setup for Claude Code, Cursor and Codex, API keys |
 | `/app/replies`, `/app/settings` | Inbound replies; pause switch, do-not-contact list, account |
 
@@ -401,25 +461,22 @@ the real API from `vite dev` (development builds only; it is compiled out of pro
 
 Build and ship: `VITE_CLERK_PUBLISHABLE_KEY` (publishable, safe in the bundle) must be set when building, e.g. in
 `web/.env.local` (gitignored). `bun run deploy:preview` uploads a version without deploying it and serves it at
-`app-crusonia.<subdomain>.workers.dev` (it uses production's secrets and database). Signing in requires the Clerk
-user id in `CLERK_ALLOWED_USER_IDS`. Note: while an uploaded version is newer than the deployed one,
+`app-crusonia.<subdomain>.workers.dev` (it uses production's secrets and database). Anyone who signs in gets their own
+workspace (see [Workspaces](#workspaces)). Note: while an uploaded version is newer than the deployed one,
 `wrangler secret put` refuses to run; use `wrangler versions secret put` or deploy first.
 
 ## Day to day
 
 - `bun run dev`: local Worker on :8787 (reads `.dev.vars`). `bunx wrangler dev --test-scheduled` to trigger the cron at `/__scheduled`.
 - `bun run typecheck`: Worker (`tsconfig.json`), Bun scripts (`scripts/tsconfig.json`), tests (`test/tsconfig.json`) and the web app (`web/tsconfig.json`).
-- `bun test`: unit tests (signatures, approval rules and lifetimes, CSV, allowlist, classifier, providers with mocked
-  fetch, auth, API keys, routes, the Naive agent definition and playbook, summary/experiment/run-step logic; CRM sync
-  field mapping, queue retry/backoff and 429s, and HubSpot/Notion pushes and setup against in-memory fakes). With
-  `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts` (send/reply/Naive flows),
-  `test/web-api.integration.test.ts` (keys, summary, experiments, replies, workflows, onboarding) and
-  `test/crm-sync.integration.test.ts` (trigger, queue, pushes, import) also run against a real database with mocked
-  providers (never point it at production; they clean up their rows).
-- `bun run deploy:dry`: build the web app and the Worker without deploying. `bun run deploy` builds the web app first too.
-  field mapping, queue retry/backoff and 429s, and HubSpot/Notion pushes and setup against in-memory fakes; billing with
-  an in-memory Stripe). With `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts` (send/reply/Naive flows),
-  `test/web-api.integration.test.ts` (keys, summary, experiments, replies, workflows, onboarding),
+- `bun test`: unit tests (signatures, approval rules and lifetimes, CSV, classifier, providers with mocked fetch, auth,
+  API keys, routes, the Naive agent definition and playbook, summary/run-step logic; CRM sync field mapping, queue
+  retry/backoff and 429s, and HubSpot/Notion pushes and setup against in-memory fakes; billing with an in-memory
+  Stripe; Company summary markdown and domain normalization). With `TEST_DATABASE_URL=<dev branch>`,
+  `test/db.integration.test.ts` (send/reply/Naive flows), `test/web-api.integration.test.ts` (keys, summary, replies,
+  workflows, onboarding), `test/workspaces.integration.test.ts` (migration and billing merge, first sign-in, isolation of
+  every route and MCP tool, Company summary versions, credits and limits, webhooks, platform admins, the per-workspace
+  Naive agent),
   `test/crm-sync.integration.test.ts` (trigger, queue, pushes, import) and `test/billing.integration.test.ts` (webhook,
   ledger, refunds, rollover, usage debits, the 402 gate) also run against a real database with mocked providers (never
   point it at production; they clean up their rows).

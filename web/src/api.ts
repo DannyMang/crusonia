@@ -211,6 +211,8 @@ export type Me = {
   /** `clerk` for a signed-in user; `token` for MCP_TOKEN or an API key. */
   auth: "clerk" | "token";
   key?: { id: string; name: string };
+  /** The workspace this caller acts on (every sign-up gets its own; `owner` is the instance owner's). */
+  workspace?: { id: string; name: string; owner: boolean };
 };
 
 /** Where leads are now; each lead is in at most one bucket (unsubscribed leads in none). */
@@ -483,6 +485,8 @@ export type LedgerEntry = {
 };
 
 export type Billing = {
+  /** The paying workspace (`owner_id` is the same id, kept for older clients). */
+  workspace_id?: string;
   owner_id: string;
   /** `configured`: Stripe is set up on this deployment, so Checkout and the portal work. */
   billing: { configured: boolean; webhook_configured: boolean; mode: "test" | "live" | null; enforced: boolean };

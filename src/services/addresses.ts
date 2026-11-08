@@ -24,7 +24,7 @@ export function extractEmail(raw: string | null | undefined): string | undefined
 
 export function domainFromEmail(email: string | null | undefined): string | undefined {
   const domain = email?.split("@")[1]?.toLowerCase();
-  return domain && !FREEMAIL.has(domain) ? domain : undefined;
+  return domain && !FREEMAIL.has(domain) ? (normalizeDomain(domain) ?? undefined) : undefined;
 }
 
 /** The company domain for a lead: website first, then a non-freemail email domain. */

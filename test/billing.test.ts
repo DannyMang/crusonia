@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { checkStripeKey, setupStripe } from "../scripts/lib/stripe-setup.ts";
-import { billingOwnerOf, requireCredits } from "../src/billing/accounts.ts";
+import { creditsEnforcedFor, requireCredits } from "../src/billing/accounts.ts";
 import { STRIPE_EVENTS, crusoniaMetadata } from "../src/billing/constants.ts";
 import { replayLedger, type LedgerEntry } from "../src/billing/expiry.ts";
 import {
@@ -349,31 +349,46 @@ describe("claw-back math", () => {
 });
 
 describe("enforcement (402 insufficient_credits)", () => {
-  const apiKey = { kind: "api_key" as const, keyId: "key_1", name: "agent" };
+  const apiKey = { kind: "api_key" as const, keyId: "key_1", name: "agent", workspaceId: "ws_a" };
   const clerk = { kind: "clerk" as const, userId: "user_a", sessionId: null };
   const failure = async (p: Promise<unknown>) => {
     const e = await p.then(() => undefined, (err) => err);
     return e instanceof ApiError ? `${e.status} ${e.code}` : e;
   };
 
-  test("off by default: never reads the balance", async () => {
+  test("the owner workspace: off by default (never reads the balance); BILLING_ENFORCED turns it on", async () => {
     let reads = 0;
     const balance = async () => (reads++, -100);
-    await requireCredits(env(), clerk, { balance });
-    await requireCredits(env({ BILLING_ENFORCED: "false" }), apiKey, { balance });
+    await requireCredits(env(), clerk, "ws_owner", { balance });
+    await requireCredits(env({ BILLING_ENFORCED: "false" }), apiKey, "ws_owner", { balance });
     expect(reads).toBe(0);
+    expect(await failure(requireCredits(env({ BILLING_ENFORCED: "true" }), clerk, "ws_owner", { balance }))).toBe("402 insufficient_credits");
+  });
+
+  test("every other workspace is always enforced, whatever BILLING_ENFORCED says", async () => {
+    const asked: string[] = [];
+    const at = (n: number) => async (ws: string) => (asked.push(ws), n);
+    for (const e of [env(), env({ BILLING_ENFORCED: "false" }), env({ BILLING_ENFORCED: "true" })]) {
+      expect(await failure(requireCredits(e, clerk, "ws_a", { balance: at(0) }))).toBe("402 insufficient_credits");
+      expect(await failure(requireCredits(e, apiKey, "ws_a", { balance: at(-5) }))).toBe("402 insufficient_credits");
+      expect(await failure(requireCredits(e, clerk, "ws_a", { balance: at(1) }))).toBeUndefined();
+    }
+    expect(asked).toEqual(Array(9).fill("ws_a"));
+    expect(creditsEnforcedFor(env(), "ws_a")).toBe(true);
+    expect(creditsEnforcedFor(env(), "ws_owner")).toBe(false);
+    expect(creditsEnforcedFor(env({ BILLING_ENFORCED: "true" }), "ws_owner")).toBe(true);
   });
 
   test("on: balance <= 0 is refused, positive passes, MCP_TOKEN bypasses", async () => {
     const on = env({ BILLING_ENFORCED: "true" });
     const asked: string[] = [];
-    const at = (n: number) => async (owner: string) => (asked.push(owner), n);
-    expect(await failure(requireCredits(on, clerk, { balance: at(0) }))).toBe("402 insufficient_credits");
-    expect(await failure(requireCredits(on, apiKey, { balance: at(-5) }))).toBe("402 insufficient_credits");
-    expect(await failure(requireCredits(on, clerk, { balance: at(1) }))).toBeUndefined();
-    expect(await failure(requireCredits(on, { kind: "owner_token" }, { balance: at(-1_000) }))).toBeUndefined();
-    expect(asked).toEqual(["user_a", "owner", "user_a"]);
-    const e = (await requireCredits(on, clerk, { balance: at(0) }).catch((err) => err)) as ApiError;
+    const at = (n: number) => async (ws: string) => (asked.push(ws), n);
+    expect(await failure(requireCredits(on, clerk, "ws_owner", { balance: at(0) }))).toBe("402 insufficient_credits");
+    expect(await failure(requireCredits(on, apiKey, "ws_owner", { balance: at(-5) }))).toBe("402 insufficient_credits");
+    expect(await failure(requireCredits(on, clerk, "ws_owner", { balance: at(1) }))).toBeUndefined();
+    expect(await failure(requireCredits(on, { kind: "owner_token" }, "ws_owner", { balance: at(-1_000) }))).toBeUndefined();
+    expect(asked).toEqual(["ws_owner", "ws_owner", "ws_owner"]);
+    const e = (await requireCredits(on, clerk, "ws_owner", { balance: at(0) }).catch((err) => err)) as ApiError;
     expect(e.details).toMatchObject({ balance: 0, billing_url: "https://example.test/app/settings/billing" });
   });
 
@@ -391,29 +406,26 @@ describe("enforcement (402 insufficient_credits)", () => {
       expect((await errorOf(res)).message).toStartWith("DATABASE_URL is not set");
     }
   });
-
-  test("billing owner: the Clerk user, or `owner` for tokens and API keys", () => {
-    expect(billingOwnerOf(clerk)).toBe("user_a");
-    expect(billingOwnerOf(apiKey)).toBe("owner");
-    expect(billingOwnerOf({ kind: "owner_token" })).toBe("owner");
-  });
 });
 
 describe("Stripe metadata and encoding", () => {
-  test("our metadata always carries app and crusonia_user_id, never a Clerk user id key", () => {
-    const m = crusoniaMetadata("user_a", { crusonia_kind: "pack" });
-    expect(m).toEqual({ app: "crusonia", crusonia_user_id: "user_a", crusonia_kind: "pack" });
+  test("our metadata always carries app and crusonia_workspace_id, never a Clerk user id key", () => {
+    const m = crusoniaMetadata("ws_a", { crusonia_kind: "pack" });
+    expect(m).toEqual({ app: "crusonia", crusonia_workspace_id: "ws_a", crusonia_kind: "pack" });
     expect(Object.keys(m)).not.toContain("clerk_" + "user_id");
   });
 
   test("no source file uses the clerk_user_id metadata key", () => {
-    const forbidden = "clerk_" + "user_id";
+    // As an object key or a quoted string, i.e. metadata. (workspace_members.clerk_user_id, a column, is fine.)
+    const forbidden = new RegExp(`(["'\`]clerk_${"user_id"}["'\`]|\\bclerk_${"user_id"}\\s*:|\\[clerk_${"user_id"}\\])`);
     const walk = (dir: string): string[] =>
       readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(join(dir, d.name)) : [join(dir, d.name)]));
     const root = join(import.meta.dir, "..");
     const files = [...walk(join(root, "src")), ...walk(join(root, "scripts"))].filter((f) => /\.(ts|sql|md)$/.test(f));
     expect(files.length).toBeGreaterThan(10);
-    for (const f of files) expect({ f, hit: readFileSync(f, "utf8").includes(forbidden) }).toEqual({ f, hit: false });
+    for (const f of files) expect({ f, hit: forbidden.test(readFileSync(f, "utf8")) }).toEqual({ f, hit: false });
+    expect(forbidden.test(`metadata: { clerk_${"user_id"}: "x" }`)).toBe(true);
+    expect(forbidden.test(`where clerk_${"user_id"} = $1`)).toBe(false);
   });
 
   test("form encoding: nested objects, indexed arrays, booleans, null unsets", () => {
@@ -489,7 +501,7 @@ describe("setup --stripe", () => {
       // Every plan can be switched to, each with its current price.
       const switchable = portal!.features.subscription_update.products as { product: string; prices: string[] }[];
       expect(switchable.map((p) => stripe.prices.get(p.prices[0]!)!.lookup_key)).toEqual(PLANS.map((p) => p.lookupKey));
-      expect([...stripe.sessions.values()][0]).toMatchObject({ status: "expired", metadata: { app: "crusonia", crusonia_user_id: "setup-check" } });
+      expect([...stripe.sessions.values()][0]).toMatchObject({ status: "expired", metadata: { app: "crusonia", crusonia_workspace_id: "setup-check" } });
 
       const secretFile = join(dir, ".dev.vars.stripe.test");
       expect(readFileSync(secretFile, "utf8")).toContain(`STRIPE_WEBHOOK_SECRET=${stripe.secrets[0]}\n`);

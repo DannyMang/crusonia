@@ -15,6 +15,8 @@ export const CRUSONIA_TOOLS = [
   "get_status",
   "read_website",
   "search_web",
+  "get_company_summary",
+  "update_company_summary",
   "save_profile",
   "get_profile",
   "add_leads",

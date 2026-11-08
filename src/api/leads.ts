@@ -2,8 +2,8 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { billingOwnerOf, requireCredits } from "../billing/accounts.ts";
-import { actorOf, parseJson, parseQuery, sqlFor, type AppEnv } from "../lib/context.ts";
+import { requireCredits } from "../billing/accounts.ts";
+import { actorOf, parseJson, parseQuery, sqlFor, wsOf, type AppEnv } from "../lib/context.ts";
 import { ApiError, errorBody, invalidRequest } from "../lib/errors.ts";
 import { sendApprovalTtlMinutes } from "../services/approval-ttl.ts";
 import { createLead, deleteLead, getLeadFull, importLeads, LEAD_STAGES, patchLead, searchLeads } from "../services/crm.ts";
@@ -30,7 +30,7 @@ const ListQuery = z.object({
 
 leads.get("/", async (c) => {
   const query = parseQuery(c, ListQuery); // validate before touching the database
-  return c.json(await searchLeads(sqlFor(c.env), query));
+  return c.json(await searchLeads(sqlFor(c.env), wsOf(c), query));
 });
 
 const CreateBody = z.object({
@@ -49,19 +49,19 @@ const CreateBody = z.object({
 
 leads.post("/", async (c) => {
   const body = await parseJson(c, CreateBody);
-  return c.json({ lead: await createLead(sqlFor(c.env), body, actorOf(c.get("principal"))) }, 201);
+  return c.json({ lead: await createLead(sqlFor(c.env), wsOf(c), body, actorOf(c.get("principal"))) }, 201);
 });
 
-// Starts a Naive session that searches for leads matching the saved profile, adds them (add_leads) and
-// researches them. Async: follow it in GET /api/workflows (purpose find_leads).
+// Starts a Naive session that searches for leads matching the Company summary, adds them (add_leads) and
+// scores them. Async: follow it in GET /api/workflows (purpose find_leads).
 const FindBody = z.object({ count: z.number().int().min(1).max(MAX_FIND_LEADS).default(25) }).strict();
 
 leads.post("/find", async (c) => {
   const body = await parseJson(c, FindBody);
   naiveAgent(c.env); // 503 not_configured before touching the database
   const principal = c.get("principal");
-  await requireCredits(c.env, principal); // 402 insufficient_credits when BILLING_ENFORCED and the balance is <= 0
-  const result = await startFindLeads(sqlFor(c.env), c.env, body.count, actorOf(principal), undefined, { billingOwnerId: billingOwnerOf(principal) });
+  await requireCredits(c.env, principal, wsOf(c)); // 402 insufficient_credits when the workspace's balance is <= 0
+  const result = await startFindLeads(sqlFor(c.env), c.env, wsOf(c), body.count, actorOf(principal));
   return c.json(result, 202);
 });
 
@@ -99,16 +99,17 @@ leads.post(
   async (c) => {
     const actor = actorOf(c.get("principal"));
     const sql = sqlFor(c.env);
+    const ws = wsOf(c);
     if ((c.req.header("content-type") ?? "").toLowerCase().startsWith("text/csv")) {
       const q = parseQuery(c, ImportQuery);
       const input = { csv: await c.req.text(), mapping: parseMappingParam(q.mapping), source: q.source, dry_run: q.dry_run === "true" || q.dry_run === "1" };
-      return c.json(await importLeads(sql, input, actor));
+      return c.json(await importLeads(sql, ws, input, actor));
     }
-    return c.json(await importLeads(sql, await parseJson(c, ImportBody), actor));
+    return c.json(await importLeads(sql, ws, await parseJson(c, ImportBody), actor));
   },
 );
 
-leads.get("/:id", async (c) => c.json(await getLeadFull(sqlFor(c.env), c.req.param("id"))));
+leads.get("/:id", async (c) => c.json(await getLeadFull(sqlFor(c.env), wsOf(c), c.req.param("id"))));
 
 const nullableText = (max: number) => z.union([text(max), z.null()]);
 const PatchBody = z
@@ -127,11 +128,11 @@ const PatchBody = z
 
 leads.patch("/:id", async (c) => {
   const body = await parseJson(c, PatchBody);
-  return c.json({ lead: await patchLead(sqlFor(c.env), c.req.param("id"), body, actorOf(c.get("principal"))) });
+  return c.json({ lead: await patchLead(sqlFor(c.env), wsOf(c), c.req.param("id"), body, actorOf(c.get("principal"))) });
 });
 
 leads.delete("/:id", async (c) => {
-  await deleteLead(sqlFor(c.env), c.req.param("id"), actorOf(c.get("principal")));
+  await deleteLead(sqlFor(c.env), wsOf(c), c.req.param("id"), actorOf(c.get("principal")));
   return c.body(null, 204);
 });
 
@@ -143,6 +144,7 @@ leads.post("/:id/drafts", async (c) => {
   const body = await parseJson(c, DraftBody);
   const result = await createDraft(
     sqlFor(c.env),
+    wsOf(c),
     { lead_id: c.req.param("id"), subject: body.subject, body: body.body },
     { ttlMinutes: sendApprovalTtlMinutes(c.env), via: "api", actor: actorOf(c.get("principal")) },
   );

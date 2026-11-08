@@ -42,6 +42,23 @@ export type NaiveSession = {
 };
 
 export type NaiveEvent = { seq: number; type: string; data: Record<string, unknown>; created_at?: string };
+
+/** GET /v1/agents/{id}: the current configuration (fields we copy for workspace agents) and its version. */
+export type NaiveAgent = {
+  id: string;
+  name?: string;
+  description?: string | null;
+  model?: string;
+  harness?: string | null;
+  window?: string;
+  system?: string;
+  tools?: unknown;
+  mcp_servers?: { type?: string; name: string; url: string }[];
+  handoffs?: unknown;
+  budget?: { cap_micro_usd: number; max_task_micro_usd: number; period: string };
+  metadata?: Record<string, string>;
+  current_version?: number;
+};
 export type EventPage = { data: NaiveEvent[]; has_more: boolean; next_cursor: string | null };
 
 export class NaiveClient {
@@ -51,13 +68,14 @@ export class NaiveClient {
     private readonly baseUrl = NAIVE_BASE,
   ) {}
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
+  /** `idempotencyKey`: a stable key makes a retried create return the first result (default: random per call). */
+  private async post<T>(path: string, body: unknown, idempotencyKey: string = crypto.randomUUID(), method = "POST"): Promise<T> {
     const init = {
-      method: "POST",
+      method,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
+        "Idempotency-Key": idempotencyKey,
       },
       body: JSON.stringify(body),
     };
@@ -76,6 +94,32 @@ export class NaiveClient {
       method: "GET",
       headers: { Authorization: `Bearer ${this.apiKey}` },
     });
+  }
+
+  getAgent(agentId: string) {
+    return this.get<NaiveAgent>(`/v1/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  createAgent(config: Record<string, unknown>, idempotencyKey?: string) {
+    return this.post<NaiveAgent>("/v1/agents", config, idempotencyKey);
+  }
+
+  /** PATCH: a new agent version when the config changed (unconditional apply: no expected_version). */
+  updateAgent(agentId: string, patch: Record<string, unknown>) {
+    return this.post<NaiveAgent>(`/v1/agents/${encodeURIComponent(agentId)}`, patch, crypto.randomUUID(), "PATCH");
+  }
+
+  /** A write-only vault credential; `agent_id` binds it to that agent's sessions only. */
+  createVaultCredential(
+    vaultId: string,
+    input: { kind: "static_bearer"; key: string; mcp_server_url: string; agent_id?: string; value: string },
+    idempotencyKey?: string,
+  ) {
+    return this.post<{ id: string; mcp_server_url: string; agent_id: string | null }>(
+      `/v1/vaults/${encodeURIComponent(vaultId)}/credentials`,
+      input,
+      idempotencyKey,
+    );
   }
 
   createSession(input: { agent_id: string; message: string; metadata?: Record<string, string> }) {

@@ -1,10 +1,11 @@
-// The onboarding result: what the user sells and who to target. Stored in `settings` under key `profile`.
-// Written by the MCP save_profile tool (agents) and PUT /api/profile (the web app); both send the full
-// profile. Profiles saved in the first shape (company_name, icp, segments and buying_signals as strings)
-// are read back in the current shape by normalizeProfile.
-// TODO(workspaces): one profile per Clerk workspace once multi-tenant lands (key by workspace id).
+// The structured onboarding profile (what the user sells and who to target): a compatibility view of the
+// workspace's Company summary (./company-summary.ts), which is the source of truth. GET /api/profile and MCP
+// get_profile read it from the markdown; PUT /api/profile and MCP save_profile write the profile's parts into the
+// markdown as a new summary version and keep every other section. Inputs in the first profile shape
+// (company_name, icp, segments and buying_signals as strings) are accepted by normalizeProfile.
 import { z } from "zod";
 import type { Sql } from "../db.ts";
+import { getCompanySummary, markdownToProfile, profileToMarkdown, writeCompanySummary } from "./company-summary.ts";
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 
@@ -135,25 +136,19 @@ export function normalizeProfile(raw: Record<string, unknown>): Profile {
   };
 }
 
-/** Replaces the saved profile (send the full profile, not a patch). `via` labels the audit event. */
-export async function saveProfile(sql: Sql, input: ProfileInput, via: "mcp" | "api" = "mcp", actor?: string): Promise<Profile> {
-  const profile: Profile = { ...normalizeProfile(input as Record<string, unknown>), updated_at: new Date().toISOString() };
-  const rows = await sql`
-    with up as (
-      insert into settings (key, value) values ('profile', ${JSON.stringify(profile)}::jsonb)
-      on conflict (key) do update set value = excluded.value
-      returning value
-    ),
-    ev as (
-      insert into events (lead_id, kind, data)
-      select null, 'profile_saved', jsonb_build_object('via', ${via}::text, 'website', value->>'website', 'actor', ${actor ?? null}::text) from up
-    )
-    select value from up`;
-  return normalizeProfile(rows[0]!.value as Record<string, unknown>);
+/**
+ * Saves a full profile (not a patch) into the workspace's Company summary as a new version: the title, Website
+ * line and the profile's sections are replaced, the rest of the document is kept. `author` is the summary author.
+ */
+export async function saveProfile(sql: Sql, ws: string, input: ProfileInput, author: string, note = "Profile saved"): Promise<Profile> {
+  const profile = normalizeProfile(input as Record<string, unknown>);
+  const current = await getCompanySummary(sql, ws);
+  const saved = await writeCompanySummary(sql, ws, { markdown: profileToMarkdown(profile, current.markdown), author, note });
+  return markdownToProfile(saved.markdown ?? "", saved.updated_at);
 }
 
-export async function getProfile(sql: Sql): Promise<Profile | null> {
-  const rows = await sql`select value from settings where key = 'profile'`;
-  const value = rows[0]?.value as Record<string, unknown> | undefined;
-  return value ? normalizeProfile(value) : null;
+/** The profile read from the workspace's Company summary, or null when there is no summary yet. */
+export async function getProfile(sql: Sql, ws: string): Promise<Profile | null> {
+  const current = await getCompanySummary(sql, ws);
+  return current.markdown === null ? null : markdownToProfile(current.markdown, current.updated_at);
 }

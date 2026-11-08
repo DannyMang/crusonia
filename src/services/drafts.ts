@@ -29,6 +29,7 @@ export type CreatedDraft = { draft: Draft; approval: Approval; superseded_approv
  */
 export async function createDraft(
   sql: Sql,
+  ws: string,
   input: DraftInput,
   opts: { ttlMinutes: number; via?: string; actor?: string },
 ): Promise<CreatedDraft> {
@@ -36,8 +37,8 @@ export async function createDraft(
   const via = opts.via ?? "mcp";
   const leads = await sql`
     select l.id, l.email, l.name, l.stage, l.consent_at,
-           exists (select 1 from suppressions s where s.email = l.email) as suppressed
-    from leads l where l.id = ${input.lead_id}`;
+           exists (select 1 from suppressions s where s.workspace_id = l.workspace_id and s.email = l.email) as suppressed
+    from leads l where l.workspace_id = ${ws} and l.id = ${input.lead_id}`;
   const lead = leads[0];
   if (!lead) throw new ServiceError("not_found", `No lead with id ${input.lead_id}. Use list_leads to find lead ids.`);
   if (!lead.email) throw new ServiceError("invalid", `Lead ${input.lead_id} has no email address, so there is nothing to send to.`);
@@ -58,40 +59,38 @@ export async function createDraft(
   for (let attempt = 1; ; attempt++) {
     try {
       const rows = await sql`
-        with lead as (select id, variant, experiment_id from leads where id = ${input.lead_id}),
+        with lead as (select id, workspace_id, variant from leads where workspace_id = ${ws} and id = ${input.lead_id}),
         next as (select coalesce(max(version), 0) + 1 as version from drafts where lead_id = ${input.lead_id}),
         superseded as (
           update drafts set status = 'superseded'
-          where lead_id = ${input.lead_id} and status in ('draft', 'pending_approval')
+          where workspace_id = ${ws} and lead_id = ${input.lead_id} and status in ('draft', 'pending_approval')
           returning id
         ),
         expired as (
           update approvals set status = 'expired', decided_at = now(), decided_via = 'superseded'
-          where status = 'pending' and draft_id in (select id from superseded)
+          where workspace_id = ${ws} and status = 'pending' and draft_id in (select id from superseded)
           returning code
         ),
         draft as (
-          insert into drafts (id, lead_id, version, variant, subject, body, status, experiment_id)
-          select ${newId("draft")}, lead.id, next.version, lead.variant, ${input.subject}, ${input.body}, 'pending_approval',
-                 -- A lead enrolled in a running experiment: the draft counts toward its arm (lead.variant).
-                 (select e.id from experiments e where e.id = lead.experiment_id and e.status = 'running')
+          insert into drafts (id, workspace_id, lead_id, version, variant, subject, body, status)
+          select ${newId("draft")}, lead.workspace_id, lead.id, next.version, lead.variant, ${input.subject}, ${input.body}, 'pending_approval'
           from lead, next
           returning *
         ),
         approval as (
-          insert into approvals (code, kind, lead_id, draft_id, recipient, summary, expires_at)
-          select ${shortCode()}, 'send', lead_id, id, ${lead.email}, ${summary}, now() + make_interval(mins => ${ttlMinutes}::int)
+          insert into approvals (code, workspace_id, kind, lead_id, draft_id, recipient, summary, expires_at)
+          select ${shortCode()}, workspace_id, 'send', lead_id, id, ${lead.email}, ${summary}, now() + make_interval(mins => ${ttlMinutes}::int)
           from draft
           returning *
         ),
         stage as (
           update leads set stage = case when stage = any(${PRE_SEND_STAGES}::text[]) then 'awaiting_approval' else stage end,
                            updated_at = now()
-          where id in (select lead_id from draft)
+          where workspace_id = ${ws} and id in (select lead_id from draft)
         ),
         ev as (
-          insert into events (lead_id, kind, data)
-          select d.lead_id, 'draft_created',
+          insert into events (workspace_id, lead_id, kind, data)
+          select d.workspace_id, d.lead_id, 'draft_created',
                  jsonb_build_object('via', ${via}::text, 'draft_id', d.id, 'version', d.version, 'approval_code', a.code,
                                     'superseded_drafts', (select coalesce(jsonb_agg(id), '[]'::jsonb) from superseded),
                                     'actor', ${opts.actor ?? null}::text)
@@ -118,8 +117,8 @@ export type PendingApproval = Pick<Approval, "code" | "kind" | "summary" | "lead
   draft_body: string | null;
 };
 
-/** Open approvals (pending and not yet expired), oldest first. Read-only: deciding happens elsewhere. */
-export async function listPendingApprovals(sql: Sql, limit = 50): Promise<PendingApproval[]> {
+/** The workspace's open approvals (pending and not yet expired), oldest first. Read-only: deciding happens elsewhere. */
+export async function listPendingApprovals(sql: Sql, ws: string, limit = 50): Promise<PendingApproval[]> {
   const rows = await sql`
     select a.code, a.kind, a.summary, a.lead_id, a.draft_id, a.expires_at, a.created_at,
            l.name as lead_name, l.email as lead_email, l.company as lead_company,
@@ -127,7 +126,7 @@ export async function listPendingApprovals(sql: Sql, limit = 50): Promise<Pendin
     from approvals a
     left join leads l on l.id = a.lead_id
     left join drafts d on d.id = a.draft_id
-    where a.status = 'pending' and a.expires_at > now()
+    where a.workspace_id = ${ws} and a.status = 'pending' and a.expires_at > now()
     order by a.created_at
     limit ${Math.min(Math.max(limit, 1), 200)}`;
   return rows as PendingApproval[];

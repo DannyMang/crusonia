@@ -2,6 +2,7 @@
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { listApprovals } from "./approvals.ts";
+import { spendStatus } from "./limits.ts";
 import { listReplies } from "./replies.ts";
 import { listWorkflows, microToUsd } from "./runs.ts";
 
@@ -51,25 +52,27 @@ export function weeklyBudgetUsd(env: Env): number | null {
   return env.WEEKLY_BUDGET_USD && Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-export async function getSummary(sql: Sql, env: Env) {
-  const [[counts], approvals, replies] = await Promise.all([
+/** The Home dashboard of workspace `ws`. */
+export async function getSummary(sql: Sql, env: Env, ws: string) {
+  const [[counts], approvals, replies, today] = await Promise.all([
     sql`select
           (select coalesce(jsonb_object_agg(stage, n), '{}'::jsonb)
-             from (select stage, count(*)::int as n from leads group by stage) s) as by_stage,
+             from (select stage, count(*)::int as n from leads where workspace_id = ${ws} group by stage) s) as by_stage,
           (select count(*)::int from leads l
-             where l.stage = 'awaiting_approval'
-               and exists (select 1 from approvals a where a.lead_id = l.id and a.kind = 'send'
+             where l.workspace_id = ${ws} and l.stage = 'awaiting_approval'
+               and exists (select 1 from approvals a where a.workspace_id = ${ws} and a.lead_id = l.id and a.kind = 'send'
                            and a.status = 'pending' and a.expires_at > now())) as awaiting_open,
-          (select count(*)::int from approvals where status = 'pending' and expires_at > now()) as pending_total,
+          (select count(*)::int from approvals where workspace_id = ${ws} and status = 'pending' and expires_at > now()) as pending_total,
           -- Naive's running totals for sessions active in the last 7 days.
           (select sum(consumed_micro_usd)::text from naive_sessions
-             where coalesce(last_event_at, updated_at) >= now() - interval '7 days') as week_micro,
-          coalesce((select value = 'true'::jsonb from settings where key = 'paused'), false) as paused`,
-    listApprovals(sql, { status: "pending", limit: 5 }),
-    listReplies(sql, { limit: 5 }),
+             where workspace_id = ${ws} and coalesce(last_event_at, updated_at) >= now() - interval '7 days') as week_micro,
+          coalesce((select paused from workspaces where id = ${ws}), false) as paused`,
+    listApprovals(sql, ws, { status: "pending", limit: 5 }),
+    listReplies(sql, ws, { limit: 5 }),
+    spendStatus(sql, env, ws),
   ]);
   const paused = counts?.paused === true;
-  const workflows = await listWorkflows(sql, { recentRuns: 3, paused });
+  const workflows = await listWorkflows(sql, ws, { recentRuns: 3, paused });
   const byStage = (counts?.by_stage ?? {}) as Record<string, number>;
   return {
     pipeline: pipelineFromStages(byStage, counts?.awaiting_open ?? 0),
@@ -84,7 +87,13 @@ export async function getSummary(sql: Sql, env: Env) {
     pending_approvals_total: counts?.pending_total ?? 0,
     active_workflows: workflows.filter((w) => w.active_runs > 0),
     recent_replies: replies.data,
-    spend: { week_usd: microToUsd(counts?.week_micro), budget_usd: weeklyBudgetUsd(env) },
+    spend: {
+      week_usd: microToUsd(counts?.week_micro),
+      budget_usd: weeklyBudgetUsd(env),
+      // The per-workspace daily cap (src/services/limits.ts): spend of sessions started in the last 24 hours.
+      day_usd: microToUsd(today.spent_micro_usd),
+      daily_cap_usd: microToUsd(today.cap_micro_usd),
+    },
     paused,
   };
 }
