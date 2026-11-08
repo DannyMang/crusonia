@@ -543,6 +543,11 @@ so its box has no open port, no TLS certificate and no inbound firewall rule.
   the last 24 hours, plus one reminder when an approval is in the last quarter of its life (at most its last 12 hours). It
   leases up to 5 notices at a time with their text, and records the bridge's delivery acks, including the iMessage id of
   each delivered bubble (`imessage_outbox`). A lease that is never acked is retried after 2 minutes, 5 attempts at most.
+- **Guards.** At most 6 notices go out per 10 minutes (`IMESSAGE_NOTICE_CAP`). Notices beyond the cap are not texted one
+  by one: they collapse into a single `+N more approvals waiting: open Crusonia (…) or text status.` text, sent at most
+  once per window. Approvals that belong to integration-test fixtures are never texted, so suites on a shared database
+  can't flood the phone (`IMESSAGE_INCLUDE_TEST_DATA=true` turns that off). Fixtures are leads with an `it_*` source,
+  recipients on reserved example domains (`example.com`, `*.test`, `*.example`, …) and `ses_it_*` agent sessions.
 - **Replies.** The bridge parses each owner message and posts it to `POST /webhooks/photon`. The Worker applies it through
   the same services as the REST API and answers with the text the bridge sends back.
 

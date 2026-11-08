@@ -31,6 +31,9 @@ const env: Env = {
   IMESSAGE_ENABLED: "true",
   BRIDGE_SECRET: secret,
   OWNER_PHONE: OWNER,
+  // This suite's fixtures are test data, which the outbox skips by default; and it texts far more than the cap.
+  IMESSAGE_INCLUDE_TEST_DATA: "true",
+  IMESSAGE_NOTICE_CAP: "1000",
   AGENTMAIL_API_KEY: "am_test",
   AGENTMAIL_INBOX_ID: "it@agentmail.to",
   NAIVE_API_KEY: "nv_test",
@@ -55,7 +58,7 @@ function installFetchMock() {
 }
 
 // ---- signed bridge calls through the real Worker ----
-async function bridgeCall(path: string, payload: unknown) {
+async function bridgeCall(path: string, payload: unknown, over: Partial<Env> = {}) {
   const body = JSON.stringify(payload);
   const ts = Math.floor(Date.now() / 1000);
   const res = await worker.fetch(
@@ -64,7 +67,7 @@ async function bridgeCall(path: string, payload: unknown) {
       headers: { "content-type": "application/json", "x-crusonia-timestamp": String(ts), "x-crusonia-signature": await signBridge(secret, ts, path, body) },
       body,
     }),
-    env,
+    { ...env, ...over },
     {} as ExecutionContext,
   );
   expect(res.status).toBe(200);
@@ -92,8 +95,13 @@ async function pollFor(want: string[]): Promise<Map<string, Notice & { bubble: s
   return seen;
 }
 
-async function newLead(name: string) {
-  return createLead(sql, WS, { email: email(name), name: `${name} Tester`, company: "Fieldnote", source: "it_test", consent: { text: "integration test opt-in" } }, "test");
+async function newLead(name: string, opts: { source?: string } = {}) {
+  return createLead(
+    sql,
+    WS,
+    { email: email(name), name: `${name} Tester`, company: "Fieldnote", source: opts.source ?? "it_test", consent: { text: "integration test opt-in" } },
+    "test",
+  );
 }
 async function newSendApproval(name: string, subject = "Quick question") {
   const lead = await newLead(name);
@@ -132,6 +140,7 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     await sql.transaction([
       sql`delete from events where lead_id = any(${ids}::text[]) or (lead_id is null and data::text like ${`%${run}%`})`,
       sql`delete from leads where id = any(${ids}::text[])`, // cascades drafts, approvals, imessage_outbox
+      sql`delete from approvals where naive_session_id like ${`ses_it_${run}%`}`, // lead-less agent approvals
       sql`delete from naive_sessions where id like ${`ses_it_${run}%`}`,
       sql`delete from webhook_events where event_id like ${`photon:it-${run}%`}`,
       sql`update workspaces set paused = ${originalPaused} where id = ${WS}`,
@@ -308,6 +317,54 @@ suite("iMessage approvals (dev database, mocked providers)", () => {
     const seen = await pollFor([`warn:${code}`]);
     expect(seen.get(`warn:${code}`)!.text).toStartWith(`Reminder: ${code} expires in`);
     expect((await pollFor([])).has(`warn:${code}`)).toBe(false);
+  });
+
+  test("test fixtures are never queued unless IMESSAGE_INCLUDE_TEST_DATA=true", async () => {
+    const strict = { IMESSAGE_INCLUDE_TEST_DATA: undefined };
+    const poll = (over: Partial<Env>) => bridgeCall("/webhooks/photon/poll", { bridge: { state: "connected", connected: true }, acks: [], max: 0 }, over);
+    // An it_* source; a reserved example domain (with a non-test source); an ses_it_* session without a lead.
+    const bySource = await newSendApproval("fixture-source");
+    const byDomain = await newLead("fixture-domain", { source: "manual_qa" });
+    const domainCode = (await createDraft(sql, WS, { lead_id: byDomain.id, subject: "Hi", body: "Body" }, { ttlMinutes: 60, via: "api", actor: "test" })).approval.code as string;
+    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${`ses_it_${run}_nolead`}, ${WS}, null, 'research', 'idle')`;
+    const sessionCode = (await createAgentApproval(sql, {
+      workspaceId: WS,
+      sessionId: `ses_it_${run}_nolead`,
+      leadId: null,
+      ttlMinutes: 60,
+      action: { kind: "tool", tool_call_id: "tc_nolead", name: "web_fetch", args: {} },
+    }))!;
+    const codes = [bySource.code, domainCode, sessionCode];
+    const queued = async () => (await sql`select approval_code from imessage_outbox where approval_code = any(${codes}::text[])`).map((r) => r.approval_code);
+    await poll(strict);
+    expect(await queued()).toEqual([]);
+    await poll({});
+    expect((await queued()).sort()).toEqual([...codes].sort());
+  });
+
+  test("send cap: beyond the cap, due notices collapse into one '+N more' summary, once per window", async () => {
+    await pollFor([]); // nothing of ours outstanding
+    const [{ n: used }] = (await sql`
+      select count(*)::int as n from imessage_outbox
+      where workspace_id = ${WS} and (delivered_at > now() - interval '10 minutes'
+         or (delivered_at is null and skipped_at is null and leased_at > now() - interval '120 seconds'))`) as { n: number }[];
+    const capped = { IMESSAGE_NOTICE_CAP: String(used + 2) };
+    await sql`delete from settings where key = 'imessage_summary'`;
+    const made = [];
+    for (const name of ["cap1", "cap2", "cap3", "cap4", "cap5"]) made.push((await newSendApproval(name)).code);
+    const ids = made.map((c) => `approval:${c}`);
+    const res = await bridgeCall("/webhooks/photon/poll", { bridge: { state: "connected", connected: true }, acks: [], max: 10 }, capped);
+    const ours = (res.notices as Notice[]).filter((n) => ids.includes(n.id));
+    expect(ours.length).toBeLessThanOrEqual(2);
+    const summary = (res.notices as Notice[]).find((n) => n.type === "summary");
+    expect(summary?.text).toMatch(/^\+\d+ more approvals? waiting: open Crusonia \(https:\/\/example\.test\/app\/approvals\) or text status\.$/);
+    expect(res.notices.at(-1).type).toBe("summary");
+    const skipped = await sql`select id from imessage_outbox where id = any(${ids}::text[]) and skip_reason = 'rate_limited'`;
+    expect(skipped.length).toBe(5 - ours.length);
+    // Within the window: no second summary, and the collapsed notices are never texted one by one.
+    await bridgeCall("/webhooks/photon/poll", { bridge: { state: "connected", connected: true }, acks: ours.map((n) => ({ id: n.id, ok: true })), max: 10 }, capped);
+    const again = await bridgeCall("/webhooks/photon/poll", { bridge: { state: "connected", connected: true }, acks: [], max: 10 }, { IMESSAGE_NOTICE_CAP: "1000" });
+    expect((again.notices as Notice[]).some((n) => n.type === "summary" || skipped.some((s) => s.id === n.id))).toBe(false);
   });
 
   test("another workspace's approvals are never texted, and a text cannot decide them", async () => {
