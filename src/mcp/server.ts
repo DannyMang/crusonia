@@ -131,13 +131,17 @@ export async function agentAuthor(sql: Sql, ws: string, bearer: BearerIdentity |
 const runIdArg = z.string().trim().min(1).max(64).nullish().describe("The Crusonia run id from your first message, if you are a Crusonia agent run.");
 
 /**
- * What the Operator writes reaches research sessions (which read the web) as data: the summary, notes, workflow text. It
+ * What the Operator writes reaches research sessions (which read the web) as data: the summary, notes, lead fields. It
  * reads text scraped by other agents, so it may not add a new link or address there: that keeps an injected instruction
- * from turning pipeline data into "fetch this URL" two steps later. Returns the problem, or null. Pure.
+ * from turning pipeline data into "fetch this URL" two steps later. read_website takes a bare domain, so "evil.test/?d=x"
+ * and an IP address count as links too. Returns the problem, or null. Pure.
  */
 export function agentTextProblem(text: string, existing = ""): string | null {
   const known = existing.toLowerCase();
-  const found = text.match(/\bhttps?:\/\/[^\s)>"']+|\bwww\.[^\s)>"']+|[\w.+-]+@[\w-]+\.[\w.-]+/gi) ?? [];
+  const found =
+    text.match(
+      /\b[a-z][a-z0-9+.-]*:\/\/[^\s)>"']+|\bwww\.[^\s)>"']+|[\w.+-]+@[\w-]+\.[\w.-]+|\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}\b(?:[/?#:][^\s)>"']*)?|\b\d{1,3}(?:\.\d{1,3}){3}\b/gi,
+    ) ?? [];
   const added = found.filter((f) => !known.includes(f.toLowerCase()));
   return added.length ? `This text adds a link or address the operator may not add: ${added[0]}. Describe it in words; researchers add sourced links.` : null;
 }
@@ -150,7 +154,6 @@ export function operatorWorkflowProblem(input: { trigger?: { kind: string; every
 }
 
 const OPERATOR_MIN_EVERY_HOURS = 6;
-const OPERATOR_MAX_SCHEDULES = 3;
 const MAX_AGENT_FIND = 10;
 const MAX_AGENT_RESEARCH = 5;
 
@@ -455,17 +458,6 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
     (args) =>
       run(async () => {
         const { workflow_id, ...input } = args;
-        if (role === "operator") {
-          for (const text of [...(input.research_questions ?? []), ...(input.evidence_required ?? []), input.done_when ?? "", ...(input.variants ?? []).map((v) => v.angle ?? "")]) operatorText(text);
-          if (!workflow_id) {
-            const problem = operatorWorkflowProblem({ trigger: input.trigger, capUsd: input.spend?.cap_usd }, { maxCapUsd: autopilotConfig(env).weeklyCapUsd, minEveryHours: OPERATOR_MIN_EVERY_HOURS });
-            if (problem) throw new ServiceError("invalid", problem);
-            const defs = await listDefinitions(db(), ws);
-            if (input.trigger?.kind === "schedule" && defs.filter((d) => d.enabled && d.trigger.kind === "schedule").length >= OPERATOR_MAX_SCHEDULES) {
-              throw new ServiceError("invalid", `The workspace already has ${OPERATOR_MAX_SCHEDULES} schedules on. Turn one off first.`);
-            }
-          }
-        }
         if (workflow_id) return createVersion(db(), ws, workflow_id, input, { actor: "agent:mcp" });
         return createDefinition(db(), ws, { ...input, source: input.source === "template" ? "template" : undefined }, { actor: "agent:mcp", source: "claude_code" });
       }),
@@ -483,6 +475,8 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
     (args) =>
       run(async () => {
         await requireTarget(args.lead_id, args.run_id);
+        operatorText(args.question);
+        for (const missing of args.missing ?? []) operatorText(missing);
         return flagForReview(db(), ws, { lead_id: args.lead_id, question: args.question, missing: args.missing });
       }),
   );
@@ -499,6 +493,7 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
     ({ run_id, ...args }) =>
       run(async () => {
         await requireTarget(args.lead_id, run_id);
+        operatorText(args.rationale);
         return scoreLead(db(), ws, args);
       }),
   );
@@ -748,6 +743,9 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
     },
     ({ lead_id, name, title, company, website, linkedin_url }) =>
       run(async () => {
+        // A research session reads the lead's website first, so setting it would point that session at any URL.
+        if (role === "operator" && (website || linkedin_url)) throw new ServiceError("invalid", "The operator can't change a lead's website or LinkedIn URL: researchers add sourced links.");
+        for (const text of [name, title, company]) operatorText(text);
         const patch = Object.fromEntries(Object.entries({ name, title, company, website, linkedin_url }).filter(([, v]) => v !== undefined && v !== null));
         return { lead: await patchLead(db(), ws, lead_id, patch, `agent:${role}`) };
       }),
@@ -813,6 +811,8 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
     },
     (args) =>
       run(async () => {
+        operatorText(args.name);
+        operatorText(args.trigger?.label);
         const sql = db();
         const { workflow } = await getDefinition(sql, ws, args.workflow_id);
         if (args.cap_usd !== undefined && args.cap_usd !== null && (workflow.spend.cap_usd === null || args.cap_usd > workflow.spend.cap_usd)) {

@@ -9,12 +9,15 @@
 //   - Stripe Checkout and the Customer Portal (a portal link manages billing without signing in)
 //   - turning autopilot on or off (it decides whether agents spend on their own)
 //   - the team and its invites, and creating or renaming a workspace (an agent must not add people or send email)
+//   - resuming after a pause (the kill switch: anyone may pull it, only an owner or admin may undo it)
+//   - changing a workflow's spend cap (the Operator can only lower one; REST must not be the way around that)
 // On top of that, members can't manage what belongs to the workspace as a whole: billing, API keys and integrations are
 // for owners and admins (and the team, in src/api/team.ts), as is turning autopilot on or off. Reading stays open: the credits pill and the names of the
 // keys behind notes are on every member's screen.
 import type { Hono, MiddlewareHandler } from "hono";
 import type { AppEnv } from "../lib/context.ts";
 import { ApiError } from "../lib/errors.ts";
+import { roleAtLeast } from "../services/workspaces.ts";
 import { requireRole } from "./team.ts";
 
 function refuse(what: string): never {
@@ -29,17 +32,45 @@ export const humanOnly =
     await next();
   };
 
+const jsonBody = async (c: Parameters<MiddlewareHandler<AppEnv>>[0]): Promise<Record<string, unknown> | null> => {
+  try {
+    // HonoRequest caches the text, so the route's parseJson reads the same body afterwards.
+    const body = JSON.parse((await c.req.text()) || "{}") as unknown;
+    return body && typeof body === "object" ? (body as Record<string, unknown>) : null;
+  } catch {
+    return null; // the route answers 400 invalid_json
+  }
+};
+
+const adminOnly = (c: Parameters<MiddlewareHandler<AppEnv>>[0], what: string) => {
+  const role = c.get("role");
+  if (!role || !roleAtLeast(role, "admin")) throw new ApiError(403, "forbidden_role", `${what} needs the admin role in this workspace`);
+};
+
+/** PUT /settings/pause {paused: false}. Pausing stays open to everyone: it only stops things. */
+const resumeGuard: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if ((await jsonBody(c))?.paused === false) {
+    if (c.get("principal")?.kind === "api_key") refuse("Resuming after a pause");
+    adminOnly(c, "Resuming after a pause");
+  }
+  await next();
+};
+
+/** PATCH /workflow-definitions/:id with a spend cap. Everything else on a workflow stays open. */
+const spendGuard: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const body = await jsonBody(c);
+  if (body && ("cap_usd" in body || "spend" in body)) {
+    if (c.get("principal")?.kind === "api_key") refuse("Changing a spend cap");
+    adminOnly(c, "Changing a spend cap");
+  }
+  await next();
+};
+
 /** Only the consent field is refused for API keys: an agent may still create and edit leads. */
 export const consentHumanOnly: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (c.get("principal")?.kind === "api_key") {
-    let body: unknown;
-    try {
-      // HonoRequest caches the text, so the route's parseJson reads the same body afterwards.
-      body = JSON.parse((await c.req.text()) || "{}");
-    } catch {
-      body = null; // the route answers 400 invalid_json
-    }
-    if (body && typeof body === "object" && "consent" in body) refuse("Granting or changing consent");
+    const body = await jsonBody(c);
+    if (body && "consent" in body) refuse("Granting or changing consent");
   }
   await next();
 };
@@ -61,4 +92,6 @@ export function guardHumanRoutes(api: Hono<AppEnv>): void {
   api.on(WRITE, ["/keys", "/keys/*"], requireRole("admin"));
   api.on(WRITE, "/billing/*", requireRole("admin"));
   api.on(WRITE, "/integrations/*", requireRole("admin"));
+  api.on("PUT", "/settings/pause", resumeGuard);
+  api.on("PATCH", "/workflow-definitions/:id", spendGuard);
 }

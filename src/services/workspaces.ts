@@ -27,6 +27,7 @@ const list = (raw: string | undefined) =>
 
 /** SIGNUPS_OPEN: anyone who signs up gets a workspace (default). "false" lets only existing members in. */
 export const signupsOpen = (env: Env) => !/^(0|false|no|off)$/i.test(env.SIGNUPS_OPEN?.trim() ?? "");
+export const blockedUserIds = (env: Env) => list(env.BLOCKED_USER_IDS);
 export const isBlockedUser = (env: Env, userId: string) => list(env.BLOCKED_USER_IDS).includes(userId);
 /** SIGNUP_ALLOWED_USER_IDS: Clerk users the owner has approved; they may create a workspace while sign-ups are closed. */
 export const isInvitedUser = (env: Env, userId: string) => Boolean(userId) && list(env.SIGNUP_ALLOWED_USER_IDS).includes(userId);

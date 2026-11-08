@@ -103,8 +103,11 @@ export const researcherMcpUrl = (baseUrl: string) => `${baseUrl}/mcp?role=resear
 export const operatorMcpUrl = (baseUrl: string) => `${baseUrl}/mcp?role=operator`;
 
 /**
- * The research agent: our MCP server (its role's tools), the playbook as system prompt, and a toolset that allows those, keeps ask_operator as ask (Naive never allows it), denies the operator's tools and anything that reaches
- * out, and asks for the rest. `handoffs: false`: a research session never starts other agents' sessions.
+ * The research agent: our MCP server (its role's tools), the playbook as system prompt, and a deny-by-default toolset that
+ * allows those and keeps ask_operator as ask (Naive never allows it). Deny by default because an `ask` default still
+ * offers the model Naive's other built-ins (email.send, phone.send, card.spend, wallet.pay, social.post, ...): text on a
+ * scraped page could then put a real send or payment one 👍 away, outside every rule Crusonia applies to a send.
+ * `handoffs: false`: a research session never starts other agents' sessions.
  */
 export function naiveAgentConfig(input: {
   baseUrl: string;
@@ -130,7 +133,7 @@ export function naiveAgentConfig(input: {
     // vetta/auto serves the immediate window only, and every catalogue model supports it.
     window: "immediate",
     system: input.playbook.body,
-    tools: { default_config: { permission: "ask" }, configs },
+    tools: { default_config: { permission: "deny" }, configs },
     mcp_servers: [
       // Each url must equal the vault credential's mcp_server_url exactly (see setupNaive).
       { type: "url", name: "crusonia", url: researcherMcpUrl(input.baseUrl) },

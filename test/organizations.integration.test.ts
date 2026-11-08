@@ -281,6 +281,16 @@ suite("organizations (database, faked Clerk and AgentMail)", () => {
       expect((await call(owner, "GET", "/api/me", { ws: "ws_owner" })).status).toBe(200);
     });
 
+    test("BLOCKED_USER_IDS stops the keys of a workspace whose owners are all blocked, and only those", async () => {
+      const bad = uid("blocked_keys");
+      const ws = await createTestWorkspace(sql, `blk_${run}`, { clerkUserId: bad });
+      made.push(ws);
+      const key = await testKey(sql, ws);
+      expect((await call(key, "GET", "/api/leads")).status).toBe(200);
+      expect((await call(key, "GET", "/api/leads", { env: env({ BLOCKED_USER_IDS: bad }) })).status).toBe(401);
+      expect((await call(keyA, "GET", "/api/leads", { ws: A, env: env({ BLOCKED_USER_IDS: bad }) })).status).toBe(200);
+    });
+
     test("/mcp: the key decides the workspace, whatever the header says", async () => {
       const rpc = (headers: Record<string, string>, path = "/mcp") =>
         worker.fetch(

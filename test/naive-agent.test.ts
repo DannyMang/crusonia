@@ -72,15 +72,16 @@ describe("research playbook", () => {
 });
 
 describe("agent definition", () => {
-  test("allows the researcher's crusonia tools and the research Apify tools, denies the rest of ours, asks for anything else", () => {
+  test("allows the researcher's crusonia tools, denies the rest of ours, and denies anything unlisted", () => {
     const { tools } = config();
-    expect(tools.default_config).toEqual({ permission: "ask" });
+    // Under an `ask` default Naive still offers its ask-by-default built-ins (email.send, card.spend, ...) to the model.
+    expect(tools.default_config).toEqual({ permission: "deny" });
     for (const tool of CRUSONIA_TOOLS) {
       const allowed = (RESEARCHER_TOOLS as readonly string[]).includes(tool);
       expect(tools.configs[`crusonia.${tool}`]).toEqual(allowed ? { enabled: true, permission: "allow" } : { enabled: false, permission: "deny" });
     }
     expect(tools.configs.ask_operator).toEqual({ enabled: true, permission: "ask" });
-    // Anything unlisted falls through to the `ask` default, and no agent has Apify's own server any more.
+    // No agent has Apify's own server any more.
     expect(Object.keys(tools.configs).filter((k) => k.startsWith("apify."))).toEqual([]);
     expect(Object.keys(tools.configs)).toHaveLength(CRUSONIA_TOOLS.length + DENIED_BUILTINS.length + 1);
   });

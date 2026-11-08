@@ -103,3 +103,20 @@ export async function verifyApiKey(sql: Sql, token: string): Promise<ApiKeyIdent
     select id, name, workspace_id, kind from k`;
   return (rows[0] as ApiKeyIdentity | undefined) ?? null;
 }
+
+/**
+ * Whether a key must stop working because of BLOCKED_USER_IDS: a blocked user made it, or every owner of its workspace is
+ * blocked (which also stops that workspace's agent keys). Only called when the list isn't empty. The owner workspace is
+ * only ever stopped key by key: it can have no member row before the instance owner first signs in.
+ */
+export async function apiKeyBlocked(sql: Sql, key: Pick<ApiKeyIdentity, "id" | "workspace_id">, blocked: string[]): Promise<boolean> {
+  const actors = blocked.map((id) => `clerk:${id}`);
+  const [row] = await sql`
+    select exists (select 1 from events e where e.workspace_id = ${key.workspace_id} and e.kind = 'api_key_created'
+                   and e.data->>'key_id' = ${key.id} and e.data->>'actor' = any(${actors}::text[]))
+        or (${key.workspace_id}::text <> 'ws_owner'
+            and exists (select 1 from workspace_members m where m.workspace_id = ${key.workspace_id} and m.role = 'owner')
+            and not exists (select 1 from workspace_members m where m.workspace_id = ${key.workspace_id} and m.role = 'owner'
+                            and not (m.clerk_user_id = any(${blocked}::text[])))) as blocked`;
+  return row?.blocked === true;
+}

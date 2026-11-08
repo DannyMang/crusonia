@@ -1,7 +1,11 @@
 // No 0/O/1/I/L so codes survive being read off a phone screen.
 const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 
-export function shortCode(length = 4) {
+/**
+ * Approval codes are one namespace across every workspace (approvals.code is the primary key) and rows are never deleted,
+ * so one workspace looping drafts could use up a short code space for everyone. 6 characters give 887 million.
+ */
+export function shortCode(length = 6) {
   const bytes = crypto.getRandomValues(new Uint8Array(length));
   return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
 }

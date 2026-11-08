@@ -44,7 +44,9 @@ export async function authenticate(
 
   const bearer = await resolveBearer(env, token, deps.lookupApiKey);
   if (bearer?.kind === "owner_token") return { kind: "owner_token" };
-  if (bearer) return { kind: "api_key", keyId: bearer.keyId, name: bearer.name, workspaceId: bearer.workspaceId, agent: bearer.agent };
+  // A Naive agent's key (in a vault, bound to its /mcp URL) only ever talks MCP, where its role limits its tools.
+  if (bearer?.kind === "api_key" && bearer.agent) throw new ApiError(403, "agent_key_mcp_only", "This key belongs to a Crusonia agent: it only works on /mcp");
+  if (bearer) return { kind: "api_key", keyId: bearer.keyId, name: bearer.name, workspaceId: bearer.workspaceId, agent: false };
   if (isApiKey(token)) throw new ApiError(401, "invalid_token", "API key is not valid or was revoked");
 
   const clerkConfigured = Boolean(env.CLERK_JWT_KEY || env.CLERK_SECRET_KEY);

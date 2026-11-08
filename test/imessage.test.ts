@@ -224,6 +224,12 @@ describe("/webhooks/photon routes (no database)", () => {
     expect((await call(await signed("/webhooks/photon/poll", poll), off)).body).toEqual({ ok: true, enabled: false, notices: [], poll_after_ms: 60_000 });
   });
 
+  test("no OWNER_PHONE on the Worker: a signed tapback is refused, since nothing says whose it is", async () => {
+    const res = await call(await signed("/webhooks/photon", command), env({ OWNER_PHONE: undefined }));
+    expect(res.status).toBe(503);
+    expect(res.body.error.message).toContain("OWNER_PHONE");
+  });
+
   test("with OWNER_PHONE set on the Worker, any other sender is refused (403)", async () => {
     const res = await call(await signed("/webhooks/photon", { ...command, from: "+15550002222" }), env({ OWNER_PHONE: "+15550001111" }));
     expect(res.status).toBe(403);
