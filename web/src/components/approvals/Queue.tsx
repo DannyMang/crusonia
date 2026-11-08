@@ -58,7 +58,7 @@ export function Queue({
   const rest = items.filter((a) => msLeft(a, now) >= SOON_MS);
   const ttl = ttlMinutes(items);
   return (
-    <div className="flex w-100 shrink-0 flex-col border-r border-r-[#200D0D1A]">
+    <div className="flex w-72 shrink-0 flex-col border-r border-r-[#200D0D1A] xl:w-100">
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-b-[#200D0D1A] bg-[#200D0D06] px-4">
         <span className="text-xs/4 font-medium text-faint">Waiting for you</span>
         <span className="text-xs/4 font-medium text-faint">Expires</span>

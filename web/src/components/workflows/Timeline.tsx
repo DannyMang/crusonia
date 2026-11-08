@@ -157,11 +157,12 @@ export function Timeline({
       </div>
       {notice}
       <table className="w-full table-fixed border-collapse text-left text-xs/4">
+        {/* Tool and the time bar are narrower below 1440px so "What happened" keeps room. */}
         <colgroup>
           <col className="w-13" />
-          <col className="w-45" />
+          <col className="w-36 min-[1440px]:w-45" />
           <col />
-          <col className="w-33" />
+          <col className="w-24 min-[1440px]:w-33" />
           <col className="w-17" />
           <col className="w-16" />
           <col className="w-8" />

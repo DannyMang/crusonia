@@ -48,19 +48,20 @@ function Detail({ data, approve }: { data: LeadFull; approve: ApproveMutation })
       <Header lead={lead} sendApproval={sendApproval} approve={approve} />
       {approve.isError ? <QueryError error={approve.error} what="sending" /> : null}
       <Stats lead={lead} evidence={evidence} pending={pending} />
-      <div className="flex items-start gap-7">
+      {/* Three columns from 1280px. Below that the draft sits beside the facts and the evidence and timeline run full width underneath. */}
+      <div className="grid grid-cols-[16rem_minmax(0,1fr)] items-start gap-7 xl:flex">
         <div className="flex w-64 shrink-0 flex-col gap-5.5">
           <CompanyFacts lead={lead} lookalikes={data.lookalikes} />
           <ContactFacts lead={lead} />
           <WhyFit lead={lead} />
           <ConsentBox lead={lead} />
         </div>
-        <div className="flex min-w-0 grow basis-0 flex-col gap-7">
+        <div className="col-span-2 row-start-2 flex min-w-0 grow basis-0 flex-col gap-7">
           <EvidenceList evidence={evidence} />
           <Timeline events={timeline} pending={pending} />
           {messages.length ? <Conversation messages={messages} /> : null}
         </div>
-        <div className="flex w-91 shrink-0 flex-col gap-5">
+        <div className="flex w-full shrink-0 flex-col gap-5 xl:w-91">
           <DraftCard lead={lead} drafts={drafts} approval={sendApproval} approve={approve} />
           <CrmSync lead={lead} />
         </div>
@@ -109,7 +110,7 @@ function Header({ lead, sendApproval, approve }: { lead: Lead; sendApproval: App
   return (
     <div className="flex flex-col gap-2.5">
       <Breadcrumb lead={lead} />
-      <div className="flex items-center gap-3.5">
+      <div className="flex flex-wrap items-center gap-x-3.5 gap-y-3 xl:flex-nowrap">
         <h1 className="min-w-0 truncate text-2xl/7.5 font-semibold tracking-[-0.02em] text-ink">{leadTitle(lead)}</h1>
         {lead.domain && lead.domain !== leadTitle(lead) ? <div className={cx("shrink-0 text-[13px]/4", muted)}>{lead.domain}</div> : null}
         <StageBadge stage={lead.stage} size="lg" />

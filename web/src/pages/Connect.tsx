@@ -40,7 +40,7 @@ export default function Connect() {
       <CrumbBar here="Connect your agent" />
       <Page>
         <div className="flex flex-col gap-6 px-12 pb-14 pt-8">
-          <div className="flex items-end justify-between gap-8">
+          <div className="flex flex-col items-start gap-4 xl:flex-row xl:items-end xl:justify-between xl:gap-8">
             <div className="flex flex-col gap-2">
               <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Connect your agent</h1>
               <p className="w-130 max-w-full text-[13px]/4.5 font-medium text-muted">
@@ -48,16 +48,19 @@ export default function Connect() {
                 approval.
               </p>
             </div>
-            <div className="flex shrink-0 flex-col gap-1.5">
+            <div className="flex min-w-0 max-w-full shrink-0 flex-col gap-1.5">
               <div className="text-xs/4 font-medium text-faint">MCP endpoint</div>
-              <div className="flex h-8.5 shrink-0 items-center gap-2.5 rounded-lg bg-[#200D0D0A] pl-3 pr-1.5">
-                <code className="text-xs/4 font-medium text-ink">{mcpUrl}</code>
+              <div className="flex h-8.5 min-w-0 shrink-0 items-center gap-2.5 rounded-lg bg-[#200D0D0A] pl-3 pr-1.5">
+                <code className="min-w-0 truncate text-xs/4 font-medium text-ink" title={mcpUrl}>
+                  {mcpUrl}
+                </code>
                 <CopyChip text={mcpUrl} />
               </div>
             </div>
           </div>
 
-          <div className="flex items-start gap-6">
+          {/* Below 1280px the tools card moves under Setup and API keys, so neither column gets squeezed. */}
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:gap-6">
             <div className="flex min-w-0 grow basis-0 flex-col gap-4">
               <SetupCard token={token} mcpUrl={mcpUrl} keysShipped={keysShipped} />
               <ApiKeysCard
@@ -78,13 +81,13 @@ export default function Connect() {
 
 function ToolsCard() {
   return (
-    <Card className="flex w-90 shrink-0 flex-col px-6 pb-2.5 pt-6">
+    <Card className="flex w-full shrink-0 flex-col px-6 pb-2.5 pt-6 min-[1280px]:w-80 min-[1440px]:w-90">
       <div className="flex items-center gap-2 pb-1.5">
         <h2 className="text-[15px]/4.5 font-medium text-ink">Available tools</h2>
-        <span className="flex h-4.5 items-center rounded-full bg-[#200D0D14] px-1.5 text-xs/3 font-medium text-faint">{TOOL_COUNT}</span>
+        <span className="flex h-4.5 items-center rounded-full bg-[#200D0D14] px-1.5 text-xs/3 font-medium text-muted">{TOOL_COUNT}</span>
       </div>
       <p className="pb-2.5 text-[13px]/4.5 font-medium text-muted">What your agent can call. Anything that sends waits in Approvals.</p>
-      <ul className="flex flex-col">
+      <ul className="grid grid-cols-2 gap-x-6 xl:flex xl:flex-col">
         {TOOLS.map((t) => (
           <li key={t.name} className="flex flex-col gap-0.75 border-t border-t-[#200D0D0F] py-2.5">
             <code className="text-[13px]/4.5 font-medium text-ink">{t.name}</code>

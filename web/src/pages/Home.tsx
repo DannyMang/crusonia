@@ -468,7 +468,7 @@ function ActiveWorkflows({ workflows, loading, partial }: { workflows: Workflow[
                 className={cx("flex h-7 items-center gap-2 rounded-full pr-2", active ? "bg-lime pl-3.5" : "pl-3 hover:bg-[#200D0D08]")}
               >
                 <span className={cx("text-[13px]/4 font-medium", active ? "text-ink" : "text-faint")}>{t === "running" ? "Running" : "Paused"}</span>
-                <span className={cx("flex h-4 items-center rounded-full px-1.5 tabular-nums text-xs/3 font-medium", active ? "bg-[#BDE6893D] text-ink" : "bg-[#200D0D14] text-faint")}>
+                <span className={cx("flex h-4 items-center rounded-full px-1.5 tabular-nums text-xs/3 font-medium", active ? "bg-[#BDE6893D] text-ink" : "bg-[#200D0D14] text-muted")}>
                   {n}
                 </span>
               </button>

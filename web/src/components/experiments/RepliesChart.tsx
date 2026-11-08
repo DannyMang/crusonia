@@ -70,9 +70,10 @@ export function RepliesChart({ e, daily }: { e: Experiment; daily: DailyPoint[] 
 
   return (
     <div className="flex shrink-0 flex-col gap-3 rounded-[10px] border border-[#200D0D1A] bg-white px-4 pb-3 pt-3.5 shadow-[0_1px_3px_#0000000F]">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-4">
-          <h3 className="shrink-0 text-sm/4 font-semibold text-ink">Replies, cumulative</h3>
+      {/* Title, legend, date range in one row from 1280px; below that the legend gets its own row. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 xl:flex-nowrap">
+        <h3 className="shrink-0 text-sm/4 font-semibold text-ink">Replies, cumulative</h3>
+        <div className="order-last flex min-w-0 basis-full items-center gap-4 xl:order-none xl:basis-auto">
           {ARMS.map((k) => (
             <div key={k} className="flex min-w-0 items-center gap-1.5">
               <span className="size-2 shrink-0 rounded-full" style={{ background: ARM_COLOR[k].line }} />
@@ -83,7 +84,7 @@ export function RepliesChart({ e, daily }: { e: Experiment; daily: DailyPoint[] 
             </div>
           ))}
         </div>
-        <div className="shrink-0 text-xs/4 font-medium tabular-nums text-muted">
+        <div className="ml-auto shrink-0 text-xs/4 font-medium tabular-nums text-muted">
           {range}
         </div>
       </div>

@@ -70,7 +70,7 @@ export default function Integrations() {
       <CrumbBar here="Integrations" />
       <Page>
         <div className="flex w-240 max-w-full flex-col gap-4 px-12 pb-14 pt-8">
-          <div className="flex items-end justify-between gap-6 pb-2">
+          <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-2">
             <div className="flex flex-col gap-2">
               <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Integrations</h1>
               <p className="w-140 max-w-full text-[13px]/4.5 font-medium text-muted">
@@ -205,7 +205,7 @@ function MissingSecrets({ secrets }: { secrets: string[] }) {
         <div className={fieldLabel}>{secrets.length === 1 ? "Missing secret" : "Missing secrets"}</div>
         {secrets.map((k) => (
           <div key={k} className="flex items-center gap-3">
-            <div className="flex h-9.25 w-90 shrink-0 items-center gap-2 rounded-lg border border-[#200D0D1A] px-3.5">
+            <div className="flex h-9.25 w-90 min-w-0 shrink-0 items-center gap-2 rounded-lg border border-[#200D0D1A] px-3.5">
               <span className="grow truncate text-[13px]/4.5 font-medium text-ink">{k}</span>
               <span className="shrink-0 text-xs/4 font-medium text-faint">not set</span>
             </div>
@@ -298,7 +298,7 @@ function AgentMailCard({ status, known }: CardProps) {
     >
       {state === "connected" ? (
         <div className="flex gap-4 pt-1">
-          <div className="flex w-90 shrink-0 flex-col gap-1.5">
+          <div className="flex w-90 min-w-0 flex-col gap-1.5">
             <div className={fieldLabel}>Inbox</div>
             <div className="flex h-9.25 shrink-0 items-center gap-2 rounded-lg border border-[#200D0D1A] pl-3.5 pr-1.5">
               {inbox ? (
@@ -311,10 +311,10 @@ function AgentMailCard({ status, known }: CardProps) {
               )}
             </div>
           </div>
-          <div className="flex w-90 shrink-0 flex-col gap-1.5">
+          <div className="flex w-90 min-w-0 flex-col gap-1.5">
             <div className={fieldLabel}>Sending</div>
             <div className="flex h-9.25 shrink-0 items-center gap-2 rounded-lg border border-[#200D0D1A] px-3.5">
-              <span className="grow text-sm/4.5 font-medium text-ink">Opted-in contacts only</span>
+              <span className="grow truncate text-sm/4.5 font-medium text-ink">Opted-in contacts only</span>
             </div>
           </div>
         </div>

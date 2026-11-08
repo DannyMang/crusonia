@@ -216,7 +216,7 @@ function TextCard({
 // ---------- segments ----------
 
 function CountChip({ n }: { n: number }) {
-  return <span className="flex h-4.5 items-center rounded-full bg-[#200D0D14] px-1.5 text-xs/3 font-medium tabular-nums text-faint">{n}</span>;
+  return <span className="flex h-4.5 items-center rounded-full bg-[#200D0D14] px-1.5 text-xs/3 font-medium tabular-nums text-muted">{n}</span>;
 }
 
 function AddButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {

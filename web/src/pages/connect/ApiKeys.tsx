@@ -169,13 +169,14 @@ function NewKey({ k, onDone }: { k: CreatedKey; onDone: () => void }) {
 }
 
 function KeyTable({ rows }: { rows: ApiKey[] }) {
-  const th = "h-7 p-0 text-left text-xs/4 font-medium text-faint";
+  const th = "h-7 whitespace-nowrap p-0 text-left text-xs/4 font-medium text-faint";
   return (
     <table className="w-full table-fixed border-collapse">
       <colgroup>
-        <col className="w-42.5" />
-        <col className="w-37.5" />
-        <col className="w-30" />
+        {/* Narrower below 1440px so "Last used" keeps room next to the tools card. */}
+        <col className="w-37.5 min-[1440px]:w-42.5" />
+        <col className="w-32.5 min-[1440px]:w-37.5" />
+        <col className="w-25 min-[1440px]:w-30" />
         <col />
         <col className="w-16" />
       </colgroup>

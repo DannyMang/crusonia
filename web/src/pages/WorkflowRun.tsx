@@ -95,7 +95,7 @@ export default function WorkflowRun() {
             </Link>
           ) : null}
         </div>
-        <div className="flex h-4 shrink-0 items-center gap-4.5 overflow-hidden whitespace-nowrap">
+        <div className="flex min-h-4 shrink-0 flex-wrap items-center gap-x-4.5 gap-y-1 whitespace-nowrap">
           <span className={meta}>
             Started <span className="tabular-nums text-ink">{clockSeconds(run.started_at)}</span>
           </span>
@@ -115,7 +115,8 @@ export default function WorkflowRun() {
         </div>
       </div>
 
-      <div className="flex grow items-stretch gap-4">
+      {/* Below 1280px the cost and lead panel moves under the timeline so the step table keeps its columns. */}
+      <div className="flex grow flex-col items-stretch gap-4 xl:flex-row">
         <Timeline
           steps={steps}
           runStart={run.started_at}
@@ -132,7 +133,7 @@ export default function WorkflowRun() {
           }
           footer={footerNote(run, steps, waitingOn, lead)}
         />
-        <aside className="flex w-75 shrink-0 flex-col overflow-clip rounded-xl border border-[#200D0D1A]">
+        <aside className="flex w-full shrink-0 flex-col overflow-clip rounded-xl border border-[#200D0D1A] xl:w-75">
           <CostSection run={run} steps={steps} cost={cost} tools={tools} />
           {lead ? <LeadSection lead={lead} steps={steps} /> : null}
           {approvals.length ? <ApprovalSection approvals={approvals} lead={lead} now={now} /> : null}

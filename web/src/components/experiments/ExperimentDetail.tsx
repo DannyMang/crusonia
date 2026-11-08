@@ -127,7 +127,8 @@ function Facts({ e }: { e: Experiment }) {
   const rule = stopRuleText(e);
   const day = dayNumber(e);
   return (
-    <div className="flex shrink-0 border-b border-b-[#200D0D1A] px-5 py-3.5">
+    // Two by two below 1440px, where four facts in a row would cut each one short.
+    <div className="grid shrink-0 grid-cols-2 gap-y-3 border-b border-b-[#200D0D1A] px-5 py-3.5 min-[1440px]:flex">
       <Fact className="grow pr-4" title="Segment" value={e.segment || "Any lead"} sub={segSub || (e.segment ? null : "no segment set")} />
       <Fact
         className="grow border-l border-l-[#200D0D14] px-4"
@@ -140,7 +141,7 @@ function Facts({ e }: { e: Experiment }) {
         }
       />
       <Fact
-        className="grow border-l border-l-[#200D0D14] px-4"
+        className="grow border-l border-l-[#200D0D14] px-4 max-[1439px]:border-l-0 max-[1439px]:pl-0"
         title="Metric"
         value={e.metric === "positive_reply_rate" || !e.metric ? "Positive replies" : e.metric.replace(/_/g, " ")}
         sub="as sorted in Replies"
@@ -176,16 +177,17 @@ function Facts({ e }: { e: Experiment }) {
 const cell = "py-0 pl-3 text-right text-[13px]/4 tabular-nums text-ink";
 
 function VariantTable({ e }: { e: Experiment }) {
-  const th = "h-8 py-0 text-xs/4 font-medium text-faint";
+  const th = "h-8 whitespace-nowrap py-0 text-xs/4 font-medium text-faint";
   return (
     <div className="shrink-0 overflow-clip rounded-[10px] border border-[#200D0D1A]">
       <table className="w-full table-fixed border-collapse">
         <colgroup>
           <col />
-          <col className="w-17" />
-          <col className="w-28" />
-          <col className="w-28" />
-          <col className="w-29" />
+          {/* Below 1280px the columns tighten and Cost / reply is hidden (spend stays in the line under the chart). */}
+          <col className="w-12 xl:w-17" />
+          <col className="w-20 xl:w-28" />
+          <col className="w-24 xl:w-28" />
+          <col className="hidden w-29 xl:table-column" />
         </colgroup>
         <thead>
           <tr className="border-b border-b-[#200D0D14] bg-[#200D0D06]">
@@ -198,10 +200,10 @@ function VariantTable({ e }: { e: Experiment }) {
             <th scope="col" className={cx(th, "pl-3 text-right")}>
               Replies
             </th>
-            <th scope="col" className={cx(th, "pl-3 text-right")}>
+            <th scope="col" className={cx(th, "pl-3 text-right max-xl:pr-4")}>
               Positive
             </th>
-            <th scope="col" className={cx(th, "pl-3 pr-4 text-right")}>
+            <th scope="col" className={cx(th, "hidden pl-3 pr-4 text-right xl:table-cell")}>
               Cost / reply
             </th>
           </tr>
@@ -230,10 +232,10 @@ function VariantTable({ e }: { e: Experiment }) {
                 <td className={cell}>
                   {s.replies} <span className="text-muted">· {pct(s.replies, s.sent, 1)}</span>
                 </td>
-                <td className={cell}>
+                <td className={cx(cell, "max-xl:pr-4")}>
                   {s.positive} <span className="text-muted">· {pct(s.positive, s.sent, 1)}</span>
                 </td>
-                <td className={cx(cell, "pr-4 font-medium")}>{s.replies && s.cost_usd !== null ? usd(s.cost_usd / s.replies) : "—"}</td>
+                <td className={cx(cell, "hidden pr-4 font-medium xl:table-cell")}>{s.replies && s.cost_usd !== null ? usd(s.cost_usd / s.replies) : "—"}</td>
               </tr>
             );
           })}
