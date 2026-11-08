@@ -3,9 +3,10 @@
 // (playwright:adaptive) when the plain crawl finds no text (client-rendered SPAs). Without it (or if Apify fails):
 // a plain fetch of the homepage plus a few same-site pages that usually describe the business (about, product,
 // pricing, ...). Sign-in and sign-up pages are never returned. Crusonia's own host is answered from its landing
-// copy (src/services/site-copy.ts): a Worker cannot fetch its own workers.dev hostname.
+// copy (src/services/site-copy.ts): a Worker cannot fetch its own hostname.
 import { z } from "zod";
 import type { Env } from "../env.ts";
+import { legacyHosts } from "../lib/canonical-host.ts";
 import { defaultFetch, type FetchFn } from "../providers/http.ts";
 import { AUTH_PATH, crawlWebsite, maxChargeUsd, trimText, type ApifyMeter, type PageText } from "./apify.ts";
 import { ServiceError, describeError } from "./errors.ts";
@@ -57,16 +58,17 @@ export function normalizeUrl(raw: string): URL {
   return url;
 }
 
-/** PUBLIC_URL's host, or one of its preview hosts (<alias or version>-<host>, e.g. app-crusonia.x.workers.dev). */
-export function isOwnHost(env: Pick<Env, "PUBLIC_URL">, url: URL): boolean {
-  let own: string;
+/** PUBLIC_URL's host, an old one (LEGACY_HOSTS), or a workers.dev preview of one (<alias or version>-<host>, e.g. app-crusonia.x.workers.dev). */
+export function isOwnHost(env: Pick<Env, "PUBLIC_URL" | "LEGACY_HOSTS">, url: URL): boolean {
+  let own: string[];
   try {
-    own = new URL(env.PUBLIC_URL).hostname.toLowerCase();
+    own = [new URL(env.PUBLIC_URL).hostname.toLowerCase(), ...legacyHosts(env)];
   } catch {
     return false;
   }
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
-  return host === own || host.endsWith(`-${own}`);
+  // Preview hosts exist only on workers.dev: evil-crusonia.dev is somebody else's site.
+  return own.some((h) => host === h || (h.endsWith(".workers.dev") && host.endsWith(`-${h}`)));
 }
 
 export const isEmptyRead = (pages: PageText[]) => pages.reduce((n, p) => n + p.text.trim().length, 0) < MIN_TEXT_CHARS;

@@ -24,7 +24,7 @@ trap cleanup EXIT
   printf 'BRIDGE_SECRET=%s\n' "$(openssl rand -hex 32)" > "$work/secret.env")
 
 export CREDS_FILE="$work/creds.env" BRIDGE_SECRET_FILE="$work/secret.env" SEND_TEST_MESSAGE=0
-export WORKER_URL="${TEST_WORKER_URL:-https://crusonia.veri-web.workers.dev}"
+export WORKER_URL="${TEST_WORKER_URL:-https://crusonia.dev}"
 AWS_SH_LIB=1 source "$here/aws.sh"
 check_inputs
 (umask 077; { echo '#!/bin/bash'; bootstrap_body; } > "$work/bootstrap.sh")

@@ -17,20 +17,31 @@
   // Worker. These paths run the Worker first (API, MCP, webhooks, health). Any other path without a file goes
   // to the Worker too ("none" below, not "single-page-application"): it answers 404 for a missing /assets/* or
   // /media/* file and index.html for client-side routes (/app/*, /onboarding/*, /sign-in). See src/index.ts.
+  // "/" is a file, but it runs the Worker too: a www or old-hostname visitor must get the redirect, not the app.
   // Cache headers for the files are in web/public/_headers.
   "assets": {
     "directory": "./web/dist",
     // src/index.ts serves index.html for client-side routes through this binding.
     "binding": "ASSETS",
     "not_found_handling": "none",
-    "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/webhooks/*", "/health"]
+    "run_worker_first": ["/", "/api/*", "/mcp", "/mcp/*", "/webhooks/*", "/health"]
   },
   // Version URLs (and aliased ones like app-crusonia.<subdomain>.workers.dev from
   // `bun run deploy:preview`) stay on. They run with production's secrets and database.
   "preview_urls": false,
+  // Production's hostnames. On deploy Cloudflare creates their DNS records and certificates.
+  "routes": [
+    { "pattern": "crusonia.dev", "custom_domain": true },
+    { "pattern": "www.crusonia.dev", "custom_domain": true }
+  ],
+  // With routes, Wrangler turns the workers.dev URL off unless this says otherwise. LEGACY_HOSTS below still needs it.
+  "workers_dev": true,
   "vars": {
     // Public base URL of this Worker. Webhooks and the MCP endpoint are registered under it.
-    "PUBLIC_URL": "https://crusonia.veri-web.workers.dev"
+    "PUBLIC_URL": "https://crusonia.dev",
+    // Production's old hostname: machines keep working there (/api, /mcp, /webhooks, /health) and browser pages redirect
+    // to PUBLIC_URL (src/lib/canonical-host.ts). Staging has none.
+    "LEGACY_HOSTS": "crusonia.veri-web.workers.dev"
   },
   "env": {
     // Staging: a separate Worker (crusonia-staging) with its own secrets, its own database (a Neon dev branch)
@@ -39,8 +50,11 @@
     // vars are not inherited from the top level, so PUBLIC_URL is repeated here.
     "staging": {
       "name": "crusonia-staging",
+      // routes are inherited: without this, deploying staging would take crusonia.dev away from production.
+      "routes": [],
       "vars": {
-        "PUBLIC_URL": "https://crusonia-staging.veri-web.workers.dev"
+        "PUBLIC_URL": "https://crusonia-staging.veri-web.workers.dev",
+        "LEGACY_HOSTS": ""
       }
     }
   }

@@ -1,4 +1,4 @@
-// What read_website returns for Crusonia's own site. A Worker cannot fetch its own workers.dev hostname (the
+// What read_website returns for Crusonia's own site. A Worker cannot fetch its own hostname (the
 // request comes back 404), and the landing is a client-rendered SPA whose ASSETS index.html holds no copy, so
 // onboarding Crusonia itself (dogfooding) reads this text instead. The landing strings are copied from
 // web/src/landing/*.tsx: test/read-website.test.ts fails when one of them no longer appears there. Pricing comes

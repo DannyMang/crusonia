@@ -45,7 +45,7 @@ CLERK_PUBLISHABLE_KEY=
 # makes verification networkless (dashboard > API keys > Show JWT public key > PEM). Without it the JWKS is fetched
 # with CLERK_SECRET_KEY. Paste the PEM on one line with \n between lines, or in double quotes.
 CLERK_JWT_KEY=
-# Comma-separated frontend origins allowed to mint tokens (the `azp` claim), e.g. https://app.example.com.
+# Comma-separated frontend origins allowed to mint tokens (the `azp` claim). Production: https://crusonia.dev,https://www.crusonia.dev.
 CLERK_AUTHORIZED_PARTIES=
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import { HTTPException } from "hono/http-exception";
 import { api } from "./api/index.ts";
 import { webhooks } from "./api/webhooks.ts";
 import type { Env } from "./env.ts";
+import { API_PATH, canonicalRedirect } from "./lib/canonical-host.ts";
 import { errorBody, toApiError } from "./lib/errors.ts";
 import { mcp } from "./mcp/route.ts";
 import { runScheduled } from "./services/cron.ts";
@@ -16,18 +17,18 @@ const app = new Hono<{ Bindings: Env }>();
 //     "directory": "./web/dist",
 //     "binding": "ASSETS",
 //     "not_found_handling": "none",
-//     "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/webhooks/*", "/health"]
+//     "run_worker_first": ["/", "/api/*", "/mcp", "/mcp/*", "/webhooks/*", "/health"]
 //   }
 //
-// Files that exist (index.html at "/", hashed /assets/*, /media/*) are served by Cloudflare without running
-// this Worker. Every other path reaches the Worker: API paths are routed below; a missing file under /assets/
+// Files that exist (hashed /assets/*, /media/*) are served by Cloudflare without running this Worker. "/" is a
+// file too, but it runs the Worker so that www and old hostnames redirect (src/lib/canonical-host.ts) and only
+// production is indexed. Every other path reaches the Worker: API paths are routed below; a missing file under /assets/
 // or /media/ is a real 404 (not the app's HTML with a 200, which breaks caches and hides broken links); any
 // other path is a client-side route (/app/*, /onboarding/*, /sign-in), so it gets the SPA shell (index.html).
 // run_worker_first keeps the API paths on the Worker even where a static file could match, and opts out of
 // Cloudflare's Sec-Fetch-Mode navigation heuristic. Do not ship asset files under api/, mcp/, webhooks/ or health.
 // Caching for the files themselves is in web/public/_headers.
 // ---------------------------------------------------------------------------------------------------------
-const API_PATH = /^\/(api|mcp|webhooks|health)(\/|$)/;
 // Build output and media: a miss here is a missing file, never an app route.
 const STATIC_PATH = /^\/(assets|media)\//;
 
@@ -49,8 +50,15 @@ async function spaShell(c: Context<{ Bindings: Env }>, assets: Fetcher) {
   return out;
 }
 
+// One public hostname: www and old ones redirect to PUBLIC_URL before anything else runs.
+app.use("*", async (c, next) => {
+  const to = canonicalRedirect(c.req.url, c.req.method, c.env);
+  if (to) return c.redirect(to.location, to.status);
+  await next();
+});
+
 app.get("/", async (c) => {
-  if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw);
+  if (c.env.ASSETS) return spaShell(c, c.env.ASSETS);
   return c.json({ name: "crusonia", ok: true, health: "/health", mcp: "/mcp", api: "/api" });
 });
 
