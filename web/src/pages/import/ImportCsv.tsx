@@ -69,7 +69,7 @@ export default function ImportCsv() {
   if (commit.isSuccess) {
     const r = commit.data;
     return (
-      <Page className="min-h-screen gap-5 px-4 pb-12 pt-10 sm:px-8">
+      <Page className="grow gap-5 px-4 pb-12 pt-10 sm:px-8">
         <Crumb />
         <div className="rounded-xl border border-[#200D0D1A]">
           <EmptyState
@@ -99,7 +99,7 @@ export default function ImportCsv() {
   }
 
   return (
-    <Page className="min-h-screen gap-5 px-4 pb-12 pt-10 sm:px-8">
+    <Page className="grow gap-5 px-4 pb-12 pt-10 sm:px-8">
       <div className="flex min-h-10 flex-wrap items-center justify-between gap-3">
         <Crumb file={file} />
         <div className="flex items-center gap-2">

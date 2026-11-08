@@ -26,14 +26,14 @@ export default function WorkflowBuilder() {
 
   if (!isNew && q.isError)
     return (
-      <Page className="min-h-screen gap-5 px-4 pb-9 pt-8 sm:px-8">
+      <Page className="grow gap-5 px-4 pb-9 pt-8 sm:px-8">
         <FlowHeader title="Workflow" />
         <QueryError error={q.error} what="this workflow" onRetry={() => void q.refetch()} />
       </Page>
     );
   if (!isNew && q.isPending)
     return (
-      <Page className="min-h-screen gap-5 px-4 pb-9 pt-8 sm:px-8">
+      <Page className="grow gap-5 px-4 pb-9 pt-8 sm:px-8">
         <FlowHeader title={<Skeleton className="h-6 w-48" />} />
         <div className="flex gap-4">
           <Skeleton className="h-155 grow rounded-xl" />
@@ -96,7 +96,7 @@ function Editor({ id, data, latest }: { id: string | null; data: ReturnType<type
   ) : null;
 
   return (
-    <Page className="min-h-screen gap-5 px-4 pb-9 pt-8 sm:px-8">
+    <Page className="grow gap-5 px-4 pb-9 pt-8 sm:px-8">
       <FlowHeader
         title={
           id ? (

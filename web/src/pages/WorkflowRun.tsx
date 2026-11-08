@@ -28,7 +28,7 @@ export default function WorkflowRun() {
   if (q.isError) {
     const notFound = isApiError(q.error) && q.error.status === 404 && !q.error.missingRoute;
     return (
-      <Page className="min-h-screen gap-5 px-4 pb-6 pt-6 sm:px-8 sm:pt-7">
+      <Page className="grow gap-5 px-4 pb-6 pt-6 sm:px-8 sm:pt-7">
         <Breadcrumb />
         {notFound ? (
           <div className="rounded-xl border border-[#200D0D1A]">
@@ -64,7 +64,7 @@ export default function WorkflowRun() {
   const timing = timingOf(run, steps, now);
 
   return (
-    <Page className="min-h-screen gap-5 px-4 pb-6 pt-6 sm:px-8 sm:pt-7">
+    <Page className="grow gap-5 px-4 pb-6 pt-6 sm:px-8 sm:pt-7">
       <div className="flex shrink-0 flex-col gap-3">
         <Breadcrumb name={run.name} id={run.id} />
         <div className="flex shrink-0 flex-wrap items-center gap-x-3.5 gap-y-2.5 sm:h-8.5 sm:flex-nowrap">
@@ -384,7 +384,7 @@ function ApprovalSection({ approvals, lead, now }: { approvals: RunApproval[]; l
 
 function Loading() {
   return (
-    <Page className="min-h-screen gap-5 px-4 pb-6 pt-6 sm:px-8 sm:pt-7">
+    <Page className="grow gap-5 px-4 pb-6 pt-6 sm:px-8 sm:pt-7">
       <div className="flex flex-col gap-3">
         <Skeleton className="h-4 w-64" />
         <Skeleton className="h-8 w-96" />

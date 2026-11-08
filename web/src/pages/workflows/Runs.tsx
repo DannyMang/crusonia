@@ -19,7 +19,7 @@ export default function WorkflowRuns() {
   const w = flow.data?.workflow;
 
   return (
-    <Page className="min-h-screen gap-5 px-4 pb-9 pt-8 sm:px-8">
+    <Page className="grow gap-5 px-4 pb-9 pt-8 sm:px-8">
       <FlowHeader
         title={w?.name ?? (flow.isPending ? <Skeleton className="h-6 w-48" /> : "Workflow")}
         source={w?.source}
