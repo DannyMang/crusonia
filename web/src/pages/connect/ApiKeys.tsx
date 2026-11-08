@@ -260,7 +260,7 @@ function RevokeButton({ k }: { k: ApiKey }) {
       aria-label={confirming ? `Confirm revoking ${k.name}` : `Revoke ${k.name}`}
       className={cx(
         "inline-flex h-6.75 items-center whitespace-nowrap rounded-md px-2.5 text-xs/4 text-white disabled:opacity-60",
-        confirming ? "bg-[#B42318] hover:bg-[#9b1f15]" : "bg-[#E5484D] hover:bg-[#d93d42]",
+        confirming ? "bg-[#B42318] hover:bg-[#9b1f15]" : "bg-[#D92D20] hover:bg-[#C4281C]",
       )}
     >
       {revoke.isPending ? "Revoking…" : revoke.isError ? "Retry" : confirming ? "Confirm" : "Revoke"}
