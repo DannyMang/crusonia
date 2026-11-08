@@ -144,7 +144,7 @@ function Header({ lead, sendApproval, approve }: { lead: Lead; sendApproval: App
           <>
             {" "}
             from{" "}
-            <a href={source} target="_blank" rel="noopener noreferrer" className="text-green hover:underline">
+            <a href={source} target="_blank" rel="noopener noreferrer" className="text-ink hover:underline">
               {hostOf(source)}
             </a>
           </>
@@ -358,7 +358,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 
 function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-green hover:underline">
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-ink hover:underline">
       {children}
     </a>
   );
@@ -454,7 +454,7 @@ function WhyFit({ lead }: { lead: Lead }) {
           Why fit{lead.score !== null ? <span className="tabular-nums"> {lead.score}</span> : null}
         </h2>
         {lead.qualified !== null ? (
-          <div className={cx("text-xs/4 font-medium", lead.qualified ? "text-green" : muted)}>{lead.qualified ? "qualified" : "not qualified"}</div>
+          <div className={cx("text-xs/4 font-medium", lead.qualified ? "text-green-dark" : muted)}>{lead.qualified ? "qualified" : "not qualified"}</div>
         ) : null}
       </div>
       {lead.rationale ? (
@@ -572,7 +572,7 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
                 <div className="flex min-w-0 grow basis-0 flex-col gap-0.75">
                   <div className="break-words text-[13px]/4.25 font-medium text-ink">{e.claim}</div>
                   {href ? (
-                    <a href={href} target="_blank" rel="noopener noreferrer" className="truncate text-[11px]/3.75 text-green hover:underline" title={href}>
+                    <a href={href} target="_blank" rel="noopener noreferrer" className="truncate text-[11px]/3.75 text-ink hover:underline" title={href}>
                       {displayUrl(href)}
                     </a>
                   ) : (
@@ -651,7 +651,7 @@ function CrmSync({ lead }: { lead: Lead }) {
         <h2 className={sectionTitle}>CRM sync</h2>
         <div className="flex items-center gap-1.5">
           <span className={cx("size-1.75 shrink-0 rounded-full", lead.hubspot_id ? "bg-green" : "bg-[#200D0D40]")} />
-          <span className={cx("text-xs/4 font-medium", lead.hubspot_id ? "text-green" : muted)}>{lead.hubspot_id ? "In HubSpot" : "Not synced yet"}</span>
+          <span className={cx("text-xs/4 font-medium", lead.hubspot_id ? "text-green-dark" : muted)}>{lead.hubspot_id ? "In HubSpot" : "Not synced yet"}</span>
         </div>
       </div>
       <div className="flex items-center gap-2.5 border-t border-t-[#200D0D14] px-4 py-2.5">

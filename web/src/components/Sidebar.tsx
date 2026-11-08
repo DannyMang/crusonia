@@ -79,7 +79,7 @@ function SendsSwitch() {
       <SendIcon className={paused ? "text-[#200D0D80]" : "text-green"} />
       <span className="flex grow flex-col gap-px">
         <span className="text-[13px]/4 font-semibold text-ink">{!known ? "Sends" : paused ? "Sends: paused" : "Sends: on"}</span>
-        <span className="text-[11px]/3.5 font-medium text-[#200D0D99]">{paused ? "Nothing goes out until resumed" : "Pause all outgoing email"}</span>
+        <span className="text-[11px]/3.5 font-medium text-muted">{paused ? "Nothing goes out until resumed" : "Pause all outgoing email"}</span>
       </span>
       <span className={cx("flex h-5 w-8.5 shrink-0 rounded-full p-0.5 transition-colors", paused || !known ? "justify-start bg-[#200D0D33]" : "justify-end bg-green")}>
         <span className="size-4 shrink-0 rounded-full bg-white" />
@@ -120,7 +120,7 @@ function UserMenu() {
         )}
         <span className="flex min-w-0 grow flex-col gap-px">
           <span className="truncate text-[13px]/4 font-medium text-ink">{user?.name ?? "Signed in"}</span>
-          <span className="truncate tabular-nums text-[11px]/3.5 text-[#200D0D99]">{user?.email ?? ""}</span>
+          <span className="truncate tabular-nums text-[11px]/3.5 text-muted">{user?.email ?? ""}</span>
         </span>
         <ChevronUpDown className="text-[rgb(32_13_13/40%)]" />
       </button>
@@ -148,7 +148,7 @@ function CreditsPill() {
         <span className="text-[13px]/4 font-semibold text-ink">Credits</span>
       )}
       <span className="grow" />
-      {b ? <span className="tabular-nums text-xs/4 font-medium text-[#200D0D99]">{usd(b.balance_usd)}</span> : null}
+      {b ? <span className="tabular-nums text-xs/4 font-medium text-muted">{usd(b.balance_usd)}</span> : null}
       <ChevronRight width={12} height={12} className="text-[rgb(32_13_13/40%)]" />
     </NavLink>
   );

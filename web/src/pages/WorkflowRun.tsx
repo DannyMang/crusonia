@@ -237,7 +237,7 @@ function Breadcrumb({ name, id }: { name?: string; id?: string }) {
 
 function RunChip({ run, waiting }: { run: Run; waiting: boolean }) {
   const base = "flex h-5.75 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs/4 font-medium tracking-[0.02em]";
-  const soft = "bg-[#BDE68933] text-green";
+  const soft = "bg-[#BDE68933] text-green-dark";
   if (run.status === "running") {
     return (
       <span className={cx(base, soft)}>

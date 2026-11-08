@@ -298,7 +298,7 @@ function Cited({ text }: { text: string }) {
     <>
       {text.split(/(\[\d+\])/).map((part, i) =>
         /^\[\d+\]$/.test(part) ? (
-          <span key={i} className="text-[11px] font-semibold text-green">
+          <span key={i} className="text-[11px] font-semibold text-green-dark">
             {part}
           </span>
         ) : (
@@ -353,7 +353,7 @@ function WhyThisLead({ full, loading, failed, sessionId }: { full: LeadFull | un
                 const href = safeHref(ev.source_url);
                 return (
                   <li key={ev.id} className="flex h-7 shrink-0 items-center gap-2.5 border-b border-b-panel-line last:border-b-0">
-                    <span className="w-5 shrink-0 text-[11px]/3.5 font-semibold tabular-nums text-green">[{i + 1}]</span>
+                    <span className="w-5 shrink-0 text-[11px]/3.5 font-semibold tabular-nums text-green-dark">[{i + 1}]</span>
                     <span className="min-w-0 grow truncate text-[13px]/4 font-medium text-ink" title={ev.claim}>
                       {ev.claim}
                     </span>

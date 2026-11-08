@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 /* veri style. Paper exports use raw hex values (text-[#200D0D] ...), which work as-is; prefer these tokens
-   in new code: text-ink, bg-lime, bg-highlight, bg-panel, border-panel-line, bg-pill, text-green.
+   in new code: text-ink, bg-lime, bg-highlight, bg-panel, border-panel-line, bg-pill, text-green (icons, dots),
+   text-green-dark (green words), text-muted / text-faint (secondary text).
    Owner rule: Inter for ALL text (IDs, emails, numbers, commands included). No monospace font anywhere, so the
    mono token is Inter too (it also covers <code>, <kbd>, <pre>); use `tabular-nums` where digits must align. */
 @theme {
@@ -15,6 +16,9 @@
   --color-panel-line: #dce9cf;
   --color-pill: #f0eeea;
   --color-green: #16a34a;
+  /* Green for words (status, counts) on white: 5:1. #16a34a is 3.3:1, so it is for icons, dots and badges only;
+     links and domains are ink. */
+  --color-green-dark: #15803d;
   --color-red: #dc2626;
   /* Secondary text, both at least 4.5:1 (WCAG AA) on white, bg-panel and bg-pill: muted is ink at 62% (5.3:1
      on white), faint is ink at 58.8%, the lightest ink tint that still passes on bg-pill (4.7:1 on white).

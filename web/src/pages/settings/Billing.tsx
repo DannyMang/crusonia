@@ -25,8 +25,8 @@ const POLL_FOR_MS = 30_000;
 const PURCHASE_WINDOW_MS = 3 * 60_000;
 
 const sectionTitle = "text-[15px]/4.5 font-medium text-ink";
-const sectionNote = "text-[13px]/4 font-medium text-[#200D0D80]";
-const label = "text-[13px]/4 font-medium text-[#200D0D80]";
+const sectionNote = "text-[13px]/4 font-medium text-faint";
+const label = "text-[13px]/4 font-medium text-faint";
 /** The design's square-ish secondary button (Manage billing, Buy). */
 const outlineButton =
   "inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-lg border border-[#200D0D26] bg-white px-4 text-[13px]/4 font-medium text-ink transition-colors hover:bg-[#200D0D08] disabled:cursor-default disabled:opacity-50";
@@ -108,7 +108,7 @@ export default function Billing() {
           <div className="flex items-end justify-between gap-6 pb-2 pt-3">
             <div className="flex flex-col gap-2">
               <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">Billing</h1>
-              <p className="w-140 max-w-full text-[13px]/4.5 font-medium text-[#200D0D99]">
+              <p className="w-140 max-w-full text-[13px]/4.5 font-medium text-muted">
                 Credits pay for hosted agent work, at 1 credit = $0.01. Payments, invoices and cards are handled by Stripe.
               </p>
             </div>
@@ -152,7 +152,7 @@ export default function Billing() {
                     <div key={p.key} className="flex grow basis-0 items-center justify-between gap-3 rounded-[10px] border border-[#200D0D1A] py-4.5 pl-5 pr-4.5">
                       <div className="flex flex-col gap-1">
                         <div className="tabular-nums text-[26px]/7.5 font-semibold tracking-[-0.03em] text-ink">{p.price}</div>
-                        <div className="tabular-nums text-[13px]/4 font-medium text-[#200D0D99]">{num(p.credits)} credits</div>
+                        <div className="tabular-nums text-[13px]/4 font-medium text-muted">{num(p.credits)} credits</div>
                       </div>
                       <button
                         type="button"
@@ -195,16 +195,16 @@ export default function Billing() {
                             {p.current ? (
                               <span className="flex h-5.5 items-center rounded-full bg-lime px-2.5 text-xs/4 font-medium text-ink">Current plan</span>
                             ) : tag ? (
-                              <span className="flex h-5.5 items-center rounded-full border border-[#200D0D14] px-2.5 text-xs/4 font-medium text-[#200D0D99]">{tag}</span>
+                              <span className="flex h-5.5 items-center rounded-full border border-[#200D0D14] px-2.5 text-xs/4 font-medium text-muted">{tag}</span>
                             ) : null}
                           </div>
                           <div className="flex items-baseline gap-1.5">
                             <span className="tabular-nums text-[32px]/9 font-semibold tracking-[-0.035em] text-ink">{priceAmount(p.price)}</span>
-                            <span className="text-sm/4.5 font-medium text-[#200D0D99]">per month</span>
+                            <span className="text-sm/4.5 font-medium text-muted">per month</span>
                           </div>
-                          <p className="text-[13px]/5 font-medium text-[#200D0D99]">{p.description}</p>
+                          <p className="text-[13px]/5 font-medium text-muted">{p.description}</p>
                           {p.current ? (
-                            <div className="mt-auto flex h-9 items-center justify-center rounded-lg bg-pill text-[13px]/4 font-medium text-[#200D0D99]">You're on {name}</div>
+                            <div className="mt-auto flex h-9 items-center justify-center rounded-lg bg-pill text-[13px]/4 font-medium text-muted">You're on {name}</div>
                           ) : (
                             <button
                               type="button"
@@ -275,10 +275,10 @@ function Banner({ tone, title, body, onDismiss }: { tone: "success" | "neutral" 
       )}
       <div className="flex grow flex-col gap-0.5">
         <div className="text-sm/5 font-semibold text-ink">{title}</div>
-        <div className="text-[13px]/5 font-medium text-[#200D0D99]">{body}</div>
+        <div className="text-[13px]/5 font-medium text-muted">{body}</div>
       </div>
       {onDismiss ? (
-        <button type="button" onClick={onDismiss} aria-label="Dismiss" className="-m-1 flex size-6 shrink-0 items-center justify-center rounded-md text-[#200D0D80] hover:bg-[#200D0D0A]">
+        <button type="button" onClick={onDismiss} aria-label="Dismiss" className="-m-1 flex size-6 shrink-0 items-center justify-center rounded-md text-faint hover:bg-[#200D0D0A]">
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
             <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
           </svg>
@@ -305,9 +305,9 @@ function BalanceCard({ b }: { b: BillingData }) {
         <div className={label}>Credit balance</div>
         <div className="flex items-baseline gap-2.5 pt-1">
           <span className={cx("tabular-nums text-[56px]/15 font-semibold tracking-[-0.035em]", b.balance < 0 ? "text-[#B42318]" : "text-ink")}>{num(b.balance)}</span>
-          <span className="text-[15px]/5 font-medium text-[#200D0D99]">credits</span>
+          <span className="text-[15px]/5 font-medium text-muted">credits</span>
         </div>
-        <div className="tabular-nums text-sm/5 font-medium text-[#200D0D99]">
+        <div className="tabular-nums text-sm/5 font-medium text-muted">
           {usd(b.balance_usd)} of usage at 1 credit = {usd(b.credit.usd)}
         </div>
       </div>
@@ -317,7 +317,7 @@ function BalanceCard({ b }: { b: BillingData }) {
             <span className="shrink-0 text-[15px]/4.5 font-semibold text-ink">{planLabel(b.plan.name)}</span>
             {status ? <span className={cx("flex h-5.5 shrink-0 items-center rounded-full px-2.5 text-xs/4 font-medium", chipTone[status.tone])}>{status.label}</span> : null}
             <span className="grow" />
-            <span className="shrink-0 tabular-nums text-[13px]/4 font-medium text-[#200D0D99]">
+            <span className="shrink-0 tabular-nums text-[13px]/4 font-medium text-muted">
               {current && current.monthly_credits > 0 ? `${num(current.monthly_credits)} credits a month` : "No monthly fee"}
             </span>
           </dd>
@@ -331,13 +331,13 @@ function BalanceCard({ b }: { b: BillingData }) {
           {next ? (
             <dd className="flex items-center gap-2.5">
               <span className="tabular-nums text-[15px]/4.5 font-semibold text-ink">{num(next.credits)} credits</span>
-              <span className="tabular-nums text-[13px]/4 font-medium text-[#200D0D99]">
+              <span className="tabular-nums text-[13px]/4 font-medium text-muted">
                 on {shortDate(next.expires_at)}
                 {b.expiring.length > 1 ? ` · ${plural(b.expiring.length - 1, "more batch", "more batches")} later` : ""}
               </span>
             </dd>
           ) : (
-            <dd className="text-[13px]/4 font-medium text-[#200D0D99]">Nothing. Pack credits and the free sample never expire.</dd>
+            <dd className="text-[13px]/4 font-medium text-muted">Nothing. Pack credits and the free sample never expire.</dd>
           )}
         </FactRow>
       </dl>
@@ -364,7 +364,7 @@ function Activity({ b }: { b: BillingData }) {
       {b.ledger.length ? (
         <table className="w-full border-collapse text-left">
           <thead>
-            <tr className="h-8 border-b border-b-[#200D0D1A] text-xs/4 font-medium text-[#200D0D80]">
+            <tr className="h-8 border-b border-b-[#200D0D1A] text-xs/4 font-medium text-faint">
               <th scope="col" className="w-35 pr-4 font-medium">
                 Date
               </th>
@@ -381,12 +381,12 @@ function Activity({ b }: { b: BillingData }) {
               const line = ledgerLine(e, b);
               return (
                 <tr key={e.id} className={cx("h-13", i < b.ledger.length - 1 && "border-b border-b-[#200D0D0F]")}>
-                  <td className="whitespace-nowrap pr-4 tabular-nums text-[13px]/4 font-medium text-[#200D0D99]">
+                  <td className="whitespace-nowrap pr-4 tabular-nums text-[13px]/4 font-medium text-muted">
                     {shortDate(e.created_at)}, {clock(e.created_at)}
                   </td>
                   <td className="py-2 pr-4">
                     <div className="text-sm/4.5 font-medium text-ink">{line.title}</div>
-                    {line.detail ? <div className="text-xs/4 font-medium text-[#200D0D80]">{line.detail}</div> : null}
+                    {line.detail ? <div className="text-xs/4 font-medium text-faint">{line.detail}</div> : null}
                   </td>
                   <td className={cx("text-right tabular-nums text-sm/4.5 font-semibold", e.amount > 0 ? "text-[#15803D]" : "text-ink")}>{signedCredits(e.amount)}</td>
                 </tr>

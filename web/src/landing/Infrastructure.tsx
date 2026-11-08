@@ -28,10 +28,10 @@ const Row = ({ label, children }: { label: string; children: ReactNode }) => (
 const workflowArt = (
   <div className="flex flex-col gap-2.5">
     <Row label="Research account">
-      <span className="text-xs/4 text-green">done</span>
+      <span className="text-xs/4 text-green-dark">done</span>
     </Row>
     <Row label="Score fit">
-      <span className="text-xs/4 text-green tabular-nums">92</span>
+      <span className="text-xs/4 text-green-dark tabular-nums">92</span>
     </Row>
     <Row label="Write draft">
       <span className={`h-5.5 px-2.25 text-xs/4 font-medium ${chip}`}>ready</span>
@@ -61,7 +61,7 @@ const stackArt = (
 const Field = ({ label, value, tone }: { label: string; value: string; tone?: "green" }) => (
   <div className="flex justify-between gap-2 text-[11px]/3.5">
     <span>{label}</span>
-    <span className={tone === "green" ? "text-green" : "text-muted"}>{value}</span>
+    <span className={tone === "green" ? "text-green-dark" : "text-muted"}>{value}</span>
   </div>
 );
 
@@ -75,7 +75,7 @@ const dataArt = (
       <div className="h-px shrink-0 bg-[#200D0D0F]" />
       <div className="flex justify-between gap-2 text-[11px]/3.5">
         <span>maya@fieldnote.io</span>
-        <span className="text-green">verified</span>
+        <span className="text-green-dark">verified</span>
       </div>
       <Field label="source" value="fieldnote.io/team" />
       <Field label="checked" value="today" />
@@ -89,7 +89,7 @@ function Bar({ label, value, width, winner }: { label: string; value: string; wi
     <div className="flex flex-col gap-1.5">
       <div className="flex justify-between text-[11px]/3.5">
         <span>{label}</span>
-        <span className={winner ? "text-green" : undefined}>{value}</span>
+        <span className={winner ? "text-green-dark" : undefined}>{value}</span>
       </div>
       <div className="h-2 shrink-0 rounded-full bg-[#200D0D0F]">
         <div className={`h-2 rounded-full ${winner ? "bg-green" : "bg-[#200D0D33]"}`} style={{ width }} />

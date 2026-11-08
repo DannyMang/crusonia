@@ -191,7 +191,7 @@ function Stat({ title, value, note, accent }: { title: string; value: string | u
       {value === undefined ? (
         <Skeleton className="my-1 h-5 w-12" />
       ) : (
-        <div className={cx("tabular-nums text-[22px]/7 font-semibold tracking-[-0.02em]", accent ? "text-green" : "text-ink")}>{value}</div>
+        <div className={cx("tabular-nums text-[22px]/7 font-semibold tracking-[-0.02em]", accent ? "text-green-dark" : "text-ink")}>{value}</div>
       )}
       <div className="text-xs/4 font-medium text-muted">{note}</div>
     </div>

@@ -73,7 +73,7 @@ function Hero() {
         </h1>
         <div className="flex w-full flex-col gap-3.5 pb-1.5 sm:w-auto">
           <WebsiteForm variant="hero" />
-          <p className="text-[15px]/4.5 font-[525] text-[#200D0D99] sm:pl-5.5">
+          <p className="text-[15px]/4.5 font-[525] text-muted sm:pl-5.5">
             No website yet?{" "}
             <Link to="/sign-up" className="underline decoration-1 [text-underline-position:from-font] hover:text-ink">
               Tell us what you're building
@@ -95,13 +95,13 @@ function ClosingCta() {
         <h2 id="closing-title" className="text-balance text-[44px]/[48px] font-semibold tracking-[-1px] sm:text-[64px]/[68px] lg:text-[80px]/21 lg:tracking-[-1.8px]">
           Grow your company offline.
         </h2>
-        <p className="max-w-140 text-[18px]/[27px] font-[525] text-[#200D0D99] sm:text-xl/7.25">
+        <p className="max-w-140 text-[18px]/[27px] font-[525] text-muted sm:text-xl/7.25">
           Your agent researches, drafts and follows up overnight. You wake up to replies, and nothing goes out without your yes.
         </p>
       </div>
       <div className="flex w-full flex-col items-center gap-3.5">
         <WebsiteForm variant="closing" />
-        <p className="text-[15px]/4.5 font-[525] text-[#200D0D99]">
+        <p className="text-[15px]/4.5 font-[525] text-muted">
           Or{" "}
           <a
             href={`#${SECTIONS.connect}`}

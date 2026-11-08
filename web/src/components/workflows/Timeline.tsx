@@ -237,7 +237,7 @@ export function Timeline({
                       )}
                     </div>
                   </td>
-                  <td className={cx("pr-3 text-right text-xs/4 tabular-nums", pending ? "text-green" : "text-muted")}>
+                  <td className={cx("pr-3 text-right text-xs/4 tabular-nums", pending ? "text-green-dark" : "text-muted")}>
                     {step.duration_ms !== undefined ? duration(step.duration_ms) : pending ? duration(now - t!) : "—"}
                   </td>
                   <td className={cx("pr-3 text-right text-xs/4 font-medium tabular-nums", step.cost_usd ? "text-ink" : "text-faint")}>

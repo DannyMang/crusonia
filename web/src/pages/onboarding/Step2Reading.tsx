@@ -283,12 +283,12 @@ function FoundPanel({
         {running ? (
           <div className="flex items-center gap-1.5" role="status">
             <span className="size-1.5 shrink-0 rounded-full bg-green [animation:crusonia-pulse_1.6s_ease-in-out_infinite]" />
-            <span className="text-xs/4 font-medium text-green">Updating</span>
+            <span className="text-xs/4 font-medium text-green-dark">Updating</span>
           </div>
         ) : done ? (
           <div className="flex items-center gap-1.5">
             <span className="size-1.5 shrink-0 rounded-full bg-green" />
-            <span className="text-xs/4 font-medium text-green">Done</span>
+            <span className="text-xs/4 font-medium text-green-dark">Done</span>
           </div>
         ) : null}
       </div>

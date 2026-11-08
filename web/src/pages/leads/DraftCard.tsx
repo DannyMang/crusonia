@@ -98,7 +98,7 @@ function DraftStatus({ status }: { status: string }) {
 function withCitations(text: string): ReactNode[] {
   return text.split(/(\[\d{1,2}\])/g).map((part, i) =>
     /^\[\d{1,2}\]$/.test(part) ? (
-      <span key={i} className="text-[11px] font-semibold tabular-nums text-green">
+      <span key={i} className="text-[11px] font-semibold tabular-nums text-green-dark">
         {part}
       </span>
     ) : (
