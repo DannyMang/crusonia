@@ -124,7 +124,8 @@ async function existingFor(sql: Sql, candidates: ImportCandidate[]) {
 }
 
 /** POST /api/import/preview: the mapped rows with their status, nothing written. */
-export async function previewImport(sql: Sql, body: ImportBody) {
+// TODO(workspaces): scope the duplicate lookup to `ws`.
+export async function previewImport(sql: Sql, _ws: string, body: ImportBody) {
   const now = new Date().toISOString();
   const { header, candidates, rowSource } = parse(body, now);
   const { existing, suppressed } = await existingFor(sql, candidates);
@@ -187,7 +188,7 @@ export async function previewImport(sql: Sql, body: ImportBody) {
  * POST /api/import/commit: creates the new rows (cohort = `source`), fills blank fields and grants consent on matching
  * leads (never overwrites), skips invalid and suppressed rows.
  */
-export async function commitImport(sql: Sql, body: ImportBody, actor: string) {
+export async function commitImport(sql: Sql, _ws: string, body: ImportBody, actor: string) {
   const now = new Date().toISOString();
   const { candidates, rowSource } = parse(body, now);
   const batch = newId("imp");

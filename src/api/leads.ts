@@ -10,6 +10,7 @@ import { createLead, deleteLead, getLeadFull, importLeads, LEAD_STAGES, patchLea
 import { IMPORT_FIELDS } from "../services/csv.ts";
 import { createDraft } from "../services/drafts.ts";
 import { createFollowUp, followupInputSchema, listFollowUps } from "../services/followups.ts";
+import { OWNER_WORKSPACE_ID } from "../services/workflow-defs.ts";
 import { getFindRun, MAX_FIND_LEADS, naiveAgent, startFindLeads } from "../services/runs.ts";
 
 export const leads = new Hono<AppEnv>();
@@ -161,11 +162,11 @@ leads.post("/:id/drafts", async (c) => {
 
 // Follow-ups on a sent email (src/services/followups.ts): each is a new draft version with its own send approval,
 // sent at its time unless the lead replies first.
-leads.get("/:id/followups", async (c) => c.json({ data: await listFollowUps(sqlFor(c.env), c.req.param("id")) }));
+leads.get("/:id/followups", async (c) => c.json({ data: await listFollowUps(sqlFor(c.env), OWNER_WORKSPACE_ID, c.req.param("id")) }));
 
 leads.post("/:id/followups", async (c) => {
   const body = await parseJson(c, followupInputSchema);
-  const result = await createFollowUp(sqlFor(c.env), c.req.param("id"), body, {
+  const result = await createFollowUp(sqlFor(c.env), OWNER_WORKSPACE_ID, c.req.param("id"), body, {
     ttlMinutes: sendApprovalTtlMinutes(c.env),
     actor: actorOf(c.get("principal")),
   });

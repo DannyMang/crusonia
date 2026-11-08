@@ -267,7 +267,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     const sent = await approveAndSend({ sql, env, fetch: am.fn, actor: "test" }, approval!.code as string);
     expect(sent.status).toBe("sent");
 
-    const follow = await createFollowUp(sql, adaId, { body: "Following up on the SDR role.", send_after_days: 3 }, { ttlMinutes: 60, actor: "test" });
+    const follow = await createFollowUp(sql, OWNER_WORKSPACE_ID, adaId, { body: "Following up on the SDR role.", send_after_days: 3 }, { ttlMinutes: 60, actor: "test" });
     expect(follow.draft).toMatchObject({ status: "pending_approval", subject: "Re: Your SDR hire" });
     const scheduled = await approveAndSend({ sql, env, fetch: am.fn, actor: "test" }, follow.approval.code as string);
     expect(scheduled.status).toBe("scheduled");

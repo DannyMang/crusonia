@@ -34,7 +34,8 @@ export type FollowUpInput = z.infer<typeof followupInputSchema>;
 type Parent = Draft & { email: string | null; name: string | null; stage: string; consent_at: Date | null; suppressed: boolean };
 
 /** POST /api/leads/:id/followups. */
-export async function createFollowUp(sql: Sql, leadId: string, input: FollowUpInput, opts: { ttlMinutes: number; actor: string; now?: Date }) {
+// TODO(workspaces): scope the lead, draft and approval to `ws`.
+export async function createFollowUp(sql: Sql, _ws: string, leadId: string, input: FollowUpInput, opts: { ttlMinutes: number; actor: string; now?: Date }) {
   const parent = (
     (await sql`
       select d.*, l.email, l.name, l.stage, l.consent_at,
@@ -97,7 +98,7 @@ export async function createFollowUp(sql: Sql, leadId: string, input: FollowUpIn
 }
 
 /** GET /api/leads/:id/followups: the lead's follow-ups, newest first. */
-export async function listFollowUps(sql: Sql, leadId: string) {
+export async function listFollowUps(sql: Sql, _ws: string, leadId: string) {
   return sql`
     select d.id, d.version, d.subject, d.body, d.status, d.followup_of, d.scheduled_for, d.created_at,
            (select a.code from approvals a where a.draft_id = d.id order by a.created_at desc limit 1) as approval_code,
