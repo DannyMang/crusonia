@@ -14,7 +14,7 @@ import { BrandLogo } from "./BrandLogo.tsx";
 import { CopyButton, errorCopy } from "./ui.tsx";
 
 /** The workflow builder keeps its zoom controls in the bottom-right corner, so the button steps aside there. */
-const HIDE_TRIGGER = /^\/app\/workflows\/(new|[^/]+)$/;
+export const HIDE_TRIGGER = /^\/app\/workflows\/(new|[^/]+)$/;
 
 /** Default name for a key made here, e.g. "Agent key · Nov 8"; renamed or revoked in Settings › API keys. */
 const keyName = () => `Agent key · ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
