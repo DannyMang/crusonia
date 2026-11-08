@@ -1055,3 +1055,44 @@ create index if not exists invite_sends_ws_idx on invite_sends (workspace_id, cr
 create index if not exists invite_sends_actor_idx on invite_sends (actor, created_at);
 create index if not exists invite_sends_email_idx on invite_sends (email, created_at);
 create index if not exists invite_sends_created_idx on invite_sends (created_at);
+
+-- ---------------------------------------------------------------------------
+-- Autopilot (src/services/autopilot.ts): workflows start by themselves. Additive and idempotent.
+-- ---------------------------------------------------------------------------
+
+-- `autopilot`: the workspace's on/off switch; off means nothing starts by itself. `autopilot_provisioned_at`: when it got
+-- its default workflow. A workspace that had a Company summary before this feature counts as provisioned and stays off
+-- until the owner turns it on, so a deploy never starts spending on its own. Only the first migration does that.
+alter table workspaces add column if not exists autopilot boolean not null default false;
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_schema = current_schema()
+                 and table_name = 'workspaces' and column_name = 'autopilot_provisioned_at') then
+    alter table workspaces add column autopilot_provisioned_at timestamptz;
+    update workspaces w set autopilot_provisioned_at = now()
+    where exists (select 1 from company_summary_versions v where v.workspace_id = w.id);
+  end if;
+end
+$$;
+-- The next time the Operator runs by the clock. It also runs when something changes.
+alter table workspaces add column if not exists autopilot_operator_next_at timestamptz;
+-- The workspace's copy of the Operator agent (src/services/naive-agents.ts): agent, credential and key ids, versions.
+alter table workspaces add column if not exists naive_operator jsonb;
+
+-- `next_run_at`: when a schedule fires next (null: as soon as it can). `is_autopilot`: the workspace's default "Find and
+-- qualify" workflow. `last_skip`: why the last due run didn't start, so a skip is logged once rather than every minute.
+alter table workflow_defs add column if not exists next_run_at timestamptz;
+alter table workflow_defs add column if not exists is_autopilot boolean not null default false;
+alter table workflow_defs add column if not exists last_skip text;
+create unique index if not exists workflow_defs_autopilot_uq on workflow_defs (workspace_id) where is_autopilot;
+create index if not exists workflow_defs_due_idx on workflow_defs (next_run_at) where enabled and trigger->>'kind' = 'schedule';
+
+-- A run with a find step goes finding -> researching -> done; every other run is researching from the start. `trigger`:
+-- what started it (schedule, csv_import, reply, operator, or a person: manual).
+alter table workflow_runs add column if not exists phase text not null default 'done';
+alter table workflow_runs add column if not exists find_session_id text;
+alter table workflow_runs add column if not exists trigger text not null default 'manual';
+alter table workflow_runs add column if not exists finished_at timestamptz;
+create index if not exists workflow_runs_active_idx on workflow_runs (workspace_id) where phase <> 'done';
+-- One active run per workflow, whichever way it started.
+create unique index if not exists workflow_runs_one_active_uq on workflow_runs (workflow_id) where phase <> 'done';

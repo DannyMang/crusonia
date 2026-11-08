@@ -85,6 +85,7 @@ describe("/api auth with API keys", () => {
     const { key } = await generateApiKey();
     const s = await store(key);
     expect(await resolveBearer(env({ MCP_TOKEN: undefined }), key, s.lookup)).toEqual({
+      agentRole: null,
       kind: "api_key",
       keyId: "key_0",
       name: "agent 0",

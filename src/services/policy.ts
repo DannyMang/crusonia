@@ -1,3 +1,5 @@
+import { OPERATOR_TOOLS } from "../mcp/toolsets.ts";
+
 // Owner policy for Naive tool confirmations: which tools run without asking. Pure.
 // The allowlist comes from AUTO_CONFIRM_TOOLS (comma list). An entry is an exact tool name, or a prefix
 // followed by `*` (`crusonia.*` matches `crusonia.get_lead`, not `crusonia_x.y`). Anything else becomes
@@ -7,6 +9,12 @@
 // the read-only get-* tools. Anything that starts an Actor run (call-actor, apify--website-content-crawler, ...) or
 // changes the account reaches the owner as an approval. Our own search_web / read_website wrap those Actors with page
 // limits and a maxTotalChargeUsd cap, and are metered into credits.
+
+/**
+ * The Operator's auto-confirm list: its crusonia tools and nothing else. It has no web tool to reach out with, so it may
+ * read the pipeline (the list_* tools). AUTO_CONFIRM_TOOLS never widens this list.
+ */
+export const OPERATOR_AUTO_CONFIRM: readonly string[] = OPERATOR_TOOLS.map((t) => `crusonia.${t}`);
 
 // Crusonia tools are listed one by one instead of `crusonia.*`: the list_* tools (all leads, tasks and approvals) and
 // web_fetch are left out, so text on a scraped page can't make the agent read the whole pipeline and fetch it out to a

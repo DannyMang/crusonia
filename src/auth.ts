@@ -10,7 +10,7 @@ import { OWNER_WORKSPACE_ID, WORKSPACE_HEADER, workspaceRef, type Workspace } fr
 
 export type BearerIdentity =
   | { kind: "owner_token"; workspaceId: string }
-  | { kind: "api_key"; keyId: string; name: string; workspaceId: string; agent: boolean };
+  | { kind: "api_key"; keyId: string; name: string; workspaceId: string; agent: boolean; agentRole: "researcher" | "operator" | null };
 
 /** True when the server can check API keys (they live in the database). */
 export const apiKeysAvailable = (env: Env, lookup?: ApiKeyLookup) => Boolean(lookup || env.DATABASE_URL);
@@ -24,7 +24,9 @@ export async function resolveBearer(env: Env, token: string, lookup?: ApiKeyLook
   if (!isApiKey(token) || !apiKeysAvailable(env, lookup)) return null;
   const find = lookup ?? ((t: string) => verifyApiKey(getSql(env.DATABASE_URL), t));
   const key = await find(token);
-  return key ? { kind: "api_key", keyId: key.id, name: key.name, workspaceId: key.workspace_id, agent: key.kind === "agent" } : null;
+  if (!key) return null;
+  const agentRole = key.kind === "agent" ? "researcher" : key.kind === "operator" ? "operator" : null;
+  return { kind: "api_key", keyId: key.id, name: key.name, workspaceId: key.workspace_id, agent: agentRole !== null, agentRole };
 }
 
 export type McpEnv = { Bindings: Env; Variables: { bearer: BearerIdentity; workspace: Workspace } };

@@ -729,3 +729,26 @@ keep `/api/*`, `/mcp`, `/webhooks/*` and `/health` on the Worker (`run_worker_fi
 
 `main` is protected: changes land through pull requests. Front-facing code (`web/**`, `src/web/**`, `public/**`, `*.tsx`,
 `design/**`) is owned by @DannyMang in CODEOWNERS and ships only after the design is approved in Paper.
+## Autopilot
+
+Work starts by itself: nobody clicks anything between entering a website and leads appearing.
+
+- **Which workspaces:** `AUTOPILOT_WORKSPACES` is a comma list of workspace ids, or `*` for all. Unset means none, so deploying this starts nothing and spends nothing.
+- **The default workflow:** once a workspace on that list has a Company summary, and no onboarding session is still writing it, it gets "Find and qualify" (every `AUTOPILOT_EVERY_HOURS`, default 6; weekly cap `AUTOPILOT_WEEKLY_CAP_USD`, default $5) and autopilot turns on. The first run starts in the same minute. A workspace that had a summary before this feature stays off until a person turns it on.
+- **A run:** a lead-finding session finds about 5 companies and scores them. The 3 best go to research, one session per lead, which scores them against evidence and drafts a manual task, or an email with an approval for an opted-in lead. New CSV imports go to the workflow with a `csv_import` trigger, else the default one. Replies go to a workflow with a `reply` trigger.
+- **The rules on every start:** the workspace's switch (`PUT /api/autopilot`, people only, admins and owners), the global pause, one active run per workflow (a unique index), the workflow's spend cap, the workspace's daily cap, credits. A run stops counting as active after 3 hours. Schedules run on the minute cron, not Naive deployments: a deployment fires one fixed instruction, and each start here needs this moment's summary, a run id and these checks.
+- **The Operator** (`playbooks/operator.md`, `NAIVE_OPERATOR_AGENT_ID`): every `AUTOPILOT_OPERATOR_EVERY_HOURS` (default 6), or sooner when a run finished, a reply came in or a person rated a lead (at least `AUTOPILOT_OPERATOR_MIN_GAP_MINUTES` apart, at most `AUTOPILOT_OPERATOR_MAX_PER_DAY`), it reads the pipeline and the owner's ratings, decides one thing, does it, and writes what it did and why (`log_cycle`). Without the agent id, schedules still run.
+
+### Two kinds of agent
+
+What a session reads and where it can send data must not meet, so there are two Naive agents (`src/mcp/toolsets.ts`):
+
+| | Researcher | Operator |
+| --- | --- | --- |
+| Reads the web | yes | no: no web tool, no Apify server, deny by default |
+| Sees | its target lead (every lead tool needs the run id of a session on that lead) | the whole pipeline |
+| Starts work | no | lead ids and counts only, through the same gates, at most `AUTOPILOT_AGENT_STARTS_PER_HOUR` |
+| MCP URL | `/mcp?role=researcher` (a workspace copy: an `agent` key on `/mcp?ws=<id>`) | `/mcp?role=operator` (a workspace copy: an `operator` key on `/mcp?ws=<id>&role=operator`) |
+
+The tools a role lacks don't exist on its connection, and its Naive tool policy withholds them as well. Text the Operator writes that a researcher later reads (summary sections, notes, workflow text) may not add a link or an address. Neither agent, and no tool at all, can send email, decide an approval, change consent, raise a spend cap, or touch billing, API keys or suppressions. Starts go through our Worker over REST rather than Naive handoffs, because a handoff would skip the caps. `bun run setup --agent` creates or updates both agents and their vault credentials.
+

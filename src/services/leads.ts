@@ -560,16 +560,19 @@ export type LeadDetail = {
   approvals: Approval[];
   /** Newest first: the owner's (`user:...`) and agents' (`agent:...`) notes on this company. */
   notes: LeadNote[];
+  /** Newest first: what this lead wrote back (untrusted text, the classifier's label). */
+  replies: { subject: string | null; body: string | null; label: string | null; created_at: Date }[];
 };
 
 export async function getLeadDetail(sql: Sql, ws: string, id: string): Promise<LeadDetail> {
-  const [leads, evidence, drafts, approvals, notes] = await sql.transaction(
+  const [leads, evidence, drafts, approvals, notes, replies] = await sql.transaction(
     [
       sql`select *, consent_at is not null as has_consent from leads where workspace_id = ${ws} and id = ${id}`,
       sql`select * from evidence where workspace_id = ${ws} and lead_id = ${id} order by id`,
       sql`select * from drafts where workspace_id = ${ws} and lead_id = ${id} order by version desc`,
       sql`select * from approvals where workspace_id = ${ws} and lead_id = ${id} order by created_at desc`,
       sql`select id::text, author, kind, body, created_at, updated_at from lead_notes where workspace_id = ${ws} and lead_id = ${id} order by id desc limit 100`,
+      sql`select subject, left(body, 2000) as body, label, created_at from messages where workspace_id = ${ws} and lead_id = ${id} and direction = 'in' order by id desc limit 5`,
     ],
     { readOnly: true },
   );
@@ -581,6 +584,7 @@ export async function getLeadDetail(sql: Sql, ws: string, id: string): Promise<L
     drafts: drafts as Draft[],
     approvals: approvals as Approval[],
     notes: notes as LeadNote[],
+    replies: replies as LeadDetail["replies"],
   };
 }
 
