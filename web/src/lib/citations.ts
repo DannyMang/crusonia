@@ -17,6 +17,23 @@ export function citedParts(text: string): CitedPart[] {
   return parts;
 }
 
+/**
+ * One entry per source URL with every evidence number it backs, so two claims from one page read "1 2 seam.co", not two
+ * identical lines. `n` is the number the text cites; without one, the position in the list.
+ */
+export function uniqueSources<E extends { source_url: string; created_at: string; n?: number | null }>(evidence: E[]): { url: string; numbers: number[]; read_at: string }[] {
+  const byUrl = new Map<string, { url: string; numbers: number[]; read_at: string }>();
+  evidence.forEach((e, i) => {
+    const n = e.n ?? i + 1;
+    const seen = byUrl.get(e.source_url);
+    if (seen) {
+      seen.numbers.push(n);
+      if (e.created_at > seen.read_at) seen.read_at = e.created_at;
+    } else byUrl.set(e.source_url, { url: e.source_url, numbers: [n], read_at: e.created_at });
+  });
+  return [...byUrl.values()];
+}
+
 /** "https://www.techcrunch.com/2026/x/" -> "techcrunch.com/2026/x". */
 export function sourceLabel(url: string): string {
   try {

@@ -6,9 +6,9 @@ import { useFlowMutations, useFlows, type FlowDef } from "../../api/workflows.ts
 import { Page } from "../../components/AppShell.tsx";
 import { WorkflowsIcon } from "../../components/icons.tsx";
 import { Button, ButtonLink, EmptyState, QueryError, Skeleton } from "../../components/ui.tsx";
-import { cx, usd } from "../../lib/format.ts";
+import { creditsLabel, cx, num } from "../../lib/format.ts";
 import { useSummary } from "../../queries.ts";
-import { flowPath, FlowStatusPill, SourceTag, spendLabel, whenLabel } from "./parts.tsx";
+import { flowPath, FlowStatusPill, SourceTag, spendLabel, spendShort, whenLabel } from "./parts.tsx";
 import { TEMPLATES, type Template } from "./templates.ts";
 
 // Column widths (Paper: 270 / 190 / 150 / grow / 170 / 40), narrower below xl so "Last run" keeps room at 1024.
@@ -34,7 +34,7 @@ export default function WorkflowList() {
         <div className="flex items-center gap-2.5">
           {spend?.week_usd !== null && spend?.week_usd !== undefined ? (
             <div className="hidden whitespace-nowrap pr-1.5 text-[13px]/4 font-[450] text-muted sm:block">
-              {spend.budget_usd !== null ? `${usd(spend.week_usd)} of ${usd(spend.budget_usd, 0)} this week` : `${usd(spend.week_usd)} this week`}
+              {spend.budget_credits ? `${num(spend.week_credits ?? 0)} of ${creditsLabel(spend.budget_credits)} this week` : `${creditsLabel(spend.week_credits ?? 0)} this week`}
             </div>
           ) : null}
           <button
@@ -91,8 +91,10 @@ function FlowRow({ flow: w }: { flow: FlowDef }) {
   const navigate = useNavigate();
   const { patch } = useFlowMutations();
   const cap = w.spend.cap_usd;
-  const fill = cap ? Math.min(1, w.spend.usd / cap) : 0;
-  const atCap = cap !== null && w.spend.usd >= cap;
+  const used = w.spend.credits ?? 0;
+  const capCredits = w.spend.cap_credits ?? null;
+  const fill = capCredits ? Math.min(1, used / capCredits) : 0;
+  const atCap = capCredits !== null && used >= capCredits;
   const drafts = w.waiting?.drafts ?? 0;
   const toggling = patch.isPending && patch.variables?.id === w.id && patch.variables.body.enabled !== undefined;
   const raising = patch.isPending && patch.variables?.id === w.id && patch.variables.body.resume;
@@ -136,7 +138,9 @@ function FlowRow({ flow: w }: { flow: FlowDef }) {
           )}
         </div>
         <div className={cx(COL.spend, "flex shrink-0 flex-col gap-1.25")}>
-          <div className={cx("truncate text-[13px]/4 tabular-nums", atCap ? "text-[#B42318]" : "text-ink")}>{spendLabel(w.spend)}</div>
+          <div className={cx("truncate text-[13px]/4 tabular-nums", atCap ? "text-[#B42318]" : "text-ink")} title={spendLabel(w.spend)}>
+            {spendShort(w.spend)}
+          </div>
           {cap !== null ? (
             <div className="h-1 shrink-0 rounded-full bg-[#200D0D0F]">
               <div className={cx("h-1 rounded-full", atCap ? "bg-[#B42318]" : "bg-ink")} style={{ width: `${Math.round(fill * 100)}%` }} />
@@ -164,7 +168,7 @@ function FlowRow({ flow: w }: { flow: FlowDef }) {
         <div className={cx("flex items-center gap-2.5 pb-3 pr-4", INDENT)}>
           <div className="min-w-0 grow basis-0 text-[13px]/4.5 font-[450] text-ink">{w.remaining ? `${w.remaining} leads left` : null}</div>
           <Button variant="primary" size="sm" loading={raising} onClick={() => patch.mutate({ id: w.id, body: { cap_usd: raiseTo, resume: true } })}>
-            Raise cap to {usd(raiseTo, Number.isInteger(raiseTo) ? 0 : 2)} and resume
+            Raise cap to {creditsLabel(capCredits ? capCredits * 2 : 400)} and resume
           </Button>
         </div>
       ) : null}

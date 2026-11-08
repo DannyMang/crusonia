@@ -4,6 +4,7 @@
 // Crusonia did (auto-allowed confirmations, approvals, credit debits). The clean timeline (buildSteps) is the default
 // view; this is "View full trace" and its JSON export. A finished session's trace is read to the end when it
 // finishes and by the minute cron, and kept for TRACE_RETENTION_DAYS (default 180).
+import { creditsForUsage } from "../billing/plans.ts";
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import type { Principal } from "../lib/context.ts";
@@ -85,6 +86,8 @@ async function sessionContext(sql: Sql, ws: string, sessionId: string, leadId: s
       // when it was the only active session).
       naive_usd: null as number | null,
       credits_debited: credits,
+      // The session's whole cost: its agent time (filled in by the caller) plus these Apify runs.
+      credits: (apify as { usage_micro_usd: string | null }[]).reduce((sum, r) => sum + creditsForUsage(Number(r.usage_micro_usd ?? 0)), 0),
       ledger,
       apify_runs: (apify as { usage_micro_usd: string | null }[]).map((r) => ({ ...r, usage_usd: microToUsd(r.usage_micro_usd) })),
     },
@@ -116,6 +119,7 @@ export async function getTrace(
   const hasMore = events.length > limit;
   const pageEvents = events.slice(0, limit) as { seq: number }[];
   ctx.spend.naive_usd = microToUsd(row.consumed_micro_usd);
+  ctx.spend.credits += creditsForUsage(Number(row.consumed_micro_usd ?? 0));
   return {
     workspace_id: row.workspace_id,
     run: toRun(row, false),
@@ -141,6 +145,7 @@ export async function exportTrace(sql: Sql, env: Env, viewer: TraceViewer, sessi
     sessionContext(sql, row.workspace_id, sessionId, row.lead_id, row.created_at),
   ]);
   ctx.spend.naive_usd = microToUsd(row.consumed_micro_usd);
+  ctx.spend.credits += creditsForUsage(Number(row.consumed_micro_usd ?? 0));
   return {
     format: "crusonia.trace.v1",
     exported_at: new Date().toISOString(),

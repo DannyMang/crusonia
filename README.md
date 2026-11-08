@@ -256,7 +256,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | GET | `/api/onboarding/propose/:session_id` | `{status: "running" \| "done" \| "error", profile?}`; poll it (refreshes from Naive while active) |
 | POST | `/api/leads/find` | `{count?, like_lead_id?}` (25, max 50) -> `{session_id}`: a Naive session finds leads matching the Company summary (or companies like that lead), adds and scores them |
 | GET | `/api/leads/find/:session_id` | `{run, leads}`: the leads that find run touched, each with `find_status` `created` / `merged` / `known` (from its add_leads results in the stored trace) |
-| GET | `/api/workflows` | Naive sessions grouped by purpose: `{id, name, purpose, status, started_at, leads_processed, cost_usd, last_event_at, runs}` |
+| GET | `/api/workflows` | Naive sessions grouped by purpose: `{id, name, purpose, status, started_at, leads_processed, cost_usd, cost_credits, last_event_at, runs}` |
 | GET | `/api/workflows/runs/:session_id` | `{run, steps, lead, approvals}`: the clean timeline. Steps from Naive's events and our audit events, sorted by time; a tool call that waited for a confirmation is one step with `approval: {decision, via, code?, waited_ms}`, and pauses only the auto-confirm policy resolved are left out |
 | GET | `/api/workflows/runs/:session_id/trace` | The full trace: stored Naive events (`after_seq`, `limit` up to 1000; `has_more`, `next_after_seq`), plus the run, our audit events, approvals and `spend` (Naive cost, credits debited, Apify runs). Kept `TRACE_RETENTION_DAYS` (180) |
 | GET | `/api/workflows/runs/:session_id/trace/export` | The whole trace as a JSON file download |

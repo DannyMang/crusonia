@@ -7,6 +7,7 @@
 //
 // The history is plain counts per run and per variant arm (leads, researched, qualified, drafted, approved, sent,
 // replied): observed outcomes, no statistics, winners or recommendations.
+import { creditsSql } from "../billing/credits-sql.ts";
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { newId } from "../ids.ts";
@@ -44,7 +45,7 @@ export async function runWorkflow(
   // A per-run cap limits one run: it can't stop the next one that starts by itself.
   const capApplies = !(input.trigger && workflow.spend.period === "run");
   if (capApplies && workflow.spend.cap_usd !== null && workflow.spend.usd >= workflow.spend.cap_usd) {
-    throw new ApiError(409, "spend_cap_reached", `This workflow spent $${workflow.spend.usd} of its $${workflow.spend.cap_usd} ${workflow.spend.period === "week" ? "weekly" : "per-run"} cap`);
+    throw new ApiError(409, "spend_cap_reached", `This workflow used ${workflow.spend.credits} of its ${workflow.spend.cap_credits} credits ${workflow.spend.period === "week" ? "this week" : "on its last run"}: raise the cap to run it again`);
   }
 
   // A run nobody started by hand (a schedule, a trigger, an agent's call) stays small, whatever it was asked for.
@@ -56,7 +57,18 @@ export async function runWorkflow(
                   where workspace_id = ${ws} and id = any(${input.lead_ids}::text[]) order by created_at limit ${limit}`
       : input.cohort
         ? await sql`select id, stage, variant, cohort, excluded_at from leads where workspace_id = ${ws} and cohort = ${input.cohort} order by created_at limit ${limit}`
-        : // No cohort or leads given: new leads this workflow has never run on.
+        : workflow.trigger.stale_days
+          ? // A re-research workflow: leads last researched long enough ago, oldest first. A lead waiting on the owner or
+            // with an open draft stays as it is: research would replace the draft.
+            await sql`
+              select l.id, l.stage, l.variant, l.cohort, l.excluded_at from leads l
+              where l.workspace_id = ${ws} and l.stage in ('qualified', 'disqualified') and l.excluded_at is null
+                and exists (select 1 from naive_sessions s where s.lead_id = l.id and s.purpose = 'research')
+                and not exists (select 1 from naive_sessions s where s.lead_id = l.id and s.purpose = 'research'
+                                and s.created_at > now() - make_interval(days => ${workflow.trigger.stale_days}))
+                and not exists (select 1 from drafts d where d.lead_id = l.id and d.status in ('draft', 'pending_approval', 'scheduled', 'open'))
+              order by (select max(s.created_at) from naive_sessions s where s.lead_id = l.id and s.purpose = 'research') limit ${limit}`
+          : // No cohort or leads given: new leads this workflow has never run on.
           await sql`
             select l.id, l.stage, l.variant, l.cohort, l.excluded_at from leads l
             where l.workspace_id = ${ws} and l.stage in ('new', 'no_consent') and l.excluded_at is null
@@ -65,7 +77,7 @@ export async function runWorkflow(
             order by l.created_at desc limit ${limit}`
   ) as Candidate[];
   if (!candidates.length) {
-    throw new ApiError(409, "no_leads", input.cohort ? `No leads in cohort "${input.cohort}"` : "No leads to run on: import leads or pass lead_ids");
+    throw new ApiError(409, "no_leads", input.cohort ? `No leads in cohort "${input.cohort}"` : workflow.trigger.stale_days ? `No leads were last researched more than ${workflow.trigger.stale_days} days ago` : "No leads to run on: import leads or pass lead_ids");
   }
   const open = new Set(
     (
@@ -176,6 +188,7 @@ type RunRow = {
   needs_review: number;
   waiting: number;
   cost_micro: string | number | null;
+  cost_credits: string | number | null;
   trace_steps: number;
   session_ids: string[] | null;
 };
@@ -264,7 +277,10 @@ export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: {
       (select count(*)::int from naive_sessions s where s.workflow_run_id = r.id) as sessions,
       (select count(*)::int from naive_sessions s where s.workflow_run_id = r.id and s.status in ('running', 'idle')) as open_sessions,
       (select count(*)::int from naive_sessions s where s.workflow_run_id = r.id and s.status = 'error') as error_sessions,
-      (select coalesce(sum(s.consumed_micro_usd), 0) from naive_sessions s where s.workflow_run_id = r.id) as cost_micro,
+      (select coalesce(sum(s.consumed_micro_usd), 0) + coalesce(sum((select sum(a.usage_micro_usd) from apify_runs a where a.session_id = s.id)), 0)
+         from naive_sessions s where s.workflow_run_id = r.id) as cost_micro,
+      (select coalesce(sum(${creditsSql(sql, "s.consumed_micro_usd")}), 0) + coalesce(sum((select sum(${creditsSql(sql, "a.usage_micro_usd")}) from apify_runs a where a.session_id = s.id)), 0)
+         from naive_sessions s where s.workflow_run_id = r.id) as cost_credits,
       (select count(*)::int from naive_session_events e join naive_sessions s on s.id = e.session_id where s.workflow_run_id = r.id) as trace_steps,
       (select array_agg(s.id order by s.created_at) from naive_sessions s where s.workflow_run_id = r.id) as session_ids
     from workflow_runs r
@@ -352,6 +368,7 @@ export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: {
         r.open_sessions > 0 || r.phase !== "done" ? (paused ? "paused" : "running") : r.waiting > 0 ? "waiting" : r.sessions > 0 && r.error_sessions === r.sessions ? "error" : "done",
       needs_review: r.needs_review,
       cost_usd: usd(r.cost_micro),
+      cost_credits: Number(r.cost_credits ?? 0),
       counts: { found: r.found, researched: r.researched, qualified: r.qualified, drafted: r.drafted, sent: r.sent },
       timeline: timeline.get(r.id) ?? [],
       trace_steps: r.trace_steps,

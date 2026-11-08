@@ -75,7 +75,7 @@ function seed(): Store {
       enabled: true,
       trigger: { kind: "schedule", label: "Mondays 9:00" },
       latest_version: 3,
-      spend: { usd: 0.84, cap_usd: 5, period: "week" },
+      spend: { usd: 0.84, cap_usd: 5, credits: 168, cap_credits: 1000, period: "week" },
       status: "waiting",
       waiting: { drafts: 2 },
       last_run: { id: "ses_ws_3", started_at: lastMon.toISOString(), status: "waiting", summary: "10 found, 6 fit", detail: "4 tasks · 2 email drafts" },
@@ -88,7 +88,7 @@ function seed(): Store {
       enabled: true,
       trigger: { kind: "csv_import", label: "On CSV import" },
       latest_version: 1,
-      spend: { usd: 1, cap_usd: 1, period: "run" },
+      spend: { usd: 1, cap_usd: 1, credits: 200, cap_credits: 200, period: "run" },
       status: "budget_paused",
       remaining: 17,
       last_run: { id: "ses_rn_1", started_at: today(8, 12), status: "budget_paused", summary: "31 of 48 done" },
@@ -101,7 +101,7 @@ function seed(): Store {
       enabled: true,
       trigger: { kind: "reply", label: "On new reply" },
       latest_version: 2,
-      spend: { usd: 0.57, cap_usd: 3, period: "week" },
+      spend: { usd: 0.57, cap_usd: 3, credits: 114, cap_credits: 600, period: "week" },
       status: "done",
       last_run: { id: "ses_rt_9", started_at: ago(12 * MIN), status: "done", summary: "Hana Sato", detail: "Interested, reply drafted" },
     },
@@ -142,6 +142,7 @@ function seed(): Store {
           started_at: lastMon.toISOString(),
           status: "waiting",
           cost_usd: 0.84,
+          cost_credits: 168,
           counts: { found: 38, researched: 10, qualified: 6, drafted: 6, sent: 0 },
           timeline: [
             { at: at(lastMon, 0), text: "Found 38 companies with an SDR job post" },
@@ -175,6 +176,7 @@ function seed(): Store {
           started_at: today(8, 12),
           status: "budget_paused",
           cost_usd: 1,
+          cost_credits: 200,
           counts: { found: 48, researched: 31, qualified: 14, drafted: 9, sent: 0 },
           timeline: [
             { at: today(8, 12), text: "Imported 48 leads from a CSV" },
@@ -204,6 +206,7 @@ function histRun(id: string, v: number, start: Date, cost: number, counts: FlowR
     started_at: start.toISOString(),
     status: "done",
     cost_usd: cost,
+    cost_credits: Math.ceil(cost * 200),
     counts,
     timeline: [
       { at: at(start, 0), text: `Found ${counts.found} companies` },
@@ -264,13 +267,14 @@ function traceFor(id: string): RunTrace | null {
       last_event_at: run.started_at,
       leads_processed: run.counts.researched,
       cost_usd: run.cost_usd,
+      cost_credits: run.cost_credits ?? null,
     },
     events,
     has_more: false,
     next_after_seq: null,
     audit: [],
     approvals: [],
-    spend: { naive_usd: run.cost_usd, credits_debited: Math.round((run.cost_usd ?? 0) * 200), apify_runs: [{ usage_usd: 0.31 }] },
+    spend: { naive_usd: run.cost_usd, credits_debited: Math.round((run.cost_usd ?? 0) * 200), credits: Math.round((run.cost_usd ?? 0) * 200), apify_runs: [{ usage_usd: 0.31 }] },
     retention_days: 180,
     sync: { ok: true, complete: true, skipped: "trace is complete" },
   };
@@ -338,7 +342,7 @@ export const flowHandlers = [
       enabled: false,
       trigger: input.trigger ?? triggerOf(v.steps),
       latest_version: 1,
-      spend: { usd: 0, cap_usd: 5, period: "week" },
+      spend: { usd: 0, cap_usd: 5, credits: 0, cap_credits: 1000, period: "week" },
       status: "off",
       last_run: null,
     };
@@ -361,7 +365,7 @@ export const flowHandlers = [
       if (!p.enabled) def.status = "off";
       else if (def.status === "off") def.status = "done";
     }
-    if (p.cap_usd !== undefined) def.spend = { ...def.spend, cap_usd: p.cap_usd };
+    if (p.cap_usd !== undefined) def.spend = { ...def.spend, cap_usd: p.cap_usd, cap_credits: p.cap_usd * 200 };
     if (p.resume) {
       def.status = "running";
       def.enabled = true;
@@ -393,6 +397,7 @@ export const flowHandlers = [
       started_at: now,
       status: "running",
       cost_usd: 0,
+      cost_credits: 0,
       counts: { found: 0, researched: 0, qualified: 0, drafted: 0, sent: 0 },
       timeline: [{ at: now, text: b.test_leads ? `Started on ${b.test_leads} test leads` : "Started" }],
       trace_steps: 1,

@@ -9,11 +9,8 @@ import type { Env } from "../env.ts";
 import type { FetchFn } from "../providers/http.ts";
 import { NaiveClient } from "../providers/naive.ts";
 import { getActorRun, TERMINAL_RUN_STATUSES, type ApifyMeter, type ApifyRun } from "../services/apify.ts";
-import { MICRO_USD_PER_CREDIT, USAGE_MARKUP_BPS } from "./plans.ts";
-
-// The same formula as creditsForUsage() in plans.ts, in SQL: ceil(micro-USD x bps / (10,000 x micro-USD per credit)).
-const target = (sql: Sql, column: string) =>
-  sql.unsafe(`ceil(${column}::numeric * ${USAGE_MARKUP_BPS} / ${10_000 * MICRO_USD_PER_CREDIT})::bigint`);
+import { creditsSql } from "./credits-sql.ts";
+import { USAGE_MARKUP_BPS } from "./plans.ts";
 
 /** Debits what a finished, billable session still owes. Returns the credits debited by this call (0 if none). */
 export async function settleSessionUsage(sql: Sql, sessionId: string): Promise<number> {
@@ -21,7 +18,7 @@ export async function settleSessionUsage(sql: Sql, sessionId: string): Promise<n
     sql`select pg_advisory_xact_lock(hashtext(${`usage:${sessionId}`}))::text as locked`,
     sql`
       with s as (
-        select id, workspace_id, lead_id, purpose, billing_owner_id, consumed_micro_usd, ${target(sql, "consumed_micro_usd")} as total
+        select id, workspace_id, lead_id, purpose, billing_owner_id, consumed_micro_usd, ${creditsSql(sql, "consumed_micro_usd")} as total
         from naive_sessions
         where id = ${sessionId} and billing_owner_id is not null and status in ('done', 'error') and consumed_micro_usd > 0
       ),
@@ -74,7 +71,7 @@ export async function settleUsage(sql: Sql, env: Env, fetchFn?: FetchFn): Promis
     select s.id from naive_sessions s
     where s.billing_owner_id is not null and s.status in ('done', 'error') and s.consumed_micro_usd > 0
       and s.updated_at > now() - interval '30 days'
-      and ${target(sql, "s.consumed_micro_usd")} >
+      and ${creditsSql(sql, "s.consumed_micro_usd")} >
           coalesce((select -sum(l.amount) from credit_ledger l where l.session_id = s.id and l.reason = 'usage'), 0)
     order by s.updated_at limit 25`;
   let debited = 0;
@@ -127,7 +124,7 @@ export async function settleApifyRun(sql: Sql, runId: string): Promise<number> {
     sql`select pg_advisory_xact_lock(hashtext(${`apify:${runId}`}))::text as locked`,
     sql`
       with r as (
-        select run_id, workspace_id, actor, billing_owner_id, session_id, usage_micro_usd, debited_credits, ${target(sql, "usage_micro_usd")} as total
+        select run_id, workspace_id, actor, billing_owner_id, session_id, usage_micro_usd, debited_credits, ${creditsSql(sql, "usage_micro_usd")} as total
         from apify_runs
         where run_id = ${runId} and billing_owner_id is not null and usage_micro_usd > 0
       ),
@@ -222,7 +219,7 @@ export async function settleApifyUsage(sql: Sql, env: Env, fetchFn?: FetchFn): P
   const owing = await sql`
     select run_id from apify_runs
     where billing_owner_id is not null and usage_micro_usd > 0 and created_at > now() - interval '30 days'
-      and ${target(sql, "usage_micro_usd")} > debited_credits
+      and ${creditsSql(sql, "usage_micro_usd")} > debited_credits
     order by updated_at limit 25`;
   let debited = 0;
   for (const { run_id } of owing) {

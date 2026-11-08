@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Link, NavLink } from "react-router";
 import type { FlowDef, FlowStatus } from "../../api/workflows.ts";
 import { RingSpinner } from "../../components/ui.tsx";
-import { cx, usd } from "../../lib/format.ts";
+import { creditsLabel, cx, num } from "../../lib/format.ts";
 
 export const COMPANY_SUMMARY_PATH = "/app/settings/company";
 export const flowPath = (id: string) => `/app/workflows/${encodeURIComponent(id)}`;
@@ -30,11 +30,18 @@ export function runDate(v: string): string {
   return `${d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).replace(",", "")}, ${hm(d)}`;
 }
 
-/** "$0.84 of $5 this week" / "$1.00 of $1.00 this run". */
+/** "84 of 1,000 credits this week" / "200 of 200 credits this run". */
 export function spendLabel(spend: FlowDef["spend"]): string {
-  const cap = spend.cap_usd;
-  const whole = (n: number) => (Number.isInteger(n) && spend.period === "week" ? `$${n}` : usd(n));
-  return cap === null ? `${usd(spend.usd)} this ${spend.period}` : `${usd(spend.usd)} of ${whole(cap)} this ${spend.period}`;
+  const used = spend.credits ?? 0;
+  const cap = spend.cap_credits ?? null;
+  return cap === null ? `${creditsLabel(used)} this ${spend.period}` : `${num(used)} of ${creditsLabel(cap)} this ${spend.period}`;
+}
+
+/** The list's narrow column: "84 of 1,000 credits". spendLabel says the period, as the row's tooltip. */
+export function spendShort(spend: FlowDef["spend"]): string {
+  const used = spend.credits ?? 0;
+  const cap = spend.cap_credits ?? null;
+  return cap === null ? creditsLabel(used) : `${num(used)} of ${creditsLabel(cap)}`;
 }
 
 const TerminalGlyph = ({ size }: { size: number }) => (

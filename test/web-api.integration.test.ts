@@ -332,4 +332,29 @@ suite("web app API (database, mocked Naive)", () => {
     // The experiments feature was removed: its routes are gone.
     expect((await call("/api/experiments")).status).toBe(404);
   });
+
+  test("summary: a find step's first score isn't research, until a research session finishes", async () => {
+    const before = await getSummary(sql, naiveEnv, WS);
+    const lead = await leadIn("A", "inline");
+    // What a find step leaves: a score, qualified, stage qualified, and no research session.
+    await sql`update leads set score = 80, qualified = true, stage = 'qualified' where id = ${lead.id}`;
+    const found = await getSummary(sql, naiveEnv, WS);
+    const delta = (s: typeof found, k: keyof typeof found.pipeline) => (s.pipeline[k] ?? 0) - (before.pipeline[k] ?? 0);
+    expect([delta(found, "found"), delta(found, "researched"), delta(found, "qualified")]).toEqual([1, 0, 0]);
+
+    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sid("inline")}, ${WS}, ${lead.id}, 'research', 'done')`;
+    const researched = await getSummary(sql, naiveEnv, WS);
+    expect([delta(researched, "found"), delta(researched, "researched"), delta(researched, "qualified")]).toEqual([1, 1, 1]);
+  });
+
+  test("summary: spend counts a running session's use so far, then the same once it's debited", async () => {
+    const before = (await getSummary(sql, naiveEnv, WS)).spend.week_credits;
+    const lead = await leadIn("A", "open");
+    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, consumed_micro_usd, billing_owner_id)
+              values (${sid("open")}, ${WS}, ${lead.id}, 'research', 'running', 100000, ${WS})`;
+    expect((await getSummary(sql, naiveEnv, WS)).spend.week_credits - before).toBe(20);
+    await sql`update naive_sessions set status = 'done' where id = ${sid("open")}`;
+    await settleSessionUsage(sql, sid("open"));
+    expect((await getSummary(sql, naiveEnv, WS)).spend.week_credits - before).toBe(20);
+  });
 });

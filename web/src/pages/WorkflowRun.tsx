@@ -12,7 +12,7 @@ import { WorkflowsIcon } from "../components/icons.tsx";
 import { clockSeconds, isActive, stopLabel } from "../components/workflows/status.tsx";
 import { Timeline } from "../components/workflows/Timeline.tsx";
 import { ButtonLink, EmptyState, QueryError, RingSpinner, Skeleton, stageLabel } from "../components/ui.tsx";
-import { cx, duration, hostOf, leadTitle, timeAgo, timeLeft, usd } from "../lib/format.ts";
+import { creditsLabel, cx, duration, hostOf, leadTitle, timeAgo, timeLeft } from "../lib/format.ts";
 import { keys, useWorkflowRun } from "../queries.ts";
 
 const meta = "text-xs/4 font-[525] text-faint";
@@ -59,8 +59,8 @@ export default function WorkflowRun() {
   const waitingOn = pending[0];
   const title = lead ? leadTitle(lead) : runTitle(run);
   const tools = steps.filter((s) => s.type === "tool" || s.type === "approval").length;
-  const stepCost = steps.reduce<number | null>((sum, s) => (s.cost_usd === undefined ? sum : (sum ?? 0) + s.cost_usd), null);
-  const cost = run.cost_usd ?? stepCost;
+  const stepCost = steps.reduce<number | null>((sum, s) => (s.cost_credits === undefined ? sum : (sum ?? 0) + s.cost_credits), null);
+  const cost = run.cost_credits ?? stepCost;
   const timing = timingOf(run, steps, now);
 
   return (
@@ -104,7 +104,7 @@ export default function WorkflowRun() {
             Tool calls <span className="tabular-nums text-ink">{tools}</span>
           </span>
           <span className={meta}>
-            Cost <span className="tabular-nums text-ink">{usd(cost)}</span>
+            Cost <span className="tabular-nums text-ink">{creditsLabel(cost)}</span>
           </span>
           <span className={meta}>
             Agent <span className="text-ink">Naive</span>
@@ -277,7 +277,7 @@ function CostSection({ run, steps, cost, tools }: { run: Run; steps: RunStep[]; 
     <section className="flex flex-col gap-2.5 p-4">
       <SectionTitle>{isActive(run.status) ? "Cost so far" : "Cost"}</SectionTitle>
       <div className="flex items-baseline gap-1.5">
-        <div className="text-[22px]/6.5 font-semibold tracking-[-0.01em] tabular-nums text-ink">{usd(cost)}</div>
+        <div className="text-[22px]/6.5 font-semibold tracking-[-0.01em] tabular-nums text-ink">{creditsLabel(cost)}</div>
         <div className="text-[13px]/4 font-medium text-muted">{cost === null ? "not reported yet" : "for this run"}</div>
       </div>
       <dl className="flex flex-col gap-1.5 pt-0.5">
