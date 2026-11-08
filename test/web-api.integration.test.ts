@@ -3,6 +3,7 @@
 //   TEST_DATABASE_URL=<dev branch url> bun test test/web-api.integration.test.ts
 // Rows are marked with this run's id and deleted afterwards; the saved profile and pause flag are restored.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { settleSessionUsage } from "../src/billing/usage.ts";
 import { getSql, type Sql } from "../src/db.ts";
 import type { Env } from "../src/env.ts";
 import { variantFor } from "../src/ids.ts";
@@ -92,6 +93,11 @@ suite("web app API (database, mocked Naive)", () => {
         : sql`delete from settings where key = 'profile'`,
       sql`update settings set value = ${JSON.stringify(originalPaused)}::jsonb where key = 'paused'`,
     ]);
+    await sql.transaction([
+      sql`set local crusonia.allow_ledger_delete = 'on'`,
+      sql`delete from credit_ledger where owner_id = ${`it-owner-${run}`}`,
+    ]);
+    await sql`delete from events where kind = 'billing_usage_debited' and data->>'owner_id' = ${`it-owner-${run}`}`;
   });
 
   test("API keys: created once, stored hashed, accepted by /api and /mcp, refused after revoke", async () => {
@@ -127,7 +133,7 @@ suite("web app API (database, mocked Naive)", () => {
     expect((await get("/mcp", { method: "POST", headers, body: "{}" })).status).toBe(401);
   });
 
-  test("summary: pipeline buckets, pending approvals with lead/company/subject, spend", async () => {
+  test("summary: cumulative funnel, where leads are now, pending approvals with lead/company/subject, spend in credits", async () => {
     const before = await getSummary(sql, naiveEnv);
     const fresh = await leadIn("A", "fresh");
     const met = await leadIn("A", "met");
@@ -137,16 +143,29 @@ suite("web app API (database, mocked Naive)", () => {
     const drafted = await leadIn("B", "drafted");
     const d = await createDraft(sql, { lead_id: drafted.id, subject: "Rejected", body: "Body" }, { ttlMinutes: 30, via: "api", actor: "test" });
     await rejectApproval({ sql, env: naiveEnv, actor: "test", sendTtlMinutes: 30 }, d.approval.code, "no");
-    await sql`insert into naive_sessions (id, lead_id, purpose, status, consumed_micro_usd) values (${sid("spend")}, ${fresh.id}, 'research', 'done', 1500000)`;
+    await sql`insert into naive_sessions (id, lead_id, purpose, status, consumed_micro_usd, billing_owner_id)
+              values (${sid("spend")}, ${fresh.id}, 'research', 'done', 1500000, ${`it-owner-${run}`})`;
+    // Spend is what was charged: the session debits 1.5 USD x 2 = 300 credits.
+    expect(await settleSessionUsage(sql, sid("spend"))).toBe(300);
 
     const after = await getSummary(sql, { ...naiveEnv, WEEKLY_BUDGET_USD: "20" });
+    // Cumulative: 4 leads found; met, awaiting and drafted got at least to drafted (met is a meeting, so it counts in
+    // every step); now: one lead in each bucket it sits in.
     const delta = (k: keyof typeof after.pipeline) => after.pipeline[k] - before.pipeline[k];
-    expect([delta("found"), delta("meetings"), delta("awaiting_approval"), delta("drafted")]).toEqual([1, 1, 1, 1]);
+    expect([delta("found"), delta("researched"), delta("drafted"), delta("sent"), delta("replied"), delta("meetings")]).toEqual([4, 3, 3, 1, 1, 1]);
+    expect(delta("awaiting_approval")).toBe(1);
+    for (const [a, b] of [["found", "researched"], ["researched", "drafted"], ["drafted", "sent"], ["sent", "replied"], ["replied", "meetings"]] as const) {
+      expect(after.pipeline[a]).toBeGreaterThanOrEqual(after.pipeline[b]);
+    }
+    const now = (k: keyof typeof after.pipeline_now) => after.pipeline_now[k] - before.pipeline_now[k];
+    expect([now("found"), now("meetings"), now("awaiting_approval"), now("drafted")]).toEqual([1, 1, 1, 1]);
     expect(after.pending_approvals_total - before.pending_approvals_total).toBe(1);
     const mine = after.pending_approvals.find((a) => a.lead_id === awaiting.id);
     expect(mine).toMatchObject({ kind: "send", lead_name: "awaiting", company: "Co awaiting", subject: `Hello ${run}` });
     expect(after.spend.budget_usd).toBe(20);
-    expect(Math.round(((after.spend.week_usd ?? 0) - (before.spend.week_usd ?? 0)) * 1e6)).toBe(1_500_000);
+    expect(Math.round(((after.spend.week_usd ?? 0) - (before.spend.week_usd ?? 0)) * 100)).toBe(300);
+    expect(after.spend.week_credits - before.spend.week_credits).toBe(300);
+    expect(Math.round(((after.spend.provider_usd ?? 0) - (before.spend.provider_usd ?? 0)) * 1e6)).toBe(1_500_000);
     expect(after.paused).toBe(false);
     expect(after.total_leads - before.total_leads).toBe(4);
   });

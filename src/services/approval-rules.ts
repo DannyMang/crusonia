@@ -11,7 +11,8 @@ export type SendCheckInput = {
     draft_id: string | null;
     recipient: string | null;
   };
-  draft: { id: string; status: string; version: number } | null;
+  /** `channel` is absent on rows from before channels existed (all email). */
+  draft: { id: string; status: string; version: number; channel?: string } | null;
   /** Highest draft version for the lead: an approval is only valid for the latest version. */
   latestVersion: number | null;
   lead: { email: string | null; consent_at: Date | string | null } | null;
@@ -32,6 +33,8 @@ export function checkSendApproval(input: SendCheckInput): SendCheck {
   if (approval.status !== "pending") return fail(409, "approval_not_pending", `Approval is ${approval.status}`);
   if (new Date(approval.expires_at).getTime() <= input.now.getTime()) return fail(410, "approval_expired", "Approval has expired");
   if (!draft || draft.id !== approval.draft_id) return fail(409, "draft_missing", "The approved draft no longer exists");
+  // Defense in depth: manual-channel drafts never get a send approval, and nothing sends them.
+  if (draft.channel && draft.channel !== "email") return fail(409, "manual_channel", `This is a ${draft.channel} draft: the owner sends it personally`);
   if (input.latestVersion !== null && draft.version !== input.latestVersion) {
     return fail(409, "draft_superseded", `Draft v${draft.version} was superseded by v${input.latestVersion}`);
   }

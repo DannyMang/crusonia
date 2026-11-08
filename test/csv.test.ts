@@ -94,16 +94,16 @@ describe("planImport (dedupe by email, then company domain + name)", () => {
   });
 
   test("an existing email is updated by filling blanks only, and granted consent", () => {
-    const existing = [lead({ id: "lead_a", email: "a@x.com", name: "Ada (edited)", company: null })];
-    const p = plan("email,name,company,consent\na@x.com,Ada,Acme,yes", existing);
+    const existing = [lead({ id: "lead_a", email: "a@acmeco.dev", name: "Ada (edited)", company: null })];
+    const p = plan("email,name,company,consent\na@acmeco.dev,Ada,Acme,yes", existing);
     expect(p.rows[0]).toMatchObject({ status: "updated", lead_id: "lead_a", matched_by: "email", fields: ["company", "domain", "consent"] });
     expect(p.updates.get("lead_a")).toMatchObject({ company: "Acme", consent_text: "CSV import: consent=yes", consent_at: at });
     expect(p.updates.get("lead_a")!.name).toBeUndefined();
   });
 
   test("an existing lead with nothing new is reported as unchanged", () => {
-    const existing = [lead({ id: "lead_a", email: "a@x.com", name: "Ada", domain: "x.com", consent_at: new Date() })];
-    expect(plan("email,name,consent\na@x.com,Ada,yes", existing).rows[0]).toMatchObject({ status: "skipped", reason: "unchanged" });
+    const existing = [lead({ id: "lead_a", email: "a@acmeco.dev", name: "Ada", domain: "acmeco.dev", consent_at: new Date() })];
+    expect(plan("email,name,consent\na@acmeco.dev,Ada,yes", existing).rows[0]).toMatchObject({ status: "skipped", reason: "unchanged" });
   });
 
   test("a row with an email attaches it to the email-less lead with the same domain and name", () => {

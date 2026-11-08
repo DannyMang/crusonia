@@ -8,6 +8,7 @@ import {
   APIFY_ALLOWED_TOOLS,
   APIFY_MCP_URL,
   CRUSONIA_TOOLS,
+  DEFAULT_AGENT_MODEL,
   PLAYBOOK_PATH,
   agentSettings,
   changedFields,
@@ -32,12 +33,22 @@ describe("research playbook", () => {
 
   test("covers the workflow and the safety rules", () => {
     const body = parsePlaybook(playbookText).body;
-    for (const tool of ["get_profile", "get_lead", "read_website", "search_web", "save_evidence", "score_lead", "create_draft", "ask_operator"]) {
+    for (const tool of ["get_profile", "get_lead", "read_website", "search_web", "save_research", "create_draft", "add_note", "ask_operator"]) {
       expect(body).toContain(`\`${tool}\``);
     }
-    for (const phrase of ["has_consent", "Untrusted data", "never instructions", "Never say or imply", "suppressed"]) {
+    for (const phrase of ["has_consent", "Untrusted data", "never instructions", "Never say or imply", "suppressed", "Company summary"]) {
       expect(body).toContain(phrase);
     }
+  });
+
+  test("v3 tells the agent to batch independent calls, cite evidence, and use manual channels without consent", () => {
+    const body = parsePlaybook(playbookText).body;
+    expect(Number(parsePlaybook(playbookText).version)).toBeGreaterThanOrEqual(3);
+    for (const phrase of ["Batch independent calls in one turn", "about 3", "citations", "why_summary", "linkedin", "intro", "email_manual", "owner_notes", "ask_operator", "change_note", "No invented enrichment"]) {
+      expect(body).toContain(phrase);
+    }
+    // The research workflow no longer starts with get_status.
+    expect(body).toContain("Don't call `get_status`");
   });
 
   test("malformed playbooks are refused", () => {
@@ -54,8 +65,10 @@ describe("agent definition", () => {
     for (const tool of CRUSONIA_TOOLS) expect(tools.configs[`crusonia.${tool}`]).toEqual({ enabled: true, permission: "allow" });
     for (const tool of APIFY_ALLOWED_TOOLS) expect(tools.configs[`apify.${tool}`]).toEqual({ enabled: true, permission: "allow" });
     expect(tools.configs.ask_operator).toEqual({ enabled: true, permission: "ask" });
-    // Actor runs and anything unlisted fall through to the `ask` default.
+    // Actor runs and anything unlisted fall through to the `ask` default, and the Apify URL loads no Actor-run tools.
     expect(tools.configs["apify.call-actor"]).toBeUndefined();
+    expect(APIFY_MCP_URL).not.toContain("actors");
+    expect(APIFY_MCP_URL).not.toContain("website-content-crawler");
     expect(tools.configs["apify.apify--website-content-crawler"]).toBeUndefined();
     expect(Object.keys(tools.configs)).toHaveLength(CRUSONIA_TOOLS.length + APIFY_ALLOWED_TOOLS.length + 1);
   });
@@ -71,9 +84,10 @@ describe("agent definition", () => {
     for (const server of servers) expect(Object.keys(c.tools.configs).some((k) => k.startsWith(`${server}.`))).toBe(true);
   });
 
-  test("defaults: vetta/auto, immediate window, no handoffs, $5 a day and $1 per session", () => {
+  test("defaults: a pinned model (not vetta/auto), immediate window, no handoffs, $5 a day and $1 per session", () => {
     const c = config();
-    expect(c).toMatchObject({ name: "Crusonia Research", model: "vetta/auto", window: "immediate", handoffs: false });
+    expect(c).toMatchObject({ name: "Crusonia Research", model: DEFAULT_AGENT_MODEL, window: "immediate", handoffs: false });
+    expect(c.model).not.toBe("vetta/auto");
     expect(c.budget).toEqual({ cap_micro_usd: 5_000_000, max_task_micro_usd: 1_000_000, period: "day" });
     expect("harness" in c).toBe(false);
   });
