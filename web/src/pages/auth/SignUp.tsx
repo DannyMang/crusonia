@@ -11,7 +11,7 @@ import { ALL_PROVIDERS, AuthBrand, AuthField, AuthHeading, AuthLoadFailed, AuthS
 import { carriedParams, clerkMessage, enabledProviders, goTo, isEmail, providerOffMessage, rememberAfterAuth, rememberWebsite, safeNext } from "../../components/auth/flow.ts";
 
 const TITLE = "Welcome to Crusonia!";
-const SUBTITLE = "Your first 25 leads, from just your website";
+const SUBTITLE = "Your first 3 leads, from just your website";
 const AFTER_SIGN_UP = "/onboarding/1";
 
 const switchLine = (search = "") => <SwitchLine className="pt-3" text="Already have an account?" to={`/sign-in${search}`} label="Sign in" />;

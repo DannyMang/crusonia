@@ -118,6 +118,6 @@ export function SourceList({ urls, site }: { urls: string[]; site?: string }) {
   );
 }
 
-/** The large lime button from the designs (Continue, Find my first 25 leads, Go to dashboard). */
+/** The large lime button from the designs (Continue, Find my first 3 leads, Go to dashboard). */
 export const bigButton =
   "inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-[10px] bg-lime px-5.5 text-[15px]/4.5 font-semibold text-ink transition-colors hover:bg-[#b3de7a] disabled:cursor-default disabled:opacity-60";

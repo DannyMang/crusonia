@@ -1,6 +1,6 @@
 // Onboarding · 3 Your ideal customer (Paper artboard 2L8A-0): the proposed (or saved, or empty) profile,
-// editable in place. "Find my first 25 leads" saves it (PUT /api/profile) and then starts the paid search
-// (POST /api/leads/find {count: 25}) on that one click. Unchecked signals are not saved.
+// editable in place. "Find my first 3 leads" saves it (PUT /api/profile) and then starts the paid search
+// (POST /api/leads/find {count: 3}) on that one click. Unchecked signals are not saved.
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
@@ -27,7 +27,7 @@ import { ArrowIcon, bigButton, FromSources, PencilIcon, StepTitle } from "../../
 import { cx } from "../../lib/format.ts";
 import { keys, useOwnerWorkspace, useProfile } from "../../queries.ts";
 
-const TARGET = 25;
+const TARGET = 3;
 const card = "flex flex-col rounded-xl border border-[#200D0D1A] bg-white";
 const cardTitle = "text-[15px]/4.5 font-medium text-ink";
 
