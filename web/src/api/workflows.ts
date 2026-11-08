@@ -5,21 +5,11 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Api, Run } from "../api.ts";
 import { useApi } from "../auth.tsx";
-import type { FlowStep } from "./flow-types.ts";
+import type { FlowInput, FlowSource, FlowStep, FlowTrigger, Qualification } from "./flow-types.ts";
 
 // ---------- definitions ----------
 
-export type FlowSource = "user" | "claude_code" | "template";
-export type TriggerKind = "schedule" | "csv_import" | "reply" | "manual";
-
-export type { FlowStep, StepKind } from "./flow-types.ts";
-
-export type Qualification = {
-  icp: { source: "company_summary" };
-  research_questions: string[];
-  evidence_required: string[];
-  done_when: string;
-};
+export type { FlowInput, FlowSource, FlowStep, FlowTrigger, Qualification, StepKind, TriggerKind } from "./flow-types.ts";
 
 export type FlowVersion = Qualification & {
   version: number;
@@ -35,9 +25,10 @@ export type FlowDef = {
   name: string;
   source: FlowSource;
   enabled: boolean;
-  trigger: { kind: TriggerKind; label: string };
+  trigger: FlowTrigger;
   latest_version: number;
-  spend: { usd: number; cap_usd: number | null; period: "week" | "run" };
+  /** `usd` and `cap_usd` are provider cost, which the API sets caps in; the app shows `credits` and `cap_credits`. */
+  spend: { usd: number; cap_usd: number | null; credits?: number; cap_credits?: number | null; period: "week" | "run" };
   status: FlowStatus;
   last_run: { id: string; started_at: string; status: string; summary: string; detail?: string | null } | null;
   /** Agent that runs it ("Researcher"), shown under the name when the source tag is not. */
@@ -46,14 +37,6 @@ export type FlowDef = {
   waiting?: { drafts: number } | null;
   /** Leads still to process (status "budget_paused"). */
   remaining?: number | null;
-};
-
-export type FlowInput = Qualification & {
-  name: string;
-  steps: FlowStep[];
-  source?: FlowSource;
-  trigger?: FlowDef["trigger"];
-  enabled?: boolean;
 };
 
 export type FlowVersionInput = Qualification & { steps: FlowStep[]; label?: string | null };
@@ -71,6 +54,7 @@ export type FlowRun = {
   started_at: string;
   status: FlowStatus;
   cost_usd: number | null;
+  cost_credits?: number | null;
   counts: FlowRunCounts;
   /** What started it: schedule, csv_import, reply, operator, or a person (manual). */
   trigger?: string;
@@ -101,7 +85,7 @@ export type RunTrace = {
   next_after_seq: number | null;
   audit: { id: string; lead_id: string | null; kind: string; data: Record<string, unknown>; created_at: string }[];
   approvals: { code: string; kind: string; status: string; summary: string; created_at: string }[];
-  spend: { naive_usd: number | null; credits_debited: number; apify_runs: { usage_usd: number | null }[] };
+  spend: { naive_usd: number | null; credits_debited: number; credits?: number; apify_runs: { usage_usd: number | null }[] };
   retention_days: number;
   sync?: { ok: boolean; complete?: boolean; error?: string; skipped?: string };
 };

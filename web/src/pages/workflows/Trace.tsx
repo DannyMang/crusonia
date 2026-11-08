@@ -4,7 +4,7 @@ import type { FlowRun, TraceEvent } from "../../api/workflows.ts";
 import { useRunTrace } from "../../api/workflows.ts";
 import { Dialog } from "../../components/leads/Overlay.tsx";
 import { Button, EmptyState, QueryError, Skeleton } from "../../components/ui.tsx";
-import { num, usd } from "../../lib/format.ts";
+import { creditsLabel, num } from "../../lib/format.ts";
 import { runDate } from "./parts.tsx";
 
 const str = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : null);
@@ -30,13 +30,13 @@ export function TraceDialog({ run, onClose }: { run: FlowRun | null; onClose: ()
   const pages = q.data?.pages ?? [];
   const first = pages[0];
   const events = pages.flatMap((p) => p.events);
-  const credits = first?.spend.credits_debited;
+  const credits = first?.spend.credits ?? first?.spend.credits_debited;
   return (
     <Dialog
       open={Boolean(run)}
       onClose={onClose}
       title={run ? `v${run.version} · ${runDate(run.started_at)}` : "Trace"}
-      description={first ? [usd(first.spend.naive_usd ?? run?.cost_usd ?? null), credits ? `${num(credits)} credits` : null, `${num(events.length)}${q.hasNextPage ? "+" : ""} events`].filter(Boolean).join(" · ") : undefined}
+      description={first ? [creditsLabel(credits ?? null), `${num(events.length)}${q.hasNextPage ? "+" : ""} events`].filter(Boolean).join(" · ") : undefined}
       className="w-[880px]"
       footer={
         q.hasNextPage ? (

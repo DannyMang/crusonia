@@ -66,6 +66,17 @@ export default function Step2Reading() {
 
   if (!hasInput) return <Navigate to="/onboarding/1" replace />;
 
+  // This account can't use the instance yet: nothing else on the page would work, so say only that.
+  if (s.read?.status === "error" && s.read.error.code === "signups_closed" || s.propose?.status === "error" && s.propose.error.code === "signups_closed") {
+    return (
+      <div className="flex grow justify-center px-6 pb-16 pt-20 lg:pt-33">
+        <div className="w-full max-w-100">
+          <StepTitle step={2} title="Sign-ups are closed" subtitle="This Crusonia instance is not taking new accounts right now. Ask the owner for access." />
+        </div>
+      </div>
+    );
+  }
+
   const host = siteHost(s.url);
   const proposeError = s.propose?.status === "error" ? s.propose.error : undefined;
   const calm = isComingOnline(proposeError);

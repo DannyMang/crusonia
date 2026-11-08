@@ -284,7 +284,14 @@ export async function startFindRun(sql: Sql, env: Env, ws: string, def: Pick<Due
 /** Starts a run of a definition now: find first when its latest version has a find step, else research on `lead_ids` or new leads. */
 export async function startRun(sql: Sql, env: Env, ws: string, def: DueDef, opts: StartOpts & { leadIds?: string[]; reply?: boolean; csv?: boolean }) {
   const version = (await loadVersion(sql, def.id, def.latest_version)) as VersionRow;
-  if (!opts.leadIds?.length && hasFindStep(version.steps ?? [])) return startFindRun(sql, env, ws, def, opts);
+  if (!opts.leadIds?.length && hasFindStep(version.steps ?? [])) {
+    if (!def.trigger.like_rated) return startFindRun(sql, env, ws, def, opts);
+    const [liked] = await sql`select n.lead_id from lead_notes n join leads l on l.id = n.lead_id
+                              where n.workspace_id = ${ws} and n.kind = 'thumbs_up' and n.author like 'user:%' and l.excluded_at is null
+                              order by n.id desc limit 1`;
+    if (!liked) throw new ApiError(409, "no_leads", "Rate a lead 👍 first: this workflow looks for companies like it");
+    return startFindRun(sql, env, ws, def, { ...opts, likeLeadId: liked.lead_id as string });
+  }
   return runWorkflow(
     sql,
     env,
@@ -424,9 +431,16 @@ async function startQueued(sql: Sql, env: Env, run: ActiveRun, fetchFn?: FetchFn
 async function spendStop(sql: Sql, env: Env, run: ActiveRun): Promise<string | null> {
   const [[def], [spent], day, credits] = await Promise.all([
     sql`select spend_cap_usd, spend_period from workflow_defs where id = ${run.workflow_id}`,
-    sql`select coalesce(sum(consumed_micro_usd) filter (where s.workflow_run_id = ${run.id}), 0)::text as run,
-               coalesce(sum(consumed_micro_usd) filter (where s.created_at > now() - interval '7 days'), 0)::text as week
-        from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}`,
+    // The same figure the workflow page shows: agent time and the Apify runs its sessions started.
+    sql`select coalesce(sum(x.micro) filter (where x.run_id = ${run.id}), 0)::text as run,
+               coalesce(sum(x.micro) filter (where x.created_at > now() - interval '7 days'), 0)::text as week
+        from (
+          select s.workflow_run_id as run_id, s.created_at, s.consumed_micro_usd as micro
+          from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}
+          union all
+          select s.workflow_run_id, s.created_at, a.usage_micro_usd
+          from apify_runs a join naive_sessions s on s.id = a.session_id join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}
+        ) x`,
     spendStatus(sql, env, run.workspace_id),
     creditsEnforcedFor(env, run.workspace_id) ? getBalance(sql, run.workspace_id) : Promise.resolve(1),
   ]);

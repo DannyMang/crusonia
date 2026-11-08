@@ -2,7 +2,8 @@
 // author names (web/src/lib/authors.ts) and citation splitting (web/src/lib/citations.ts).
 import { describe, expect, test } from "bun:test";
 import { describeAuthor } from "../web/src/lib/authors.ts";
-import { citeBody, citedParts, sourceLabel } from "../web/src/lib/citations.ts";
+import { citeBody, citedParts, sourceLabel, uniqueSources } from "../web/src/lib/citations.ts";
+import { creditsLabel } from "../web/src/lib/format.ts";
 import { sourceLabel as leadSource } from "../web/src/pages/leads/shared.ts";
 import { parseInline, parseMarkdown, safeHref } from "../web/src/lib/markdown-parse.ts";
 
@@ -112,5 +113,32 @@ describe("a lead's source label", () => {
   });
   test("a slug is tidied", () => {
     expect(leadSource("event_list")).toBe("Event list");
+  });
+});
+
+describe("sources on a lead", () => {
+  const ev = (url: string, n: number, at: string) => ({ source_url: url, n, created_at: at });
+  test("one line per URL, with every number it backs", () => {
+    expect(uniqueSources([ev("https://a.co/", 1, "2026-11-01"), ev("https://a.co/", 2, "2026-11-03"), ev("https://b.co/", 3, "2026-11-02")])).toEqual([
+      { url: "https://a.co/", numbers: [1, 2], read_at: "2026-11-03" },
+      { url: "https://b.co/", numbers: [3], read_at: "2026-11-02" },
+    ]);
+  });
+  test("without numbers, the position in the list", () => {
+    expect(uniqueSources([{ source_url: "https://a.co/", created_at: "2026-11-01" }, { source_url: "https://b.co/", created_at: "2026-11-01" }]).map((s) => s.numbers)).toEqual([[1], [2]]);
+  });
+});
+
+describe("spend is shown in credits", () => {
+  test("whole credits, singular and grouped", () => {
+    expect(creditsLabel(51)).toBe("51 credits");
+    expect(creditsLabel(1)).toBe("1 credit");
+    expect(creditsLabel(1250)).toBe("1,250 credits");
+    expect(creditsLabel(0)).toBe("0 credits");
+  });
+  test("a step's share keeps a decimal; nothing reported is a dash", () => {
+    expect(creditsLabel(0.64)).toBe("0.6 credits");
+    expect(creditsLabel(0.01)).toBe("0.1 credits");
+    expect(creditsLabel(null)).toBe("—");
   });
 });

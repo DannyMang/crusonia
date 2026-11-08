@@ -7,7 +7,7 @@ import { useFlow, useFlowRuns, type FlowRun, type FlowRunHistory, type VariantCo
 import { useApi } from "../../auth.tsx";
 import { Page } from "../../components/AppShell.tsx";
 import { Button, EmptyState, QueryError, Skeleton } from "../../components/ui.tsx";
-import { cx, num, usd } from "../../lib/format.ts";
+import { creditsLabel, cx, num } from "../../lib/format.ts";
 import { FlowHeader, FlowStatusPill, hm, runDate, spendLabel } from "./parts.tsx";
 import { TraceDialog } from "./Trace.tsx";
 
@@ -78,7 +78,7 @@ function OpenRun({ run, onTrace }: { run: FlowRun; onTrace: () => void }) {
         <VersionChip v={run.version} />
         <div className="min-w-0 grow basis-0 truncate text-sm/4.5 font-semibold text-ink">{runDate(run.started_at)}</div>
         <FlowStatusPill status={run.status} />
-        <div className="w-14 shrink-0 text-right text-[13px]/4 font-medium tabular-nums text-ink">{usd(run.cost_usd)}</div>
+        <div className="w-20 shrink-0 whitespace-nowrap text-right text-[13px]/4 font-medium tabular-nums text-ink">{creditsLabel(run.cost_credits)}</div>
       </div>
       <ol className="flex flex-col px-4.5 py-2">
         {run.timeline.map((t, i) => (
@@ -134,7 +134,7 @@ function RunRow({ run, onOpen, onTrace }: { run: FlowRun; onOpen: () => void; on
         <RunTally run={run} />
       </button>
       <FlowStatusPill status={run.status} />
-      <div className="w-14 shrink-0 text-right text-[13px]/4 font-medium tabular-nums text-ink">{usd(run.cost_usd)}</div>
+      <div className="w-20 shrink-0 whitespace-nowrap text-right text-[13px]/4 font-medium tabular-nums text-ink">{creditsLabel(run.cost_credits)}</div>
       <button type="button" onClick={onTrace} className="hidden shrink-0 text-[13px]/4 font-medium text-ink underline decoration-1 underline-offset-2 sm:block">
         View full trace
       </button>

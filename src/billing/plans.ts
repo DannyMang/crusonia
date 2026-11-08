@@ -167,6 +167,11 @@ export function creditsForUsage(consumedMicroUsd: number | null | undefined): nu
   return Math.ceil((Math.round(consumedMicroUsd) * USAGE_MARKUP_BPS) / (10_000 * MICRO_USD_PER_CREDIT));
 }
 
+/** The same formula before rounding up: a step's share of a session, which is only debited as a whole. */
+export function usageCredits(consumedMicroUsd: number): number {
+  return (consumedMicroUsd * USAGE_MARKUP_BPS) / (10_000 * MICRO_USD_PER_CREDIT);
+}
+
 /** List value of a credit amount in USD (1 credit = $0.01). */
 export const creditsToUsd = (credits: number) => Math.round(credits * MICRO_USD_PER_CREDIT) / 1_000_000;
 

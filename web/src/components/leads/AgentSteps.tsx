@@ -5,7 +5,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { RunStep, Trace, TraceEvent } from "../../api.ts";
 import { useApi } from "../../auth.tsx";
-import { clock, cx, duration, usd } from "../../lib/format.ts";
+import { clock, creditsLabel, cx, duration } from "../../lib/format.ts";
 import { keys, useWorkflowRun } from "../../queries.ts";
 import { CheckLineIcon } from "../core-icons.tsx";
 import { Button, LiveChip, QueryError, Skeleton } from "../ui.tsx";
@@ -39,7 +39,7 @@ export function AgentSteps({ sessionId, className }: { sessionId: string; classN
               </span>
             )
           ) : null}
-          {run && !active ? <span className="text-xs/4 tabular-nums text-muted">{[took !== null ? duration(took) : null, run.cost_usd !== null ? usd(run.cost_usd) : null].filter(Boolean).join(" · ")}</span> : null}
+          {run && !active ? <span className="text-xs/4 tabular-nums text-muted">{[took !== null ? duration(took) : null, run.cost_credits !== null ? creditsLabel(run.cost_credits) : null].filter(Boolean).join(" · ")}</span> : null}
           <button type="button" onClick={() => setTrace(true)} className="flex h-6.5 items-center rounded-full border border-ink bg-white px-2.75 text-xs/4 font-medium text-ink hover:bg-[#200D0D08]">
             View full trace
           </button>
@@ -138,8 +138,7 @@ export function TraceDialog({ sessionId, open, onClose }: { sessionId: string; o
           {exportError ? <QueryError error={exportError} what="the download" /> : null}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs/4 tabular-nums text-muted">
             <span>{events.length} events</span>
-            {spend?.naive_usd !== null && spend?.naive_usd !== undefined ? <span>Agent {usd(spend.naive_usd)}</span> : null}
-            {spend?.credits_debited ? <span>{spend.credits_debited} credits</span> : null}
+            {spend?.credits ?? spend?.credits_debited ? <span>{creditsLabel(spend?.credits ?? spend?.credits_debited)}</span> : null}
             {spend?.apify_runs.length ? <span>{spend.apify_runs.length} Apify runs</span> : null}
             {first?.sync?.error ? <span className="text-[#B42318]">{first.sync.error}</span> : null}
           </div>

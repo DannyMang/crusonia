@@ -1,6 +1,8 @@
 // The workflow builder's canvas layout and edits (web/src/pages/workflows/layout.ts).
 import { describe, expect, test } from "bun:test";
 import type { FlowStep } from "../web/src/api/flow-types.ts";
+import { definitionInputSchema } from "../src/services/workflow-defs.ts";
+import { TEMPLATES } from "../web/src/pages/workflows/templates.ts";
 import { appendAfter, insertOnEdge, layout, NODE_H, NODE_W, removeStep } from "../web/src/pages/workflows/layout.ts";
 
 const s = (id: string, kind: FlowStep["kind"], next: string[] = [], branch: string | null = null): FlowStep => ({ id, kind, title: id, provider: null, branch, next });
@@ -87,5 +89,31 @@ describe("a branch that joins the main path", () => {
   test("the edge into the step from its own parent keeps its +", () => {
     const lay = layout(steps);
     expect(lay.edges.find((e) => e.from === "m" && e.to === "e")!.plus).not.toBeNull();
+  });
+});
+
+describe("suggested templates do what they say", () => {
+  const by = (id: string) => TEMPLATES.find((t) => t.id === id)!;
+  test("the API accepts each one, off until you turn it on", () => {
+    for (const t of TEMPLATES) {
+      expect(definitionInputSchema.safeParse(t.input).success).toBe(true);
+      expect(t.input.enabled).toBe(false);
+    }
+  });
+  test("re-research works on stale leads and has no find step, so it can't look for new companies", () => {
+    const t = by("rerresearch");
+    expect(t.input.trigger?.stale_days).toBe(60);
+    expect(t.input.steps.some((s) => s.kind === "find")).toBe(false);
+  });
+  test("lookalikes run on the schedule they name, from a lead you liked, with no HubSpot trigger or iMessage step", () => {
+    const t = by("lookalikes");
+    expect(t.input.trigger).toMatchObject({ kind: "schedule", like_rated: true });
+    expect(JSON.stringify(t)).not.toMatch(/closed-won|iMessage|Photon/);
+  });
+  test("a card's credits match its cap", () => {
+    for (const t of TEMPLATES) expect(t.meta).toContain(`${(t.input.spend!.cap_usd * 200).toLocaleString("en-US")} credits a ${t.input.spend!.period}`);
+  });
+  test("no dollars on a card", () => {
+    for (const t of TEMPLATES) expect(JSON.stringify(t)).not.toContain("$");
   });
 });

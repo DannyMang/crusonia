@@ -259,7 +259,7 @@ export type Trace = {
   next_after_seq: number | null;
   audit: { id: string; lead_id: string | null; kind: string; data: Record<string, unknown>; created_at: string }[];
   approvals: { code: string; kind: string; status: string; summary: string; decided_via: string | null; created_at: string }[];
-  spend: { naive_usd: number | null; credits_debited: number; apify_runs: { run_id: string; actor: string; status: string; usage_usd: number | null }[] };
+  spend: { naive_usd: number | null; credits_debited: number; credits?: number; apify_runs: { run_id: string; actor: string; status: string; usage_usd: number | null }[] };
   retention_days: number;
   sync?: { ok: boolean; complete?: boolean; error?: string; skipped?: string };
 };
@@ -395,6 +395,8 @@ export type Run = {
   last_event_at: string;
   leads_processed: number;
   cost_usd: number | null;
+  /** What it cost in credits: agent time and data calls. Null until anything is reported. */
+  cost_credits: number | null;
 };
 
 /** A workflow = all runs with one purpose (`research`, `find_leads`, `onboarding`). `id` is the purpose. */
@@ -408,6 +410,7 @@ export type Workflow = {
   last_event_at: string | null;
   leads_processed: number;
   cost_usd: number | null;
+  cost_credits: number | null;
   run_count: number;
   active_runs: number;
   /** Most recent runs, newest first (10 by default). */
@@ -448,7 +451,7 @@ export type Summary = {
   active_workflows: Workflow[];
   recent_replies: Reply[];
   /** `week_usd` is null until Naive reports usage; `budget_usd` is null without WEEKLY_BUDGET_USD. */
-  spend: { week_usd: number | null; budget_usd: number | null };
+  spend: { week_usd: number | null; week_credits?: number | null; budget_usd: number | null; budget_credits?: number | null };
   paused: boolean;
 };
 
@@ -543,6 +546,7 @@ export type RunStep = {
   started_at?: string;
   duration_ms?: number;
   cost_usd?: number;
+  cost_credits?: number;
   /** From the agent: untrusted, display as text. */
   input?: unknown;
   output?: unknown;

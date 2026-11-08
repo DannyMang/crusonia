@@ -41,6 +41,7 @@ const toRun = ([id, purpose, status, stop, leadId, startedAgo, lastAgo, leads, c
   last_event_at: ago(lastAgo),
   leads_processed: leads,
   cost_usd: cost,
+  cost_credits: cost === null ? null : Math.ceil(cost * 200),
 });
 
 const sampleRuns: Run[] = runSeeds.map(toRun);
@@ -62,6 +63,7 @@ function toWorkflow(purpose: string, extra: { run_count: number; leads: number; 
     last_event_at: runs.map((r) => r.last_event_at).sort().at(-1) ?? null,
     leads_processed: extra.leads,
     cost_usd: extra.cost,
+    cost_credits: extra.cost === null || extra.cost === undefined ? null : Math.ceil(extra.cost * 200),
     run_count: extra.run_count,
     active_runs: running + idle + paused,
     runs,
@@ -87,7 +89,7 @@ function steps(startedAgo: number, rows: [type: string, tool: string | undefined
     summary,
     started_at: ago(startedAgo - at),
     ...(ms !== undefined ? { duration_ms: ms } : {}),
-    ...(cost !== undefined ? { cost_usd: cost } : {}),
+    ...(cost !== undefined ? { cost_usd: cost, cost_credits: cost * 200 } : {}),
     ...(input !== undefined ? { input } : {}),
     ...(output !== undefined ? { output } : {}),
     source: type === "crusonia" ? "crusonia" : "naive",

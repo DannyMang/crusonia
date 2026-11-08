@@ -8,7 +8,7 @@ import { useApi, useSession } from "../auth.tsx";
 import { Page } from "../components/AppShell.tsx";
 import { ChevronRight, XIcon } from "../components/icons.tsx";
 import { Button, ButtonLink, Card, EmptyState, LiveChip, Pill, QueryError, ReplyLabel, RingSpinner, Skeleton, tabListKeys } from "../components/ui.tsx";
-import { cx, duration, greeting, hostOf, num, plural, shortDate, timeAgo, usd, weekdayDate } from "../lib/format.ts";
+import { creditsLabel, cx, duration, greeting, hostOf, num, plural, shortDate, timeAgo, weekdayDate } from "../lib/format.ts";
 import { keys, useApprovals, useAutopilot, useLeads, usePause, useSetAutopilot, useSummary } from "../queries.ts";
 
 const label = "text-[13px]/4 font-medium text-muted";
@@ -481,7 +481,7 @@ function WorkflowCard({ w }: { w: Workflow }) {
       </div>
       {open ? (
         <div className="flex border-t border-t-[#200D0D1A] pt-2.75">
-          <WfStat first title="Cost" value={usd(w.cost_usd)} />
+          <WfStat first title="Cost" value={creditsLabel(w.cost_credits)} />
           <WfStat title="Leads processed" value={num(w.leads_processed)} />
           <WfStat title="Runs" value={`${num(w.active_runs)}/${num(w.run_count)}`} />
           <WfStat title="Last event" value={timeAgo(w.last_event_at)} />
@@ -568,8 +568,8 @@ function ActiveWorkflows({ workflows, loading, partial, hasLeads }: { workflows:
 // ---------- right column ----------
 
 function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loading: boolean }) {
-  const used = spend?.week_usd ?? null;
-  const budget = spend?.budget_usd ?? null;
+  const used = spend?.week_usd === null || spend?.week_usd === undefined ? null : (spend.week_credits ?? 0);
+  const budget = spend?.budget_credits ?? null;
   const share = used !== null && budget ? Math.min(100, (used / budget) * 100) : 0;
   return (
     <Card className="flex flex-col gap-3.5 px-4.5 pb-4.5 pt-4">
@@ -582,11 +582,11 @@ function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loadin
       ) : (
         <>
           <div className="flex items-baseline gap-2">
-            <div className="text-[26px]/7.5 font-semibold tracking-[-0.03em] text-ink tabular-nums">{usd(used ?? 0)}</div>
+            <div className="text-[26px]/7.5 font-semibold tracking-[-0.03em] text-ink tabular-nums">{creditsLabel(used ?? 0)}</div>
             <div className="text-[13px]/4 font-medium text-muted">
               {budget !== null ? (
                 <>
-                  of <span className="text-ink tabular-nums">{usd(budget)}</span> budget
+                  of <span className="text-ink tabular-nums">{num(budget)}</span> budget
                 </>
               ) : (
                 "no weekly budget set"
@@ -607,7 +607,7 @@ function Spend({ spend, loading }: { spend: Summary["spend"] | undefined; loadin
             {used === null
               ? "No agent spend recorded this week yet."
               : budget !== null
-                ? `${usd(Math.max(0, budget - used))} left of this week's budget`
+                ? `${creditsLabel(Math.max(0, budget - used))} left of this week's budget`
                 : "Credits used across every run this week"}
           </div>
         </>

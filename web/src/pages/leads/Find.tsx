@@ -16,7 +16,7 @@ import { Page } from "../../components/AppShell.tsx";
 import { CheckLineIcon, CloseIcon, NoteBubbleIcon, PlusLineIcon, SearchLineIcon, ThumbDownIcon, ThumbUpIcon } from "../../components/core-icons.tsx";
 import { CitedText, FitChip, NoteComposer, NoteList, SourceLines } from "../../components/leads/core.tsx";
 import { ButtonLink, LiveChip, QueryError, RingSpinner, Skeleton } from "../../components/ui.tsx";
-import { cx, plural, shortDate, usd } from "../../lib/format.ts";
+import { creditsLabel, cx, plural, shortDate } from "../../lib/format.ts";
 import { keys, useFindRun, useInvalidateLead, useLead, useProfile, useWorkflows } from "../../queries.ts";
 
 const SAMPLE = 5;
@@ -54,10 +54,10 @@ export default function FindLeads() {
             All leads
           </Link>
         </div>
-        {run && run.cost_usd !== null ? (
+        {run && run.cost_credits !== null ? (
           <div className="flex h-8 shrink-0 items-center gap-2 rounded-full border border-[#200D0D1A] px-3">
             <span className={cx("size-1.5 shrink-0 rounded-full", active ? "bg-green" : "bg-[#200D0D4D]")} />
-            <span className="whitespace-nowrap text-[13px]/4 font-medium tabular-nums text-ink">{usd(run.cost_usd)} spent</span>
+            <span className="whitespace-nowrap text-[13px]/4 font-medium tabular-nums text-ink">{creditsLabel(run.cost_credits)} spent</span>
           </div>
         ) : null}
       </header>

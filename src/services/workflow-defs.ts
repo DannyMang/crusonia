@@ -15,6 +15,8 @@
 // The workspace's default definition (is_default) is what research follows for leads never run under a workflow,
 // and what GET/PUT /api/workflows/qualification read and write (./qualification.ts).
 import { z } from "zod";
+import { creditsSql } from "../billing/credits-sql.ts";
+import { creditsForUsage } from "../billing/plans.ts";
 import type { Sql } from "../db.ts";
 import { newId } from "../ids.ts";
 import { ServiceError } from "./errors.ts";
@@ -56,12 +58,16 @@ export const DEFAULT_STEPS: WorkflowStep[] = [
 
 // A schedule fires every `every_hours` (default: read from the label, else daily). `batch`: how many leads a run's find
 // step looks for; `research`: how many of them it researches and drafts for (the rest keep their first score).
+// `stale_days`: a run works on leads last researched this long ago, not new ones. `like_rated`: its find step looks for
+// companies like the lead the owner last rated 👍.
 const triggerSchema = z.object({
   kind: z.enum(TRIGGER_KINDS),
   label: z.string().trim().max(200).nullish(),
   every_hours: z.number().min(0.25).max(24 * 60).nullish(),
   batch: z.number().int().min(1).max(25).nullish(),
   research: z.number().int().min(0).max(10).nullish(),
+  stale_days: z.number().int().min(1).max(365).nullish(),
+  like_rated: z.boolean().nullish(),
 });
 export type WorkflowTrigger = z.infer<typeof triggerSchema>;
 
@@ -348,6 +354,8 @@ type DefStats = {
   remaining: number;
   spend_week_micro: string | number | null;
   spend_last_run_micro: string | number | null;
+  spend_week_credits: string | number | null;
+  spend_last_run_credits: string | number | null;
   last_run_id: string | null;
   last_run_started_at: Date | null;
   last_run_running: number | null;
@@ -366,6 +374,14 @@ async function statsFor(sql: Sql, ids: string[]): Promise<Map<string, DefStats>>
     with last as (
       select distinct on (workflow_id) workflow_id, id, started_at, test from workflow_runs
       where workflow_id = any(${ids}::text[]) order by workflow_id, started_at desc
+    ),
+    -- What each run cost: its sessions' agent time and the Apify runs they started.
+    spend as (
+      select r.workflow_id, r.id as run_id, s.created_at, s.consumed_micro_usd as micro
+      from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = any(${ids}::text[])
+      union all
+      select r.workflow_id, r.id, s.created_at, a.usage_micro_usd
+      from apify_runs a join naive_sessions s on s.id = a.session_id join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = any(${ids}::text[])
     )
     select d.id as workflow_id,
       (select count(*)::int from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id
@@ -375,9 +391,10 @@ async function statsFor(sql: Sql, ids: string[]): Promise<Map<string, DefStats>>
       (select count(*)::int from workflow_run_leads rl join leads l on l.id = rl.lead_id
         where rl.run_id = last.id and l.stage in ('new', 'no_consent', 'researching')
           and not exists (select 1 from naive_sessions s where s.lead_id = l.id and s.status in ('running', 'idle'))) as remaining,
-      (select coalesce(sum(s.consumed_micro_usd), 0) from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id
-        where r.workflow_id = d.id and s.created_at > now() - interval '7 days') as spend_week_micro,
-      (select coalesce(sum(s.consumed_micro_usd), 0) from naive_sessions s where s.workflow_run_id = last.id) as spend_last_run_micro,
+      (select coalesce(sum(x.micro), 0) from spend x where x.workflow_id = d.id and x.created_at > now() - interval '7 days') as spend_week_micro,
+      (select coalesce(sum(x.micro), 0) from spend x where x.run_id = last.id) as spend_last_run_micro,
+      (select coalesce(sum(${creditsSql(sql, "x.micro")}), 0) from spend x where x.workflow_id = d.id and x.created_at > now() - interval '7 days') as spend_week_credits,
+      (select coalesce(sum(${creditsSql(sql, "x.micro")}), 0) from spend x where x.run_id = last.id) as spend_last_run_credits,
       last.id as last_run_id, last.started_at as last_run_started_at, last.test as last_run_test,
       (select count(*)::int from naive_sessions s where s.workflow_run_id = last.id and s.status in ('running', 'idle')) as last_run_running,
       (select count(*)::int from naive_sessions s where s.workflow_run_id = last.id and s.status = 'error') as last_run_errors,
@@ -435,12 +452,20 @@ function defView(d: DefRow, s: DefStats | undefined, paused: boolean) {
       kind: d.trigger.kind,
       label: d.trigger.label || TRIGGER_LABEL[d.trigger.kind],
       ...(d.trigger.kind === "schedule" ? { every_hours: everyHoursOf(d.trigger) } : {}),
+      ...(d.trigger.stale_days ? { stale_days: d.trigger.stale_days } : {}),
     },
     is_autopilot: d.is_autopilot === true,
     next_run_at: d.trigger.kind === "schedule" ? (d.next_run_at ?? null) : null,
     last_skip: d.last_skip ?? null,
     latest_version: d.latest_version,
-    spend: { usd: spendUsd, cap_usd: capUsd, period: d.spend_period },
+    // `usd` is provider cost, which caps are set against; `credits` and `cap_credits` are the same figures as the ledger counts them.
+    spend: {
+      usd: spendUsd,
+      cap_usd: capUsd,
+      credits: Number((d.spend_period === "run" ? s?.spend_last_run_credits : s?.spend_week_credits) ?? 0),
+      cap_credits: capUsd === null ? null : creditsForUsage(capUsd * 1_000_000),
+      period: d.spend_period,
+    },
     status,
     agent: "Researcher",
     waiting: (s?.waiting_drafts ?? 0) > 0 ? { drafts: s!.waiting_drafts } : null,

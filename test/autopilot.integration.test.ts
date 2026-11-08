@@ -18,7 +18,8 @@ import { writeCompanySummary } from "../src/services/company-summary.ts";
 import { addLeads } from "../src/services/leads.ts";
 import { spendStatus } from "../src/services/limits.ts";
 import { addNote } from "../src/services/notes.ts";
-import { runWorkflow } from "../src/services/workflow-runs.ts";
+import { createDefinition, getDefinition } from "../src/services/workflow-defs.ts";
+import { listRuns, runWorkflow } from "../src/services/workflow-runs.ts";
 import { handleSessionIdle } from "../src/services/workflows.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
@@ -381,6 +382,103 @@ suite("autopilot (database, mocked Naive)", () => {
     expect(n.sessions.filter((s) => s.metadata.purpose === "research")).toHaveLength(1);
     expect(made.data.workflow.trigger.kind).toBe("reply");
   }, 60_000);
+
+  test("a re-research schedule works on leads researched long ago: not new ones, recent ones, or ones with an open draft", async () => {
+    const ws = await workspace("stale");
+    const env = baseEnv(ws);
+    const n = naive();
+    await summary(ws);
+    await sql`update workspaces set autopilot = true, autopilot_provisioned_at = now() where id = ${ws}`;
+    await addLeads(
+      sql,
+      ws,
+      ["old", "older", "recent", "fresh", "drafted"].map((name) => ({ company: name, domain: `${name}-${ws.replace(/_/g, "-")}.dev`, source: "it", source_url: `https://${name}-${ws.replace(/_/g, "-")}.dev/`, score: 80, qualified: true, why_summary: "Fits" })),
+      { cohort: "stale" },
+    );
+    const rows = (await sql`select id, company from leads where workspace_id = ${ws}`) as { id: string; company: string }[];
+    expect(rows).toHaveLength(5);
+    const id = (name: string) => rows.find((r) => r.company === name)!.id;
+    const researchedAgo = async (name: string, days: number) => {
+      await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, created_at)
+                values (${`ses_st_${name}_${ws}`}, ${ws}, ${id(name)}, 'research', 'done', now() - make_interval(days => ${days}))`;
+    };
+    await researchedAgo("old", 70);
+    await researchedAgo("older", 90);
+    await researchedAgo("recent", 5);
+    await researchedAgo("drafted", 90);
+    await sql`insert into drafts (id, workspace_id, lead_id, channel, status, version, variant, subject, body)
+              values (${`drf_st_${ws}`}, ${ws}, ${id("drafted")}, 'linkedin', 'open', 1, 'A', '', 'Hi')`;
+    await sql`update leads set stage = 'qualified' where workspace_id = ${ws}`;
+    await createDefinition(
+      sql,
+      ws,
+      { name: "Re-research", trigger: { kind: "schedule", label: "Every other Monday", stale_days: 60 }, steps: [{ id: "t", kind: "trigger", title: "T", next: ["r"] }, { id: "r", kind: "research", title: "R", next: [] }] },
+      { actor: "test", source: "template" },
+    );
+
+    await runAutopilot(sql, env, n.fn);
+
+    const research = n.sessions.filter((x) => x.metadata.purpose === "research");
+    expect(n.sessions.filter((x) => x.metadata.purpose === "find_leads")).toHaveLength(0);
+    expect(research.map((x) => x.metadata.lead_id).sort()).toEqual([id("old"), id("older")].sort());
+  });
+
+  test("a lookalike schedule waits for a rating, then looks for companies like the last lead you liked", async () => {
+    const ws = await workspace("like");
+    const env = baseEnv(ws);
+    const n = naive();
+    await summary(ws);
+    await sql`update workspaces set autopilot = true, autopilot_provisioned_at = now() where id = ${ws}`;
+    await addLeads(sql, ws, [{ company: "Liked", domain: `liked-${ws.replace(/_/g, "-")}.dev`, source: "it", source_url: `https://liked-${ws.replace(/_/g, "-")}.dev/` }], { cohort: "like" });
+    const [{ id: leadId }] = (await sql`select id from leads where workspace_id = ${ws}`) as [{ id: string }];
+    const def = await createDefinition(
+      sql,
+      ws,
+      {
+        name: "Lookalikes",
+        trigger: { kind: "schedule", label: "Every week", like_rated: true },
+        steps: [{ id: "t", kind: "trigger", title: "T", next: ["f"] }, { id: "f", kind: "find", title: "F", next: ["r"] }, { id: "r", kind: "research", title: "R", next: [] }],
+      },
+      { actor: "test", source: "template" },
+    );
+
+    // Nothing rated: no paid run, and it says why once.
+    await runAutopilot(sql, env, n.fn);
+    expect(n.sessions.filter((x) => x.metadata.purpose === "find_leads")).toHaveLength(0);
+    const [skipped] = await sql`select last_skip from workflow_defs where id = ${def.workflow.id}`;
+    expect(skipped!.last_skip).toBe("no_leads");
+
+    await addNote(sql, ws, { leadId, author: "user:owner", body: "Good one", kind: "thumbs_up" });
+    await sql`update workflow_defs set next_run_at = now() - interval '1 minute' where id = ${def.workflow.id}`;
+    await runAutopilot(sql, env, n.fn);
+    const find = n.sessions.filter((x) => x.metadata.purpose === "find_leads");
+    expect(find).toHaveLength(1);
+    expect(find[0]!.message).toContain(leadId);
+  });
+
+  test("spend reads as one number: a workflow, its run and its cap in credits, with data calls counted", async () => {
+    const ws = await workspace("credits");
+    const def = await createDefinition(
+      sql,
+      ws,
+      { name: "Spend", spend: { cap_usd: 5, period: "week" }, steps: [{ id: "t", kind: "trigger", title: "T", next: [] }] },
+      { actor: "test", source: "user" },
+    );
+    const runId = `wfr_cr_${ws}`;
+    await sql`insert into workflow_runs (id, workspace_id, workflow_id, version, actor, trigger, phase)
+              values (${runId}, ${ws}, ${def.workflow.id}, 1, 'test', 'manual', 'done')`;
+    // $0.10 of agent time is 20 credits, and $0.05 of Apify is 10: the same as the ledger debits.
+    await sql`insert into naive_sessions (id, workspace_id, purpose, status, consumed_micro_usd, workflow_run_id, billing_owner_id)
+              values (${`ses_cr_${ws}`}, ${ws}, 'find_leads', 'done', 100000, ${runId}, ${ws})`;
+    await sql`insert into apify_runs (run_id, workspace_id, actor, status, usage_micro_usd, session_id, billing_owner_id)
+              values (${`apr_cr_${ws}`}, ${ws}, 'x', 'SUCCEEDED', 50000, ${`ses_cr_${ws}`}, ${ws})`;
+
+    const { workflow } = await getDefinition(sql, ws, def.workflow.id);
+    expect(workflow.spend).toMatchObject({ credits: 30, cap_credits: 1000, usd: 0.15, cap_usd: 5 });
+    const { runs } = await listRuns(sql, ws, def.workflow.id);
+    expect(runs[0]).toMatchObject({ cost_credits: 30 });
+    await sql`delete from apify_runs where workspace_id = ${ws}`;
+  });
 
   test("the switch over HTTP: a person can, an API key can't, and off stops new work", async () => {
     const ws = await workspace("http");

@@ -3,7 +3,7 @@
 // from the agent: untrusted, rendered as plain text only.
 import { Fragment, useState, type ReactNode } from "react";
 import type { RunLead, RunStep } from "../../api.ts";
-import { cx, duration, leadTitle, usd } from "../../lib/format.ts";
+import { creditsLabel, cx, duration, leadTitle } from "../../lib/format.ts";
 import { usePhone } from "../../lib/media.ts";
 import { jsonText, shortUrl } from "../approvals/model.ts";
 
@@ -246,8 +246,8 @@ export function Timeline({
                   <td className={cx("pr-3 text-right text-xs/4 tabular-nums", pending ? "text-green-dark" : "text-muted")}>
                     {step.duration_ms !== undefined ? duration(step.duration_ms) : pending ? duration(now - t!) : "—"}
                   </td>
-                  <td className={cx("hidden pr-3 text-right text-xs/4 font-medium tabular-nums sm:table-cell", step.cost_usd ? "text-ink" : "text-faint")}>
-                    {step.cost_usd !== undefined ? usd(step.cost_usd) : "—"}
+                  <td className={cx("hidden pr-3 text-right text-xs/4 font-medium tabular-nums sm:table-cell", step.cost_credits ? "text-ink" : "text-faint")}>
+                    {step.cost_credits !== undefined ? creditsLabel(step.cost_credits) : "—"}
                   </td>
                   <td className="pr-4 text-center">
                     <button

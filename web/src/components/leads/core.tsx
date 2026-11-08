@@ -2,10 +2,10 @@
 // "Final · Research · Lead detail"): the fit chip, agent text with numbered citations, the numbered sources,
 // Links & contacts, and notes with an "Add a note…" field that saves on Enter.
 import { useMutation } from "@tanstack/react-query";
-import { useState, type FormEvent, type ReactNode, type Ref } from "react";
+import { Fragment, useState, type FormEvent, type ReactNode, type Ref } from "react";
 import type { Evidence, Lead, LeadContact, LeadLink, LeadNote } from "../../api.ts";
 import { useApi } from "../../auth.tsx";
-import { citedParts, hostOf, sourceLabel } from "../../lib/citations.ts";
+import { citedParts, hostOf, sourceLabel, uniqueSources } from "../../lib/citations.ts";
 import { cx, shortDate } from "../../lib/format.ts";
 import { useInvalidateLead } from "../../queries.ts";
 import { GitHubIcon, GlobeIcon, LinkedInIcon, XBrandIcon } from "../core-icons.tsx";
@@ -118,15 +118,19 @@ export function SourceRows({ evidence, rowClass = "h-7.5" }: { evidence: Evidenc
 export function SourceLines({ evidence }: { evidence: Evidence[] }) {
   return (
     <ol className="flex flex-col gap-0.75 pt-0.5">
-      {evidence.map((e, i) => (
-        <li key={e.id} className="truncate text-xs/4 text-muted">
-          <a href={e.source_url} target="_blank" rel="noopener noreferrer nofollow" className="font-semibold text-ink underline decoration-1 underline-offset-2">
-            {e.n ?? i + 1}
+      {uniqueSources(evidence).map((s) => (
+        <li key={s.url} className="truncate text-xs/4 text-muted">
+          {s.numbers.map((n) => (
+            <Fragment key={n}>
+              <a href={s.url} target="_blank" rel="noopener noreferrer nofollow" className="font-semibold text-ink underline decoration-1 underline-offset-2">
+                {n}
+              </a>{" "}
+            </Fragment>
+          ))}
+          <a href={s.url} target="_blank" rel="noopener noreferrer nofollow" className="hover:text-ink">
+            {sourceLabel(s.url)}
           </a>{" "}
-          <a href={e.source_url} target="_blank" rel="noopener noreferrer nofollow" className="hover:text-ink">
-            {sourceLabel(e.source_url)}
-          </a>{" "}
-          · read {shortDate(e.created_at)}
+          · read {shortDate(s.read_at)}
         </li>
       ))}
     </ol>

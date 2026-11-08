@@ -59,6 +59,16 @@ export function usd(n: number | null | undefined, digits = 2): string {
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
+/**
+ * Spend, in the app's one unit: "51 credits", "1 credit". Dollars are only for prices and the balance (Billing, the
+ * sidebar). Under 1 is a step's share of a run, so it keeps one decimal.
+ */
+export function creditsLabel(n: number | null | undefined): string {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  const v = n > 0 && n < 1 ? Math.max(0.1, Math.round(n * 10) / 10) : Math.round(n);
+  return `${v.toLocaleString("en-US")} ${v === 1 ? "credit" : "credits"}`;
+}
+
 export function num(n: number | null | undefined): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
   return n.toLocaleString("en-US");

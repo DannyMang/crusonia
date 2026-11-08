@@ -3,6 +3,8 @@
 // cached in naive_session_events, merged with our own audit events for the session.
 // Also starts the owner-triggered sessions: onboarding proposals and lead finding. Everything is per workspace:
 // runs are the workspace's sessions, and a session runs on the workspace's own Naive agent (./naive-agents.ts).
+import { creditsSql } from "../billing/credits-sql.ts";
+import { creditsForUsage, usageCredits } from "../billing/plans.ts";
 import type { Lead, Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { newId } from "../ids.ts";
@@ -60,6 +62,8 @@ export type SessionRow = {
   stop_reason: string | null;
   input: Record<string, unknown> | null;
   consumed_micro_usd: string | number | null;
+  /** Credits for the Apify runs this session started. */
+  apify_credits?: string | number | null;
   leads_processed: number;
   events_seq: number;
   events_synced_at: Date | string | null;
@@ -77,6 +81,13 @@ export function runStatus(row: Pick<SessionRow, "status" | "stop_reason">, pause
   return row.status === "error" ? "error" : "done";
 }
 
+/** Null until anything is reported; a session still running shows what it has spent so far. */
+export function sessionCredits(row: Pick<SessionRow, "consumed_micro_usd" | "apify_credits">): number | null {
+  const apify = Number(row.apify_credits ?? 0);
+  if ((row.consumed_micro_usd === null || row.consumed_micro_usd === undefined) && !apify) return null;
+  return creditsForUsage(Number(row.consumed_micro_usd ?? 0)) + apify;
+}
+
 export function toRun(row: SessionRow, paused: boolean) {
   return {
     id: row.id,
@@ -92,6 +103,8 @@ export function toRun(row: SessionRow, paused: boolean) {
     last_event_at: iso(row.last_event_at) ?? iso(row.updated_at)!,
     leads_processed: row.purpose === "research" ? (row.lead_id ? 1 : 0) : row.leads_processed,
     cost_usd: microToUsd(row.consumed_micro_usd),
+    // What the run costs the workspace: its agent time and data calls, the same figure the ledger debits.
+    cost_credits: sessionCredits(row),
     // The playbook and agent version the run used ("research@3, agent v12"); null when unknown.
     workflow_version: row.workflow_version ?? null,
   };
@@ -109,6 +122,8 @@ export type WorkflowAggregate = {
   last_event_at: Date | string | null;
   leads_processed: number;
   cost_micro: string | null;
+  /** Agent time and data calls of every run with this purpose, in credits. */
+  cost_credits?: string | number | null;
   latest_status: string;
 };
 
@@ -129,6 +144,7 @@ export function buildWorkflow(agg: WorkflowAggregate, runs: SessionRow[], paused
     last_event_at: iso(agg.last_event_at),
     leads_processed: agg.leads_processed,
     cost_usd: microToUsd(agg.cost_micro),
+    cost_credits: agg.cost_credits === null || agg.cost_credits === undefined ? null : Number(agg.cost_credits),
     run_count: agg.run_count,
     active_runs: agg.running + agg.idle,
     runs: runs.map((r) => toRun(r, paused)),
@@ -137,7 +153,8 @@ export function buildWorkflow(agg: WorkflowAggregate, runs: SessionRow[], paused
 export type WorkflowSummary = ReturnType<typeof buildWorkflow>;
 
 const SESSION_COLUMNS = (sql: Sql) => sql`id, workspace_id, workflow_version, lead_id, purpose, status, stop_reason, input, consumed_micro_usd, leads_processed,
-  events_seq, events_synced_at, last_event_at, created_at, updated_at`;
+  events_seq, events_synced_at, last_event_at, created_at, updated_at,
+  (select coalesce(sum(${creditsSql(sql, "a.usage_micro_usd")}), 0)::text from apify_runs a where a.session_id = id) as apify_credits`;
 
 /** Workflows newest activity first, each with its `recentRuns` most recent runs. */
 export async function listWorkflows(sql: Sql, ws: string, opts: { recentRuns?: number; paused?: boolean } = {}): Promise<WorkflowSummary[]> {
@@ -154,6 +171,10 @@ export async function listWorkflows(sql: Sql, ws: string, opts: { recentRuns?: n
             max(coalesce(last_event_at, updated_at)) as last_event_at,
             (count(distinct lead_id) + coalesce(sum(leads_processed) filter (where lead_id is null), 0))::int as leads_processed,
             sum(consumed_micro_usd)::text as cost_micro,
+            (case when count(consumed_micro_usd) > 0 or bool_or(exists (select 1 from apify_runs a where a.session_id = naive_sessions.id))
+                  then (coalesce(sum(${creditsSql(sql, "consumed_micro_usd")}), 0)
+                        + coalesce(sum((select sum(${creditsSql(sql, "a.usage_micro_usd")}) from apify_runs a where a.session_id = naive_sessions.id)), 0))::text
+             end) as cost_credits,
             (array_agg(status order by created_at desc))[1] as latest_status
           from naive_sessions where workspace_id = ${ws} group by purpose
           order by max(coalesce(last_event_at, updated_at)) desc`,
@@ -184,6 +205,7 @@ export type RunStep = {
   started_at?: string;
   duration_ms?: number;
   cost_usd?: number;
+  cost_credits?: number;
   input?: unknown;
   output?: unknown;
   is_error?: boolean;
@@ -380,7 +402,7 @@ export function buildSteps(events: StoredEvent[], audit: AuditEvent[] = [], appr
           type: "model",
           summary: `${model}${tokens ? `: ${tokens.toLocaleString("en-US")} tokens` : ""}`,
           ...(num(d.provider_ms) !== undefined ? { duration_ms: num(d.provider_ms) } : {}),
-          ...(micro !== undefined ? { cost_usd: micro / 1_000_000 } : {}),
+          ...(micro !== undefined ? { cost_usd: micro / 1_000_000, cost_credits: usageCredits(micro) } : {}),
         });
         break;
       }

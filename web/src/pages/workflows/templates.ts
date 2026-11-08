@@ -1,6 +1,6 @@
 // Starting points for "Suggested" on the workflow list and the blank workflow behind "Build workflow". Templates start
 // off: "Use" opens the builder and spends nothing until "Turn on" (a schedule that never ran is due at once).
-import type { FlowInput, FlowStep } from "../../api/workflows.ts";
+import type { FlowInput, FlowStep } from "../../api/flow-types.ts";
 
 const step = (id: string, kind: FlowStep["kind"], title: string, provider: string | null, next: string[] = [], branch: string | null = null): FlowStep => ({
   id,
@@ -19,16 +19,16 @@ export const TEMPLATES: Template[] = [
   {
     id: "rerresearch",
     name: "Re-research stale leads",
-    meta: "Every other Monday · $2 a week",
+    meta: "Every other Monday · 400 credits a week",
     input: {
       name: "Re-research stale leads",
       source: "template",
       enabled: false,
-      trigger: { kind: "schedule", label: "Every other Monday" },
+      trigger: { kind: "schedule", label: "Every other Monday", stale_days: 60 },
+      spend: { cap_usd: 2, period: "week" },
       steps: [
-        step("t1", "trigger", "Every other Monday", null, ["f1"]),
-        step("f1", "find", "Leads older than 60 days", "Find", ["r1"]),
-        step("r1", "research", "Research, score", "Researcher", ["x1"]),
+        step("t1", "trigger", "Every other Monday", null, ["r1"]),
+        step("r1", "research", "Research leads last read 60+ days ago", "Researcher", ["x1"]),
         step("x1", "sync_crm", "Update HubSpot", "Sync CRM"),
       ],
       icp: ICP,
@@ -39,21 +39,22 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: "lookalikes",
-    name: "Lookalikes from a new customer",
-    meta: "On HubSpot closed-won · $4 a week",
+    name: "Lookalikes of a lead you liked",
+    meta: "Every week · 800 credits a week",
     input: {
-      name: "Lookalikes from a new customer",
+      name: "Lookalikes of a lead you liked",
       source: "template",
       enabled: false,
-      trigger: { kind: "manual", label: "On HubSpot closed-won" },
+      trigger: { kind: "schedule", label: "Every week", like_rated: true },
+      spend: { cap_usd: 4, period: "week" },
       steps: [
-        step("t1", "trigger", "On HubSpot closed-won", null, ["f1"]),
-        step("f1", "find", "Find lookalike companies", "Apify · $0.40 cap", ["r1"]),
-        step("r1", "research", "Research, score", "Researcher", ["n1"]),
-        step("n1", "notify", "Text me", "Photon iMessage"),
+        step("t1", "trigger", "Every week", null, ["f1"]),
+        step("f1", "find", "Find companies like your last 👍", "Apify", ["r1"]),
+        step("r1", "research", "Research, score", "Researcher", ["e1"]),
+        step("e1", "end", "Done", null),
       ],
       icp: ICP,
-      research_questions: ["How close is this company to the new customer?"],
+      research_questions: ["How close is this company to the lead you liked?"],
       evidence_required: ["Source URL for the match"],
       done_when: "Scored, and the match has a source",
     },
@@ -61,12 +62,13 @@ export const TEMPLATES: Template[] = [
   {
     id: "event",
     name: "Event follow-up",
-    meta: "On CSV upload · $2 a run",
+    meta: "On CSV upload · 400 credits a run",
     input: {
       name: "Event follow-up",
       source: "template",
       enabled: false,
       trigger: { kind: "csv_import", label: "On CSV upload" },
+      spend: { cap_usd: 2, period: "run" },
       steps: [
         step("t1", "trigger", "On CSV upload", null, ["r1"]),
         step("r1", "research", "Research, score", "Researcher", ["d1"]),
