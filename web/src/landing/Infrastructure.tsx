@@ -2,6 +2,7 @@
 // small static illustration of the product over a title and a line. "How it works" in the nav scrolls here.
 import type { ReactNode } from "react";
 import { BrandLogo, type BrandName } from "../components/BrandLogo.tsx";
+import { publicLogoAllowed } from "../lib/public-logos.ts";
 import { SECTIONS } from "./sections.ts";
 
 const chip = "flex items-center rounded-full bg-lime";
@@ -40,10 +41,11 @@ const workflowArt = (
   </div>
 );
 
-// Sentence case with no letter-spacing (owner rule: Inter only, no caps labels), with the real brand marks.
+// Sentence case with no letter-spacing (owner rule: Inter only, no caps labels), with the real brand marks where a public
+// page may show them (lib/public-logos.ts) and the plain name otherwise.
 const Tile = ({ logo, children }: { logo?: BrandName; children: string }) => (
   <div className={`flex h-14 min-w-0 grow basis-0 items-center justify-center gap-1.5 text-xs/4 font-medium ${card}`}>
-    {logo ? <BrandLogo name={logo} size={16} /> : null}
+    {logo && publicLogoAllowed(logo) ? <BrandLogo name={logo} size={16} /> : null}
     {children}
   </div>
 );

@@ -91,6 +91,13 @@ export function feedItem(r: FeedRow): FeedItem | null {
       return row("Autopilot on", isAutomated(d.actor) ? "system" : "you");
     case "autopilot_off":
       return row("Autopilot off", "you");
+    // Only ever in the owner workspace's log (./instance.ts).
+    case "instance_cap_reached":
+      return row(`Instance spend cap reached · other workspaces wait${typeof d.cap_usd === "number" ? ` ($${d.cap_usd} a day)` : ""}`, "system");
+    case "instance_halted":
+      return row("Instance kill switch on · no new agent runs anywhere", "you");
+    case "instance_resumed":
+      return row("Instance kill switch off", "you");
     default:
       return null;
   }
@@ -103,6 +110,7 @@ export const SKIP_TEXT: Record<string, string> = {
   no_credits: "out of credits",
   no_leads: "no new leads to work on",
   failed: "the agent could not start",
+  instance_busy: "Crusonia is at capacity",
 };
 
 const FEED_KINDS = [
@@ -129,6 +137,9 @@ const FEED_KINDS = [
   "lead_excluded",
   "autopilot_on",
   "autopilot_off",
+  "instance_cap_reached",
+  "instance_halted",
+  "instance_resumed",
 ];
 
 /**

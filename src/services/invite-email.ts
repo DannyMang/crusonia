@@ -1,7 +1,8 @@
 // The invite email: a fixed transactional template. Everything in it that a person typed (a workspace name, their own
 // name) is untrusted: it goes out from the instance's own inbox, to an address the sender chose, so it must not be
 // able to carry markup, a link or a pitch. Names are cleaned here and escaped for the HTML part; there is no custom
-// message. Pure, so `bun test` covers it.
+// message. It says who asked for it, by their verified address, and that the person who runs this instance didn't: with
+// open sign-up that is a stranger, writing from the owner's inbox. Pure, so `bun test` covers it.
 
 const MAX_NAME = 60;
 // C0/C1 controls, zero-width characters and bidi overrides. Line and paragraph separators count as whitespace below.
@@ -22,6 +23,8 @@ export const escapeHtml = (text: string) =>
 export type InviteEmailInput = {
   workspaceName: string | null | undefined;
   inviterName: string | null | undefined;
+  /** The verified address of whoever asked for this invite, from Clerk: never typed. */
+  inviterEmail?: string | null | undefined;
   role: "admin" | "member";
   /** The invited address. The invite only works for it. */
   email: string;
@@ -34,22 +37,25 @@ export function inviteEmail(input: InviteEmailInput): { subject: string; text: s
   const workspace = safeName(input.workspaceName);
   const inviter = safeName(input.inviterName);
   const who = inviter ?? "A teammate";
+  const address = (input.inviterEmail ?? "").replace(INVISIBLE, "").replace(/\s+/g, "");
+  const whoFull = address ? `${who} (${address})` : who;
   const where = workspace ?? "a Crusonia workspace";
   const onCrusonia = workspace ? `${workspace} on Crusonia` : where;
   const as = input.role === "admin" ? "an admin" : "a member";
   const validity = `This link works once and expires in ${input.expiresInDays} days. It only works for ${input.email}.`;
   const ignore = "If you weren't expecting this, you can ignore it.";
+  const notUs = "Crusonia sent this because that person asked it to. The people who run Crusonia didn't write it and haven't seen it.";
 
-  const text = [`${who} invited you to join ${onCrusonia} as ${as}.`, "", `Accept the invite: ${input.url}`, "", validity, ignore].join("\n");
+  const text = [`${whoFull} invited you to join ${onCrusonia} as ${as}.`, "", `Accept the invite: ${input.url}`, "", validity, notUs, ignore].join("\n");
 
   const e = escapeHtml;
   const html = `<!doctype html>
 <html><body style="margin:0;padding:32px 16px;background:#ffffff;color:#200D0D;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;"><tr><td>
 <p style="margin:0 0 24px;font-size:17px;line-height:20px;font-weight:600;letter-spacing:-0.02em;">crusonia</p>
-<p style="margin:0 0 24px;font-size:15px;line-height:22px;">${e(who)} invited you to join ${e(onCrusonia)} as ${as}.</p>
+<p style="margin:0 0 24px;font-size:15px;line-height:22px;">${e(whoFull)} invited you to join ${e(onCrusonia)} as ${as}.</p>
 <p style="margin:0 0 24px;"><a href="${e(input.url)}" style="display:inline-block;padding:10px 16px;background:#200D0D;color:#ffffff;border-radius:8px;font-size:14px;line-height:18px;font-weight:600;text-decoration:none;">Accept invite</a></p>
-<p style="margin:0;font-size:13px;line-height:20px;color:#200D0D99;">${e(validity)} ${e(ignore)}</p>
+<p style="margin:0;font-size:13px;line-height:20px;color:#200D0D99;">${e(validity)} ${e(notUs)} ${e(ignore)}</p>
 </td></tr></table>
 </body></html>`;
 

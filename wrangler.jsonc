@@ -32,6 +32,13 @@
     // Public base URL of this Worker. Webhooks and the MCP endpoint are registered under it.
     "PUBLIC_URL": "https://crusonia.veri-web.workers.dev"
   },
+  // Per-IP limits (src/lib/rate-limit.ts), per minute and per Cloudflare location. No database, so a flood costs no queries.
+  // Bindings aren't inherited by env.staging, which has its own namespaces below.
+  "ratelimits": [
+    { "name": "RL_ANON", "namespace_id": "2001", "simple": { "limit": 60, "period": 60 } },
+    { "name": "RL_PAID", "namespace_id": "2002", "simple": { "limit": 30, "period": 60 } },
+    { "name": "RL_SIGNUP", "namespace_id": "2003", "simple": { "limit": 5, "period": 60 } }
+  ],
   "env": {
     // Staging: a separate Worker (crusonia-staging) with its own secrets, its own database (a Neon dev branch)
     // and its own provider webhooks, Naive agent and MCP URL. Deploy with `bun run deploy:staging`; set it up
@@ -40,8 +47,15 @@
     "staging": {
       "name": "crusonia-staging",
       "vars": {
-        "PUBLIC_URL": "https://crusonia-staging.veri-web.workers.dev"
-      }
+        "PUBLIC_URL": "https://crusonia-staging.veri-web.workers.dev",
+        // Staging's Stripe key is a test key, and staging is the test instance: Checkout works here and nowhere else.
+        "BILLING_TEST_MODE_OK": "true"
+      },
+      "ratelimits": [
+        { "name": "RL_ANON", "namespace_id": "2011", "simple": { "limit": 60, "period": 60 } },
+        { "name": "RL_PAID", "namespace_id": "2012", "simple": { "limit": 30, "period": 60 } },
+        { "name": "RL_SIGNUP", "namespace_id": "2013", "simple": { "limit": 5, "period": 60 } }
+      ]
     }
   }
   // Secrets (DATABASE_URL, provider keys, ...) are not declared here: see .dev.vars.example.

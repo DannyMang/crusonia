@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { getSql } from "./db.ts";
 import type { Env } from "./env.ts";
 import { secretEquals } from "./lib/crypto.ts";
+import { badTokenBlocked, clientIp, noteBadToken } from "./lib/rate-limit.ts";
 import { apiKeyBlocked, isApiKey, verifyApiKey, type ApiKeyLookup } from "./services/api-keys.ts";
 import { blockedUserIds, OWNER_WORKSPACE_ID, WORKSPACE_HEADER, workspaceRef, type Workspace } from "./services/workspaces.ts";
 
@@ -51,6 +52,9 @@ export function bearerAuth(lookup?: ApiKeyLookup): MiddlewareHandler<McpEnv> {
         503,
       );
     }
+    const ip = clientIp(c);
+    const slowDown = () => c.json({ ok: false, error: "too_many_requests", message: "Too many wrong tokens from this network. Wait a minute and try again." }, 429);
+    if (badTokenBlocked(ip)) return slowDown();
     const header = c.req.header("Authorization") ?? "";
     const match = /^Bearer[ ]+(\S+)\s*$/i.exec(header);
     if (!match) {
@@ -59,6 +63,7 @@ export function bearerAuth(lookup?: ApiKeyLookup): MiddlewareHandler<McpEnv> {
     }
     const identity = await resolveBearer(c.env, match[1]!, lookup);
     if (!identity) {
+      if (await noteBadToken(c.env, ip)) return slowDown();
       c.header("WWW-Authenticate", 'Bearer realm="crusonia", error="invalid_token"');
       return c.json({ ok: false, error: "unauthorized", message: "Invalid or revoked token." }, 401);
     }

@@ -57,16 +57,19 @@ CLERK_AUTHORIZED_PARTIES=
 OWNER_CLERK_USER_ID=
 # Anyone who signs up gets their own workspace. "false" closes sign-up (existing members and invited teammates still get in).
 # SIGNUPS_OPEN=true
-# Clerk user ids refused with 403 (comma list).
+# Clerk user ids refused with 403 (comma list). Stops Autopilot in the workspaces they made, too.
 # BLOCKED_USER_IDS=
 # Clerk user ids the owner approved: they can sign up while SIGNUPS_OPEN=false.
 # SIGNUP_ALLOWED_USER_IDS=
 # Teammate invite emails over the last 24 hours (they go out from AGENTMAIL_INBOX_ID, from any workspace), and how many
 # workspaces one person may make.
-# INVITES_PER_WORKSPACE_PER_DAY=20
-# INVITES_PER_USER_PER_DAY=30
+# INVITES_PER_WORKSPACE_PER_DAY=10
+# INVITES_PER_USER_PER_DAY=15
 # INVITES_PER_EMAIL_PER_DAY=3
-# INVITES_PER_INSTANCE_PER_DAY=200
+# INVITES_PER_INSTANCE_PER_DAY=50
+# The instance as a whole (README: Opening sign-ups): Naive + Apify spend of every workspace but the owner's per rolling
+# 24 hours, in USD. At the cap, new paid starts answer 429 instance_busy.
+# INSTANCE_DAILY_CAP_USD=25
 # MAX_WORKSPACES_PER_USER=5
 # Workspaces besides the owner's that may send email (comma list of workspace ids). Every workspace sends from
 # AGENTMAIL_INBOX_ID, the owner's inbox, so the others can draft but not send until they are listed here.
@@ -152,6 +155,9 @@ STRIPE_WEBHOOK_SECRET=
 # BILLING_ENFORCED=false
 # Free-sample credits granted once per new workspace (about 5 leads). 0 turns it off.
 # BILLING_FREE_CREDITS=300
+# "true" only on a test instance: Checkout then accepts a Stripe test key. Anywhere else a test key answers 503
+# payments_not_live, because a test card must not buy credits that spend real money.
+# BILLING_TEST_MODE_OK=
 
 # ---------------------------------------------------------------------------
 # Optional policy (defaults shown)

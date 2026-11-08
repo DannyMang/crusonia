@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
 import { ApiError, type Profile } from "../../api.ts";
-import { useApi } from "../../auth.tsx";
+import { useApi, useSession } from "../../auth.tsx";
 import { ChevronRight } from "../../components/icons.tsx";
 import { QueryError } from "../../components/ui.tsx";
 import {
@@ -77,6 +77,19 @@ export default function Step2Reading() {
     );
   }
 
+  // New accounts need a verified email that isn't a throwaway (src/services/signup-check.ts). Same: nothing else would work.
+  const refused = [s.read, s.propose].flatMap((r) => (r?.status === "error" && (r.error.code === "email_not_allowed" || r.error.code === "email_not_verified") ? [r.error] : []))[0];
+  if (refused) {
+    return (
+      <div className="flex grow justify-center px-6 pb-16 pt-20 lg:pt-33">
+        <div className="flex w-full max-w-100 flex-col gap-5">
+          <StepTitle step={2} title={refused.code === "email_not_allowed" ? "Use your work email" : "Verify your email"} subtitle={refused.message} />
+          <SignOutLink />
+        </div>
+      </div>
+    );
+  }
+
   const host = siteHost(s.url);
   const proposeError = s.propose?.status === "error" ? s.propose.error : undefined;
   const calm = isComingOnline(proposeError);
@@ -129,7 +142,7 @@ export default function Step2Reading() {
                 problem={
                   proposeError ? (
                     <Problem
-                      title="The agent stopped before it finished"
+                      title={proposeError.code === "instance_busy" ? "Crusonia is at capacity" : proposeError.code === "insufficient_credits" ? "You're out of credits" : "The agent stopped before it finished"}
                       body={proposeError.message}
                       onRetry={() => {
                         startPropose(api);
@@ -391,6 +404,16 @@ function WaitingOnYou({ kind, approvals }: { kind: "approval" | "answer"; approv
         </Link>
       )}
     </div>
+  );
+}
+
+/** The way out for an account that can't go on here: sign out, then sign up with another address. */
+function SignOutLink() {
+  const { signOut } = useSession();
+  return (
+    <button type="button" onClick={() => void signOut()} className="self-start text-[13px]/4.5 font-medium text-ink underline decoration-[#200D0D4D] underline-offset-[3px] hover:decoration-ink">
+      Sign out
+    </button>
   );
 }
 

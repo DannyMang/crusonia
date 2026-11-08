@@ -6,11 +6,15 @@
 //
 // Schedules run here rather than on Naive deployments: a deployment fires one fixed instruction, and every start here
 // needs this moment's Company summary, a run id and the checks below. Each start passes the same gates: the workspace's
-// autopilot switch, the global pause, one active run per workflow, the workflow's spend cap, the workspace's daily cap,
-// and credits. Nothing here sends anything: drafts wait for the owner, and paid work past a cap waits for them too.
+// autopilot switch, the global pause, the instance's brakes (./instance.ts), one active run per workflow, the workflow's
+// spend cap, the workspace's daily cap, and credits. Nothing here sends anything: drafts wait for the owner, and paid work
+// past a cap waits for them too.
 //
-// AUTOPILOT_WORKSPACES says which workspaces may run at all (unset: none), so deploying this starts nothing.
-import { creditsEnforcedFor, getBalance } from "../billing/accounts.ts";
+// AUTOPILOT_WORKSPACES says which workspaces may run at all: a list of ids, "*" for every workspace, unset for none, so
+// deploying this starts nothing. With "*" every sign-up gets it, so the tick is built to stay fair and cheap with many
+// workspaces, most of them out of credits: what can't start doesn't take the place of what can. BLOCKED_USER_IDS stops
+// the workspaces those people made.
+import { creditsEnforcedFor, getBalance, paymentsLive } from "../billing/accounts.ts";
 import { logEvent, type Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { newId } from "../ids.ts";
@@ -19,12 +23,14 @@ import type { FetchFn } from "../providers/http.ts";
 import { activityFeed, autonomyCounts, runningNow } from "./activity.ts";
 import { getCompanySummary, summaryForMessage, type SummaryView } from "./company-summary.ts";
 import { ServiceError } from "./errors.ts";
-import { spendStatus } from "./limits.ts";
+import { brakeFor, instanceBrake, instanceState, noteCapReached, type InstanceState } from "./instance.ts";
+import { paidStartAllowance, spendStatus } from "./limits.ts";
 import { naiveOperatorFor, operatorConfigured } from "./naive-agents.ts";
 import { getFindRun, startFindLeads } from "./runs.ts";
 import { createDefinition, DEFAULT_STEPS, everyHoursOf, getDefinition, loadVersion, type DefRow, type VersionRow, type WorkflowStep, type WorkflowTrigger } from "./workflow-defs.ts";
 import { runWorkflow } from "./workflow-runs.ts";
 import { startResearch } from "./workflows.ts";
+import { blockedUserIds, OWNER_WORKSPACE_ID } from "./workspaces.ts";
 
 // ---------- configuration ----------
 
@@ -48,10 +54,15 @@ export const DEFAULT_BATCH = 5;
 export const DEFAULT_RESEARCH = 3;
 const MAX_STARTS_PER_TICK = 5;
 const MAX_WORKSPACES_PER_TICK = 25;
+/** Due schedules started per tick, and the ones that were skipped before (and may start now) looked at again. */
+const MAX_DUE_PER_TICK = 20;
+const MAX_RETRIES_PER_TICK = 10;
+
+const autopilotList = (env: Env) => (env.AUTOPILOT_WORKSPACES ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
 /** Whether this workspace may run by itself on this instance. */
 export function autopilotAvailable(env: Env, ws: string): boolean {
-  const list = (env.AUTOPILOT_WORKSPACES ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const list = autopilotList(env);
   return list.includes("*") || list.includes(ws);
 }
 const instanceOn = (env: Env) => Boolean(env.AUTOPILOT_WORKSPACES?.trim());
@@ -59,11 +70,13 @@ const naiveReady = (env: Env) => Boolean(env.NAIVE_API_KEY && env.NAIVE_AGENT_ID
 
 // ---------- pure decisions ----------
 
-export type SkipReason = "autopilot_off" | "paused" | "disabled" | "active_run" | "spend_cap_reached" | "daily_cap_reached" | "no_credits";
+export type SkipReason = "autopilot_off" | "paused" | "instance_busy" | "disabled" | "active_run" | "spend_cap_reached" | "daily_cap_reached" | "no_credits";
 
 export type RunGate = {
   autopilot: boolean;
   paused: boolean;
+  /** The instance's spend cap or kill switch (./instance.ts). */
+  instanceBusy?: boolean;
   enabled: boolean;
   activeRun: boolean;
   /** Spend counted against the cap; a per-run cap limits one run, so it never blocks starting the next. */
@@ -77,6 +90,7 @@ export type RunGate = {
 export function gateRun(g: RunGate): SkipReason | null {
   if (!g.autopilot) return "autopilot_off";
   if (g.paused) return "paused";
+  if (g.instanceBusy) return "instance_busy";
   if (!g.enabled) return "disabled";
   if (g.activeRun) return "active_run";
   if (g.spend.period === "week" && g.spend.cap_usd !== null && g.spend.usd >= g.spend.cap_usd) return "spend_cap_reached";
@@ -189,17 +203,23 @@ export async function setAutopilot(sql: Sql, env: Env, ws: string, enabled: bool
 
 /** Everything Home shows: the switch, what is running, the feed, the tally. */
 export async function getAutopilot(sql: Sql, env: Env, ws: string, opts: { limit?: number } = {}) {
-  const [[row], [def], running, feed, counts] = await Promise.all([
+  const [[row], [def], running, feed, counts, instance, day, balance] = await Promise.all([
     sql`select autopilot, paused, autopilot_operator_next_at from workspaces where id = ${ws}`,
     sql`select id, name, next_run_at, last_skip, trigger, enabled from workflow_defs where workspace_id = ${ws} and is_autopilot`,
     runningNow(sql, ws),
     activityFeed(sql, ws, { limit: opts.limit ?? 40 }),
     autonomyCounts(sql, ws),
+    instanceState(sql, env),
+    spendStatus(sql, env, ws),
+    creditsEnforcedFor(env, ws) ? getBalance(sql, ws) : Promise.resolve(1),
   ]);
   return {
     available: autopilotAvailable(env, ws),
     enabled: row?.autopilot === true,
     paused: row?.paused === true,
+    // Why nothing new starts now, for Home to say. Null when something could.
+    blocked: brakeFor(instance, ws) ? ("instance_busy" as const) : balance <= 0 ? ("no_credits" as const) : day.spent_micro_usd >= day.cap_micro_usd ? ("daily_cap_reached" as const) : null,
+    payments_live: paymentsLive(env),
     workflow: def ? { id: def.id as string, name: def.name as string, enabled: def.enabled as boolean, next_run_at: def.next_run_at ?? null, every_hours: everyHoursOf(def.trigger as WorkflowTrigger), last_skip: def.last_skip ?? null } : null,
     operator_next_at: row?.autopilot_operator_next_at ?? null,
     running,
@@ -212,7 +232,7 @@ export async function getAutopilot(sql: Sql, env: Env, ws: string, opts: { limit
 
 async function gateFor(sql: Sql, env: Env, ws: string, def: { id: string; enabled: boolean }): Promise<SkipReason | null> {
   const { workflow } = await getDefinition(sql, ws, def.id);
-  const [[w], [active], day, credits] = await Promise.all([
+  const [[w], [active], day, credits, brake] = await Promise.all([
     sql`select autopilot, paused from workspaces where id = ${ws}`,
     sql`select exists (select 1 from workflow_runs where workflow_id = ${def.id} and phase <> 'done')
            or exists (select 1 from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id
@@ -220,10 +240,12 @@ async function gateFor(sql: Sql, env: Env, ws: string, def: { id: string; enable
                         and s.created_at > now() - make_interval(secs => ${RUN_MAX_AGE_MS / 1000})) as active`,
     spendStatus(sql, env, ws),
     creditsEnforcedFor(env, ws) ? getBalance(sql, ws) : Promise.resolve(1),
+    instanceBrake(sql, env, ws),
   ]);
   return gateRun({
     autopilot: w?.autopilot === true,
     paused: w?.paused === true,
+    instanceBusy: brake !== null,
     enabled: def.enabled,
     activeRun: active?.active === true,
     spend: workflow.spend,
@@ -303,18 +325,38 @@ export async function startRun(sql: Sql, env: Env, ws: string, def: DueDef, opts
   );
 }
 
+// ---------- one tick's view of the instance ----------
+
+/** Read once per tick, so what the brakes stop never takes the place of what could run. */
+type Tick = { state: InstanceState; capReached: boolean; all: boolean; list: string[]; blocked: string[] };
+
+/**
+ * The workspaces this tick may start anything in (for a query with `workspaces w`): on the AUTOPILOT_WORKSPACES list, only
+ * the owner's while the cap is reached, and not one a blocked person made. Part of the query rather than a check after it,
+ * so a limit counts only workspaces that can run.
+ */
+export const canRun = (sql: Sql, t: Pick<Tick, "capReached" | "all" | "list" | "blocked">) => sql`(${t.all}::boolean or w.id = any(${t.list}::text[]))
+  and (not ${t.capReached}::boolean or w.id = ${OWNER_WORKSPACE_ID})
+  and coalesce(w.created_by, '') <> all(${t.blocked}::text[])`;
+
+/** The owner workspace, or one that still has credits. */
+const hasCredits = (sql: Sql) => sql`(w.id = ${OWNER_WORKSPACE_ID} or (select coalesce(sum(c.amount), 0) from credit_ledger c where c.workspace_id = w.id) > 0)`;
+
 // ---------- 1. provisioning ----------
 
 /**
  * A workspace that just got its first Company summary gets the default workflow and autopilot on: its first run starts
  * in the same tick, with no click. It waits for an onboarding session still writing the summary.
  */
-async function provisionNew(sql: Sql, env: Env): Promise<string[]> {
+async function provisionNew(sql: Sql, env: Env, tick: Tick): Promise<string[]> {
+  // Free, so the cap doesn't hold it up: a workspace gets its workflow and waits, with Home saying why.
   const rows = await sql`
     select w.id from workspaces w
     where w.autopilot_provisioned_at is null
+      and ${canRun(sql, { ...tick, capReached: false })}
       and exists (select 1 from company_summaries v where v.workspace_id = w.id)
       and not exists (select 1 from naive_sessions s where s.workspace_id = w.id and s.purpose = 'onboarding' and s.status in ('running', 'idle'))
+    order by w.created_at
     limit ${MAX_WORKSPACES_PER_TICK}`;
   const done: string[] = [];
   for (const { id } of rows as { id: string }[]) {
@@ -453,10 +495,10 @@ async function spendStop(sql: Sql, env: Env, run: ActiveRun): Promise<string | n
   return null;
 }
 
-async function advanceRuns(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<number> {
+async function advanceRuns(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn): Promise<number> {
   const runs = (await sql`
     select r.id, r.workspace_id, r.workflow_id, r.version, r.phase, r.find_session_id, r.started_at, d.trigger as trigger_cfg,
-           w.autopilot, w.paused, s.status as session_status, s.stop_reason as session_stop
+           w.autopilot, (w.paused or coalesce(w.created_by, '') = any(${tick.blocked}::text[])) as paused, s.status as session_status, s.stop_reason as session_stop
     from workflow_runs r
     join workflow_defs d on d.id = r.workflow_id
     join workspaces w on w.id = r.workspace_id
@@ -471,8 +513,8 @@ async function advanceRuns(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<numbe
         moved++;
         continue;
       }
-      // Off or paused: the sessions already open finish, nothing new starts.
-      if (!run.autopilot || run.paused) continue;
+      // Off, paused or an instance brake: the sessions already open finish, nothing new starts.
+      if (!run.autopilot || run.paused || brakeFor(tick.state, run.workspace_id)) continue;
       if (run.phase === "finding") {
         // A session out of budget won't go on by itself: what it saved so far is what the run has.
         const ended = run.session_status === "done" || run.session_status === "error" || run.session_stop === "budget_paused";
@@ -497,12 +539,20 @@ async function advanceRuns(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<numbe
 const RETRY_MINUTES = 5;
 
 /** Schedules that are due. A claim moves next_run_at forward first, so two ticks never start the same run. */
-async function startDueSchedules(sql: Sql, env: Env, fetchFn?: FetchFn) {
+async function startDueSchedules(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
+  // A skipped schedule stays due, so it starts the minute it can. So those are read apart: fresh ones oldest first, then a
+  // few of the skipped at random. One already skipped for no credits costs nothing until it has some again.
+  const due = sql`d.enabled and w.autopilot and not w.paused and d.trigger->>'kind' = 'schedule' and (d.next_run_at is null or d.next_run_at <= now()) and ${canRun(sql, tick)}`;
   const rows = (await sql`
-    select d.id, d.workspace_id, d.trigger, d.latest_version, d.enabled, d.next_run_at
-    from workflow_defs d join workspaces w on w.id = d.workspace_id
-    where d.enabled and w.autopilot and not w.paused and d.trigger->>'kind' = 'schedule' and (d.next_run_at is null or d.next_run_at <= now())
-    order by d.next_run_at nulls first limit 20`) as DueDef[];
+    (select d.id, d.workspace_id, d.trigger, d.latest_version, d.enabled, d.next_run_at
+     from workflow_defs d join workspaces w on w.id = d.workspace_id
+     where ${due} and d.last_skip is null
+     order by d.next_run_at nulls first limit ${MAX_DUE_PER_TICK})
+    union all
+    (select d.id, d.workspace_id, d.trigger, d.latest_version, d.enabled, d.next_run_at
+     from workflow_defs d join workspaces w on w.id = d.workspace_id
+     where ${due} and d.last_skip is not null and (d.last_skip <> 'no_credits' or ${hasCredits(sql)})
+     order by random() limit ${MAX_RETRIES_PER_TICK})`) as DueDef[];
   const started: string[] = [];
   for (const def of rows) {
     const ws = def.workspace_id;
@@ -543,19 +593,24 @@ async function startDueSchedules(sql: Sql, env: Env, fetchFn?: FetchFn) {
  * Inbound replies go to a workflow with a reply trigger. Workflows with these triggers only see what arrived after they
  * were created.
  */
-async function startEventRuns(sql: Sql, env: Env, fetchFn?: FetchFn) {
+async function startEventRuns(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
+  // Every workspace on Autopilot has a default workflow, so only the ones with an import waiting are read, in random order.
   const defs = (await sql`
-    select d.id, d.workspace_id, d.trigger, d.latest_version, d.enabled, d.next_run_at, d.is_autopilot, d.created_at
+    select d.id, d.workspace_id, d.trigger, d.latest_version, d.enabled, d.next_run_at, d.is_autopilot, d.created_at,
+           exists (select 1 from workflow_defs c where c.workspace_id = d.workspace_id and c.enabled and c.trigger->>'kind' = 'csv_import') as has_csv_def
     from workflow_defs d join workspaces w on w.id = d.workspace_id
-    where d.enabled and w.autopilot and not w.paused
-      and (d.trigger->>'kind' in ('csv_import', 'reply') or d.is_autopilot)
-    limit 50`) as (DueDef & { is_autopilot: boolean; created_at: Date | string })[];
-  const hasCsvDef = new Set(defs.filter((d) => d.trigger.kind === "csv_import").map((d) => d.workspace_id));
+    where d.enabled and w.autopilot and not w.paused and ${canRun(sql, tick)}
+      and (d.trigger->>'kind' = 'reply'
+           or ((d.trigger->>'kind' = 'csv_import' or d.is_autopilot)
+               and exists (select 1 from leads l
+                           where l.workspace_id = d.workspace_id and l.import_meta is not null and l.stage in ('new', 'no_consent') and l.excluded_at is null
+                             and l.created_at >= d.created_at and not exists (select 1 from workflow_run_leads rl where rl.lead_id = l.id))))
+    order by random() limit 50`) as (DueDef & { is_autopilot: boolean; created_at: Date | string; has_csv_def: boolean })[];
   const started: string[] = [];
   for (const def of defs) {
     const ws = def.workspace_id;
     if (!autopilotAvailable(env, ws)) continue;
-    const kind = def.trigger.kind === "reply" ? "reply" : def.trigger.kind === "csv_import" || !hasCsvDef.has(ws) ? "csv_import" : null;
+    const kind = def.trigger.kind === "reply" ? "reply" : def.trigger.kind === "csv_import" || !def.has_csv_def ? "csv_import" : null;
     if (!kind) continue;
     try {
       const batch = Math.min(def.trigger.batch ?? MAX_STARTS_PER_TICK, MAX_STARTS_PER_TICK);
@@ -678,10 +733,12 @@ export async function startOperatorCycle(sql: Sql, env: Env, ws: string, actor: 
   return { session_id: session.id, run_id: runId };
 }
 
-async function runOperators(sql: Sql, env: Env, fetchFn?: FetchFn) {
+async function runOperators(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
   if (!operatorConfigured(env)) return [];
   const cfg = autopilotConfig(env);
+  // Only the ones it might start for, longest waiting first: the limit must not fill up with workspaces that have nothing to do.
   const rows = (await sql`
+    select * from (
     select w.id, w.autopilot_operator_next_at as next_at, w.autopilot_operator_next_at::text as next_at_raw,
       (select max(s.created_at) from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate') as last_started_at,
       (select count(*)::int from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate' and s.created_at > now() - interval '1 day') as cycles_today,
@@ -691,8 +748,11 @@ async function runOperators(sql: Sql, env: Env, fetchFn?: FetchFn) {
       exists (select 1 from events e where e.workspace_id = w.id and e.created_at > coalesce((select max(s.created_at) from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate'), w.created_at)
               and (e.kind in ('workflow_run_finished', 'email_received') or (e.kind = 'note_added' and e.data->>'author' like 'user:%'))) as changed
     from workspaces w
-    where w.autopilot and not w.paused
+    where w.autopilot and not w.paused and ${canRun(sql, tick)} and ${hasCredits(sql)}
       and exists (select 1 from company_summaries v where v.workspace_id = w.id)
+    ) x
+    where not x.open_session and not x.active_run and (x.changed or x.next_at is null or x.next_at <= now())
+    order by x.next_at nulls first
     limit ${MAX_WORKSPACES_PER_TICK}`) as {
     id: string;
     next_at: Date | string | null;
@@ -719,9 +779,9 @@ async function runOperators(sql: Sql, env: Env, fetchFn?: FetchFn) {
     });
     if (!due) continue;
     try {
-      const day = await spendStatus(sql, env, w.id);
+      const allowance = await paidStartAllowance(sql, env, w.id, 1); // The instance's brakes, the daily cap, the rate limits.
       const credits = creditsEnforcedFor(env, w.id) ? await getBalance(sql, w.id) : 1;
-      if (day.spent_micro_usd >= day.cap_micro_usd || credits <= 0) continue;
+      if (allowance.allowed < 1 || credits <= 0) continue;
       // The first time, wait for the first run: there is nothing to decide before it has found leads.
       if (!w.last_started_at && !w.changed) {
         const [ran] = await sql`select exists (select 1 from workflow_runs where workspace_id = ${w.id}) as any`;
@@ -749,6 +809,7 @@ async function requireAgentStart(sql: Sql, env: Env, ws: string, def: { id: stri
     const text: Record<SkipReason, string> = {
       autopilot_off: "Autopilot is off: the owner turned it off, so nothing starts.",
       paused: "Crusonia is paused: no new work starts until the owner resumes it.",
+      instance_busy: "Crusonia is at capacity right now: nothing new starts until it clears. Try again in a later cycle.",
       disabled: "This workflow is turned off.",
       active_run: "This workflow already has a run going: one at a time. Try again in a later cycle.",
       spend_cap_reached: "This workflow reached its spend cap. Only the owner can raise it.",
@@ -827,13 +888,23 @@ export async function agentRunWorkflow(
 /** One minute's work. Each step is independent: one failing doesn't stop the others. */
 export async function runAutopilot(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<Record<string, unknown>> {
   if (!instanceOn(env) || !naiveReady(env)) return { skipped: "off" };
+  const state = await instanceState(sql, env);
+  const capReached = state.spent_micro_usd >= state.cap_micro_usd;
+  if (capReached) await noteCapReached(sql, state);
+  const list = autopilotList(env);
+  const tick: Tick = { state, capReached, all: list.includes("*"), list, blocked: blockedUserIds(env) };
   const report: Record<string, unknown> = {};
   const steps: [string, () => Promise<unknown>][] = [
-    ["provisioned", () => provisionNew(sql, env)],
-    ["advanced", () => advanceRuns(sql, env, fetchFn)],
-    ["schedules", () => startDueSchedules(sql, env, fetchFn)],
-    ["event_runs", () => startEventRuns(sql, env, fetchFn)],
-    ["operators", () => runOperators(sql, env, fetchFn)],
+    ["provisioned", () => provisionNew(sql, env, tick)],
+    ["advanced", () => advanceRuns(sql, env, tick, fetchFn)],
+    // The kill switch stops everyone, so nothing below can start. The cap leaves only the owner's (canRun).
+    ...(state.halted
+      ? []
+      : ([
+          ["schedules", () => startDueSchedules(sql, env, tick, fetchFn)],
+          ["event_runs", () => startEventRuns(sql, env, tick, fetchFn)],
+          ["operators", () => runOperators(sql, env, tick, fetchFn)],
+        ] as [string, () => Promise<unknown>][])),
   ];
   for (const [name, step] of steps) {
     try {

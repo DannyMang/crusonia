@@ -80,13 +80,18 @@ function status(): Status {
   };
 }
 
-const me: Me = { user: { id: "user_mock", email: "daniel@acme.com", name: "Daniel Ung" }, auth: "clerk", workspace: { id: "ws_acme", name: "Acme", owner: false, role: "owner" } };
+const me: Me = { user: { id: "user_mock", email: "daniel@acme.com", name: "Daniel Ung" }, auth: "clerk", workspace: { id: "ws_acme", name: "Acme", owner: false, role: "owner" }, platform_admin: true };
+
+let halted = false;
+const instance = () => ({ halted, halted_at: null, halted_by: null, spent_usd: 3.2, cap_usd: 25, cap_reached: false, signups_open: true, autopilot_workspaces: "all", payments_live: true });
 
 let autopilotOn = true;
 const autopilot = () => ({
   available: true,
   enabled: autopilotOn,
   paused,
+  blocked: scenario() === "launch" ? "no_credits" : null,
+  payments_live: scenario() !== "launch",
   running: autopilotOn ? [{ session_id: "ses_mock", lead_id: null, waiting_on_you: false, text: "Researching Nessie" }] : [],
   feed: isEmpty()
     ? []
@@ -102,6 +107,12 @@ const autopilot = () => ({
 
 export const coreHandlers = [
   http.get("/api/me", () => ok(me)),
+  http.get("/api/config", () => ok({ payments_live: scenario() !== "launch" })),
+  http.get("/api/admin/instance", () => ok(instance())),
+  http.put("/api/admin/instance", async ({ request }) => {
+    halted = Boolean((await body<{ halted?: boolean }>(request)).halted);
+    return ok(instance());
+  }),
   http.get("/api/autopilot", () => ok(autopilot())),
   http.put("/api/autopilot", async ({ request }) => {
     autopilotOn = Boolean((await body<{ enabled?: boolean }>(request)).enabled);

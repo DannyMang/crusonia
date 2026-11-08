@@ -121,6 +121,10 @@ export type Autopilot = {
   available: boolean;
   enabled: boolean;
   paused: boolean;
+  /** Why nothing new starts right now, for Home to say; null when something could. Older deployments omit it. */
+  blocked?: "instance_busy" | "no_credits" | "daily_cap_reached" | null;
+  /** Credits can be bought on this instance. */
+  payments_live?: boolean;
   running: { session_id: string; lead_id: string | null; waiting_on_you: boolean; text: string }[];
   feed: AutopilotFeedItem[];
   counts: { agent_actions: number; owner_actions: number; days: number };
@@ -339,6 +343,24 @@ export type Me = {
   key?: { id: string; name: string };
   /** The workspace this caller acts on (`owner` is the instance owner's), and their role in it. */
   workspace?: { id: string; name: string; owner: boolean; role?: WorkspaceRole };
+  /** An operator of this instance: Settings shows them its kill switch. */
+  platform_admin?: boolean;
+};
+
+/** GET /api/config: what a signed-out visitor may know about this instance. */
+export type PublicConfig = { payments_live: boolean };
+
+/** GET /api/admin/instance: the instance's brakes (src/services/instance.ts). */
+export type InstanceStatus = {
+  halted: boolean;
+  halted_at: string | null;
+  halted_by: string | null;
+  spent_usd: number;
+  cap_usd: number;
+  cap_reached: boolean;
+  signups_open: boolean;
+  autopilot_workspaces: "all" | "listed" | "none";
+  payments_live: boolean;
 };
 
 // ---------- workspaces and the team ----------
@@ -614,8 +636,11 @@ export type Billing = {
   /** The paying workspace (`owner_id` is the same id, kept for older clients). */
   workspace_id?: string;
   owner_id: string;
-  /** `configured`: Stripe is set up on this deployment, so Checkout and the portal work. */
-  billing: { configured: boolean; webhook_configured: boolean; mode: "test" | "live" | null; enforced: boolean };
+  /**
+   * `configured`: Stripe is set up on this deployment. `payments_live`: people can pay here: a live key, or a test key on
+   * a test instance. Older deployments omit it.
+   */
+  billing: { configured: boolean; webhook_configured: boolean; mode: "test" | "live" | null; enforced: boolean; payments_live?: boolean };
   plan: { key: string; name: string; status: string | null; current_period_end: string | null; cancel_at_period_end: boolean };
   /** A Stripe customer exists, so the Customer Portal can open. */
   has_customer: boolean;
@@ -707,6 +732,9 @@ export function createApi(getToken: TokenGetter, base = "") {
 
     // session + overview
     me: () => get<Me>("/api/me"),
+    publicConfig: () => get<PublicConfig>("/api/config"),
+    instance: () => get<InstanceStatus>("/api/admin/instance"),
+    setInstanceHalted: (halted: boolean) => put<InstanceStatus>("/api/admin/instance", { halted }),
     summary: () => get<Summary>("/api/summary"),
     status: () => get<Status>("/api/status"),
 

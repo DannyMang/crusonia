@@ -1,21 +1,21 @@
 // Helpers for the dev-only MSW mocks. Sample data mirrors the Paper designs (illustration only).
 import { delay, HttpResponse } from "msw";
 
-export type Scenario = "sample" | "empty" | "unconfigured";
+export type Scenario = "sample" | "empty" | "unconfigured" | "launch";
 
-/** `?mock=empty|sample|unconfigured` (remembered in localStorage) picks the data set. Default: sample. */
+/** `?mock=empty|sample|unconfigured|launch` (remembered in localStorage) picks the data set. Default: sample. `launch`: sample data, free credits used up, top-ups off. */
 export function scenario(): Scenario {
   try {
     const fromUrl = new URLSearchParams(location.search).get("mock");
-    if (fromUrl === "empty" || fromUrl === "sample" || fromUrl === "unconfigured") localStorage.setItem("crusonia.mock", fromUrl);
+    if (fromUrl === "empty" || fromUrl === "sample" || fromUrl === "unconfigured" || fromUrl === "launch") localStorage.setItem("crusonia.mock", fromUrl);
     const v = localStorage.getItem("crusonia.mock");
-    return v === "empty" || v === "unconfigured" ? v : "sample";
+    return v === "empty" || v === "unconfigured" || v === "launch" ? v : "sample";
   } catch {
     return "sample";
   }
 }
 
-export const isEmpty = () => scenario() !== "sample";
+export const isEmpty = () => scenario() === "empty" || scenario() === "unconfigured";
 
 export const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
 export const ahead = (ms: number) => new Date(Date.now() + ms).toISOString();

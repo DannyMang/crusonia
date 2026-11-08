@@ -14,6 +14,7 @@ import { newId } from "../ids.ts";
 import { ApiError } from "../lib/errors.ts";
 import type { FetchFn } from "../providers/http.ts";
 import { ServiceError } from "./errors.ts";
+import { requireInstanceOpen } from "./instance.ts";
 import { isPaused } from "./settings.ts";
 import { getDefinition, loadVersion, variantArms } from "./workflow-defs.ts";
 import { MAX_RESEARCH_BATCH, startResearch, type ResearchOpts } from "./workflows.ts";
@@ -42,6 +43,7 @@ export async function runWorkflow(
   await loadVersion(sql, workflow.id, version); // 404 for an unknown version
   if (!env.NAIVE_API_KEY || !env.NAIVE_AGENT_ID) throw new ServiceError("config_missing", "NAIVE_API_KEY and NAIVE_AGENT_ID must be set to run a workflow.");
   if (await isPaused(sql, ws)) throw new ApiError(423, "paused", "Crusonia is paused; no new work starts (PUT /api/settings/pause to resume)");
+  await requireInstanceOpen(sql, env, ws); // Before the run exists: a brake must not leave an empty run behind.
   // A per-run cap limits one run: it can't stop the next one that starts by itself.
   const capApplies = !(input.trigger && workflow.spend.period === "run");
   if (capApplies && workflow.spend.cap_usd !== null && workflow.spend.usd >= workflow.spend.cap_usd) {

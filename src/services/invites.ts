@@ -1,6 +1,6 @@
 // Invites: how a teammate joins a workspace. Created by an owner or admin, and sent by email from the instance's own
 // inbox (AGENTMAIL_INBOX_ID) as a fixed template (src/services/invite-email.ts), which any workspace may do, unlike
-// outreach (canSendEmail), so sending is tightly limited.
+// outreach (canSendEmail), so sending is tightly limited, and needs a workspace owner with a verified email.
 //
 // A token is 32 random bytes, emailed once and stored only as its SHA-256; resending mints a new one and the old link
 // stops working. Accepting needs a signed-in Clerk user with the invited address among their verified emails (read
@@ -12,12 +12,12 @@ import { newId } from "../ids.ts";
 import { sha256, toHex } from "../lib/crypto.ts";
 import { ApiError, notConfigured, notFound } from "../lib/errors.ts";
 import { AgentMailClient } from "../providers/agentmail.ts";
-import { clerkUser } from "../providers/clerk.ts";
+import { clerkUser, clerkUsers, type ClerkProfile } from "../providers/clerk.ts";
 import { ProviderError } from "../providers/http.ts";
 import { inviteEmail, safeName } from "./invite-email.ts";
 import { limitsConfig } from "./limits.ts";
 import { listMembers } from "./team.ts";
-import { getWorkspace, isBlockedUser, OWNER_WORKSPACE_ID, type ClerkUser, type WorkspaceRole } from "./workspaces.ts";
+import { getWorkspace, isBlockedUser, isOwnerWorkspace, OWNER_WORKSPACE_ID, type ClerkUser, type WorkspaceRole } from "./workspaces.ts";
 
 export const INVITE_DAYS = 7;
 const TOKEN_PREFIX = "inv_";
@@ -117,19 +117,48 @@ async function requireContactable(sql: Sql, ws: string, email: string): Promise<
   if (row) throw new ApiError(422, "email_suppressed", "This address can't be invited: it asked not to be contacted");
 }
 
+const verifiedEmail = (p: ClerkProfile | undefined) => {
+  const primary = p?.email?.trim().toLowerCase();
+  return primary && p?.verified_emails.includes(primary) ? primary : (p?.verified_emails[0] ?? null);
+};
+
+/**
+ * The verified address an invite is sent under: the inviter's, else a workspace owner's. Strangers can invite people from
+ * the instance's own inbox, so a workspace with no verified owner email may not (403 owner_email_unverified, also when
+ * Clerk doesn't answer). The owner workspace is the instance owner's own, so it only uses the address when there is one.
+ */
+async function inviteSender(sql: Sql, env: Env, ws: string, by: InviteActor): Promise<string | null> {
+  const owners = (await sql`select clerk_user_id from workspace_members where workspace_id = ${ws} and role = 'owner' order by created_at limit 20`).map((r) => r.clerk_user_id as string);
+  const inviter = by.actor.startsWith("clerk:") ? by.actor.slice("clerk:".length) : null;
+  const profiles = await clerkUsers(env, [...new Set([...owners, ...(inviter ? [inviter] : [])])]);
+  const ownerEmail = owners.map((id) => verifiedEmail(profiles.get(id))).find(Boolean) ?? null;
+  if (!ownerEmail && !isOwnerWorkspace(ws)) {
+    throw new ApiError(403, "owner_email_unverified", "A workspace owner needs a verified email address before this workspace can send invites");
+  }
+  return (inviter ? verifiedEmail(profiles.get(inviter)) : null) ?? ownerEmail;
+}
+
 /** Sends the email. An ambiguous failure counts as a failure: the worst case is one dead link in someone's inbox. */
-async function sendInvite(env: Env, invite: { id: string; email: string; role: InviteRole; inviter_name: string | null }, workspaceName: string, token: string): Promise<void> {
+async function sendInvite(
+  env: Env,
+  invite: { id: string; email: string; role: InviteRole; inviter_name: string | null },
+  workspaceName: string,
+  token: string,
+  senderEmail: string | null,
+): Promise<void> {
   const client = mailer(env);
   const mail = inviteEmail({
     workspaceName,
     inviterName: invite.inviter_name,
+    inviterEmail: senderEmail,
     role: invite.role,
     email: invite.email,
     url: inviteUrl(env, token),
     expiresInDays: INVITE_DAYS,
   });
   try {
-    await client.send({ to: invite.email, ...mail, labels: ["invite", `invite-${invite.id}`] });
+    // A reply goes to the person who invited them, not to the instance owner's inbox.
+    await client.send({ to: invite.email, ...mail, labels: ["invite", `invite-${invite.id}`], ...(senderEmail ? { reply_to: senderEmail } : {}) });
   } catch (err) {
     if (err instanceof ProviderError) throw new ApiError(502, "invite_email_failed", "The invite email could not be sent; try again");
     throw err;
@@ -150,6 +179,7 @@ export async function createInvite(sql: Sql, env: Env, ws: string, input: { emai
     select 1 as hit from workspace_invites
     where workspace_id = ${ws} and email = ${email} and accepted_at is null and revoked_at is null and expires_at > now()`;
   if (open) throw new ApiError(409, "invite_exists", "That address already has an open invite. Resend it instead.");
+  const senderEmail = await inviteSender(sql, env, ws, by);
 
   await claimSend(sql, env, ws, by.actor, email);
   const { token, hash } = await newToken();
@@ -167,7 +197,7 @@ export async function createInvite(sql: Sql, env: Env, ws: string, input: { emai
   const row = inserted?.[0] as InviteRow | undefined;
   if (!row) throw new ApiError(409, "invite_exists", "That address already has an open invite. Resend it instead.");
   try {
-    await sendInvite(env, row, workspace.name, token);
+    await sendInvite(env, row, workspace.name, token, senderEmail);
   } catch (err) {
     // Nobody got a link: free the address so they can try again.
     await sql`delete from workspace_invites where id = ${id} and workspace_id = ${ws}`;
@@ -198,10 +228,11 @@ export async function resendInvite(sql: Sql, env: Env, ws: string, id: string, b
   const row = found as InviteRow & { too_soon: boolean };
   if (row.too_soon) throw new ApiError(429, "invite_resend_too_soon", "That invite was just sent; wait a minute before resending");
   await requireContactable(sql, ws, row.email);
+  const senderEmail = await inviteSender(sql, env, ws, by);
   await claimSend(sql, env, ws, by.actor, row.email);
   const { token, hash } = await newToken();
   // The email first: if it fails, the link already in their inbox keeps working.
-  await sendInvite(env, row, workspace.name, token);
+  await sendInvite(env, row, workspace.name, token, senderEmail);
   const [updated] = await sql`
     update workspace_invites
     set token_hash = ${hash}, last_sent_at = now(), expires_at = now() + make_interval(days => ${INVITE_DAYS})

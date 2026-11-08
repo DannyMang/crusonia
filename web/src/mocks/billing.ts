@@ -93,7 +93,7 @@ function overview(): Billing {
   const paid = s.plan !== "free";
   return {
     owner_id: "user_mock",
-    billing: { configured: !unconfigured, webhook_configured: !unconfigured, mode: unconfigured ? null : "test", enforced: false },
+    billing: { configured: !unconfigured, webhook_configured: !unconfigured, mode: unconfigured ? null : "test", enforced: false, payments_live: !unconfigured && scenario() !== "launch" },
     plan: {
       key: s.plan,
       name: planCatalog().find((p) => p.key === s.plan)?.name ?? "Free",
@@ -119,6 +119,7 @@ export const billingHandlers = [
 
   http.post("/api/billing/checkout", async ({ request }) => {
     if (scenario() === "unconfigured") return fail(503, "not_configured", "STRIPE_SECRET_KEY is not set (needed for billing)");
+    if (scenario() === "launch") return fail(503, "payments_not_live", "Top-ups open soon. Your credits keep working in the meantime.");
     const input = await body<CheckoutInput>(request);
     const s = current();
     const plan = "plan" in input ? planCatalog().find((p) => p.key === input.plan && p.checkout) : undefined;

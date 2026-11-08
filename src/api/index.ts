@@ -1,8 +1,10 @@
 // REST API under /api: every route requires auth (Clerk session JWT, an API key, or the MCP_TOKEN owner bypass),
-// and every request acts on exactly one workspace (src/api/auth.ts). The one exception is the invite link, which comes
-// before all of that: whoever follows it may not have a workspace yet.
+// and every request acts on exactly one workspace (src/api/auth.ts). Two exceptions come before all of that: the invite
+// link, because whoever follows it may not have a workspace yet, and /config, which the signed-out pricing page reads.
 import { Hono } from "hono";
+import { paymentsLive } from "../billing/accounts.ts";
 import type { AppEnv } from "../lib/context.ts";
+import { ipLimit } from "../lib/rate-limit.ts";
 import { admin } from "./admin.ts";
 import { approvals } from "./approvals.ts";
 import { autopilot } from "./autopilot.ts";
@@ -24,11 +26,25 @@ import { workflows } from "./workflows.ts";
 
 export const api = new Hono<AppEnv>();
 
-// Must stay above requireAuth: a route registered before a middleware answers without running it.
+// What a signed-out visitor may know about this instance. Reads no database.
+api.get("/config", (c) => {
+  c.header("Cache-Control", "public, max-age=60");
+  return c.json({ payments_live: paymentsLive(c.env) });
+});
+
+// Must stay above requireAuth: a route registered before a middleware answers without running it. Each link is a database
+// lookup anyone can ask for, so they are limited per IP.
+api.use("/invites/*", ipLimit<AppEnv>("RL_ANON", "invite"));
 api.route("/invites", inviteLinks);
 api.use("*", requireAuth);
 // Decisions an agent holding an API key must not make through REST either (src/api/guards.ts).
 guardHumanRoutes(api);
+// What spends money, per IP on top of the workspace's limits (src/services/limits.ts). The owner's own token is exempt.
+api.on(
+  "POST",
+  ["/leads/find", "/workflows/research", "/onboarding/propose", "/onboarding/read-website", "/workflow-definitions/:id/run", "/tasks/:id/regenerate"],
+  ipLimit<AppEnv>("RL_PAID", "paid", (c) => c.get("principal").kind === "owner_token"),
+);
 api.route("/leads", leads);
 // Notes on a lead and excluding it: /leads/:id/notes, /leads/:id/exclude.
 api.route("/leads", notes);
