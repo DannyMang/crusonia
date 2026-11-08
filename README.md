@@ -11,12 +11,16 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 
 | Path | What |
 | --- | --- |
-| `src/index.ts` | Worker entry: Hono app (`/`, `/health`, `/mcp`) + no-op cron handler |
+| `src/index.ts` | Worker entry: Hono app (`/`, `/health`, `/mcp`, `/api`, `/webhooks`) + minute cron |
 | `src/env.ts` | `Env` type (vars + secrets) and `requireEnv` |
-| `src/auth.ts` | Bearer-token middleware (`MCP_TOKEN`, constant-time compare) |
+| `src/auth.ts` | Bearer-token middleware for `/mcp` (`MCP_TOKEN`, constant-time compare) |
 | `src/mcp/route.ts` | `/mcp`: MCP Streamable HTTP (stateless, JSON responses), fresh server per request |
 | `src/mcp/server.ts` | MCP tool definitions: a thin layer over `src/services` |
-| `src/services/*.ts` | Reusable logic for the MCP tools and the REST API: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors` |
+| `src/api/*.ts` | REST routers: `auth` (Clerk or `MCP_TOKEN`), `leads`, `approvals`, `workflows`, `settings`, and signed `webhooks` |
+| `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron` |
+| `src/providers/*.ts` | Thin REST clients: `agentmail`, `naive` |
+| `src/lib/*.ts` | Errors (`{error: {code, message}}`), request helpers, Web Crypto, webhook signatures |
+| `test/*.test.ts` | `bun test`; `db.integration.test.ts` runs only with `TEST_DATABASE_URL` (a dev branch) |
 | `src/db.ts` | Neon HTTP driver (`getSql`), row types, `getLead`, `logEvent` |
 | `src/schema.sql` | Idempotent Postgres schema |
 | `scripts/migrate.ts` | Applies the schema to Neon (Bun) |
@@ -122,10 +126,52 @@ it when an agent's `mcp_servers[].url` is exactly that URL.
 Every write also appends an `events` row. No tool sends email or decides an approval: a send happens only after a
 human approves it.
 
+## REST API
+
+API only (no UI yet). Every `/api/*` call needs `Authorization: Bearer <token>`: a Clerk session token for a user in
+`CLERK_ALLOWED_USER_IDS`, or `MCP_TOKEN` as the owner/dev bypass. Single workspace for now. Errors are always
+`{"error": {"code", "message", "details?"}}`; a missing key answers 503 `not_configured` naming it.
+
+| Method | Path | What |
+| --- | --- | --- |
+| GET | `/api/leads` | List, newest first. Filters `stage`, `min_score`, `source`, `q` (email/name/company/domain); `limit` + `cursor` |
+| POST | `/api/leads` | Create an opted-in contact (`email`, optional `consent: {text, at?}`) |
+| POST | `/api/leads/import` | CSV import: JSON `{csv, mapping?, source?, dry_run?}` or a `text/csv` body. Dedupes by email, then company domain + name; reports created/updated/skipped per row |
+| GET | `/api/leads/:id` | Lead with evidence, drafts, approvals, messages, Naive sessions and the event timeline |
+| PATCH | `/api/leads/:id` | Stage, consent (`null` revokes and closes pending send approvals), basic fields |
+| DELETE | `/api/leads/:id` | Delete (cascades; the audit events stay) |
+| POST | `/api/leads/:id/drafts` | Owner-written draft: new version + send approval (opted-in, unsuppressed leads only) |
+| GET | `/api/approvals` | `status` (default `pending`), `kind`, `lead_id` |
+| GET | `/api/approvals/:code` | One approval |
+| POST | `/api/approvals/:code/approve` | send: re-checks every rule, then sends via AgentMail. tool: allow (`scope`) |
+| POST | `/api/approvals/:code/reject` | send: reject the draft. tool: deny |
+| POST | `/api/approvals/:code/edit` | New draft version + new approval (also the retry after expiry or a failed send) |
+| POST | `/api/approvals/:code/answer` | tool: `{decision, reason?, scope?}`; question: `{answers: {field: text}}`, forwarded to Naive |
+| POST | `/api/workflows/research` | `{lead_ids}` or `{cohort}`: one Naive session per lead (`NAIVE_AGENT_ID`) |
+| GET, PUT | `/api/settings/pause` | Global kill switch: no sends, no new sessions, no auto-allowed tools |
+| GET, POST | `/api/suppressions` | List (`q`, `cursor`) / add `{email, reason?}` |
+| DELETE | `/api/suppressions/:email` | Remove |
+| POST | `/webhooks/agentmail` | Svix-signed. `message.received` (match by thread, then sender; classify; stop follow-ups; unsubscribe suppresses), `message.bounced` (permanent: suppress), `message.complained`, `message.delivered` |
+| POST | `/webhooks/naive` | `Vetta-Signature`-signed. `session.idle`: allowlisted tools (`AUTO_CONFIRM_TOOLS`) are allowed, other tools and `ask_operator` questions become approvals |
+
+Rules enforced in code: the agent never sends; drafts are immutable (an edit is a new version and closes the old
+approval); a send approval is bound to the recipient and draft version, expires (`APPROVAL_TTL_MINUTES`, 30 by
+default for REST-created approvals), is consumed once, and is re-checked at send time (not expired, latest version,
+same recipient, consent, not suppressed, not paused) inside the SQL that consumes it. A draft is marked `sending`
+before AgentMail is called; an unconfirmed send is reconciled by its `draft-<id>` label, never resent blindly.
+Webhooks are verified on the raw body and deduped by provider event id. Inbound email is stored and pattern-matched
+as data, never followed as instructions. Every state change writes an `events` row.
+
+The minute cron expires stale approvals (an expired tool call is denied), reconciles running Naive sessions that
+missed a webhook (events after `last_seq`), and settles unconfirmed sends.
+
 ## Day to day
 
 - `bun run dev`: local Worker on :8787 (reads `.dev.vars`). `bunx wrangler dev --test-scheduled` to trigger the cron at `/__scheduled`.
-- `bun run typecheck`: Worker (`tsconfig.json`) and Bun scripts (`scripts/tsconfig.json`).
+- `bun run typecheck`: Worker (`tsconfig.json`), Bun scripts (`scripts/tsconfig.json`) and tests (`test/tsconfig.json`).
+- `bun test`: unit tests (signatures, approval rules, CSV, allowlist, classifier, providers with mocked fetch, auth, routes).
+  `TEST_DATABASE_URL=<dev branch> bun test test/db.integration.test.ts` also runs the send/reply/Naive flows against
+  a real database with mocked providers (never point it at production; it cleans up its rows).
 - `bun run deploy:dry`: build without deploying.
 - `bun run cf-typegen`: regenerate runtime types after changing `compatibility_date` or flags.
 

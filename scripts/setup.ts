@@ -206,7 +206,7 @@ async function setupNaive(baseUrl: string) {
 //              configs: { "crusonia.<tool>": { permission: "allow" }, "apify.<tool>": { permission: "allow" } } },
 //     budget: { cap_micro_usd, max_task_micro_usd, period: "day" } }
 // The mcp_servers url must equal the vault credential's mcp_server_url exactly for the token to be injected.
-// Store the returned agent id as NAIVE_AGENT_ID (add it to .dev.vars.example and src/env.ts then).
+// Store the returned agent id as NAIVE_AGENT_ID (already in .dev.vars.example and src/env.ts; POST /api/workflows/research uses it).
 export async function createNaiveAgent(_baseUrl: string): Promise<never> {
   throw new Error("TODO: createNaiveAgent is not implemented yet");
 }
