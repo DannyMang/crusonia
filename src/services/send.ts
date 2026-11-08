@@ -14,6 +14,7 @@ import { ProviderError, type FetchFn } from "../providers/http.ts";
 import { checkSendApproval } from "./approval-rules.ts";
 import type { ApprovalRow } from "./approvals.ts";
 import type { Draft } from "../db.ts";
+import { canSendEmail } from "./workspaces.ts";
 
 type DraftRow = Draft & { workspace_id: string; sending_at: Date | null; delivered_at: Date | null };
 
@@ -34,6 +35,14 @@ function agentMail(env: Env, fetchFn?: FetchFn) {
 export async function approveAndSend(deps: SendDeps, code: string): Promise<SendResult> {
   const { sql, ws, env, actor } = deps;
   const via = deps.via ?? "api";
+  // Checked before anything is read or consumed: the approval stays pending for when sending is enabled.
+  if (!canSendEmail(env, ws)) {
+    throw new ApiError(
+      403,
+      "sending_not_enabled",
+      "This workspace can't send email yet: every workspace would send from the instance owner's inbox. Ask the owner to add it to SEND_WORKSPACE_IDS.",
+    );
+  }
   const rows = await sql`
     select a.*, to_jsonb(d) as draft, to_jsonb(l) as lead,
            (select max(version) from drafts where lead_id = a.lead_id) as latest_version,
