@@ -8,6 +8,7 @@ import { signBridge, verifyBridge } from "../src/lib/signatures.ts";
 import {
   formatApprovalNotice,
   formatExpiryWarning,
+  formatSummary,
   imessageConfig,
   normalizeHandle,
   oneLine,
@@ -118,6 +119,11 @@ describe("notice wording", () => {
     );
     expect(formatExpiryWarning({ ...base, kind: "tool", payload: { name: "web_fetch" } }, soon)).toContain("it is denied after that");
     expect(formatExpiryWarning({ ...base, kind: "question", payload: { question: { prompt: "?", fields: [{ key: "a" }] } } }, soon)).toContain("Reply 7KXM <your answer>");
+  });
+
+  test("the send-cap summary", () => {
+    expect(formatSummary(1, "https://crusonia.example/")).toBe("+1 more approval waiting: open Crusonia (https://crusonia.example/app/approvals) or text status.");
+    expect(formatSummary(14, "https://crusonia.example")).toStartWith("+14 more approvals waiting");
   });
 
   test("timeLeft and oneLine", () => {
