@@ -13,6 +13,17 @@
     // Every minute: the scheduled handler will drive due work (expired approvals, stalled sessions).
     "crons": ["* * * * *"]
   },
+  // The dashboard SPA (web/, `bun run build:web`) is served as static assets. These paths run the Worker
+  // first (API, MCP, webhooks, health); any other path without a file falls back to index.html so the
+  // client-side router can handle /app/*, /onboarding/*, /sign-in.
+  "assets": {
+    "directory": "./web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/webhooks/*", "/health"]
+  },
+  // Version URLs (and aliased ones like app-crusonia.<subdomain>.workers.dev from
+  // `bun run deploy:preview`) stay on. They run with production's secrets and database.
+  "preview_urls": true,
   "vars": {
     // Public base URL of this Worker. Webhooks and the MCP endpoint are registered under it.
     "PUBLIC_URL": "https://crusonia.veri-web.workers.dev"
