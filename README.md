@@ -5,7 +5,8 @@ GTM engine (a Clay/Apollo alternative run by AI agents). Cloudflare Worker (Hono
 Agents (Naive, or your own Claude Code / Cursor / Codex) work through our MCP server at `/mcp`; AgentMail handles
 email (opted-in leads only); Apify supplies web and lead data (our MCP tools call its REST API, and Naive agents can
 also use Apify's hosted MCP server); HubSpot and Notion are synced; Clerk handles users; Stripe bills hosted usage
-in credits (see [Billing](#billing-stripe)).
+in credits (see [Billing](#billing-stripe)); the owner can approve drafts by iMessage through Photon (see
+[iMessage approvals](#imessage-approvals-photon)).
 
 Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri-web.workers.dev/mcp
 
@@ -20,7 +21,7 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 | `src/mcp/server.ts` | MCP tool definitions: a thin layer over `src/services` |
 | `src/api/*.ts` | REST routers: `auth` (Clerk, API key or `MCP_TOKEN`), `leads`, `approvals`, `workflows`, `settings`, signed `webhooks`; web app: `dashboard` (me, summary, status, replies), `onboarding` (profile, read-website, propose), `experiments`, `keys`; `billing` (Stripe); `integrations` (CRM sync) |
 | `src/billing/*.ts` | Stripe billing: `plans` (tiers, packs, the credit definition: the one file to edit), `accounts` (billing owner, ledger, 402 gate), `checkout` (Checkout and Customer Portal), `webhook` (Stripe events), `usage` (debits for finished Naive sessions), `expiry` (plan credit rollover), `overview`, `constants` |
-| `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron`; web app: `runs` (workflows/runs from Naive sessions and events, onboarding and find-leads sessions), `summary`, `replies`, `experiments`, `api-keys`; CRM sync: `crm-sync` (HubSpot/Notion push, HubSpot import, status), `crm-queue` (queue, retry, backoff), `crm-fields` (field mapping and ownership) |
+| `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron`; web app: `runs` (workflows/runs from Naive sessions and events, onboarding and find-leads sessions), `summary`, `replies`, `experiments`, `api-keys`; CRM sync: `crm-sync` (HubSpot/Notion push, HubSpot import, status), `crm-queue` (queue, retry, backoff), `crm-fields` (field mapping and ownership); `imessage` (notice queue for the bridge, owner commands, message wording) |
 | `src/providers/*.ts` | Thin REST clients: `agentmail`, `naive`, `hubspot`, `notion` (the last two paced under their rate limits, 429-aware), `stripe` (no SDK, pinned API version) |
 | `src/lib/*.ts` | Errors (`{error: {code, message}}`), request helpers, Web Crypto, webhook signatures |
 | `test/*.test.ts` | `bun test`; `db.integration.test.ts` runs only with `TEST_DATABASE_URL` (a dev branch) |
@@ -30,6 +31,7 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 | `scripts/setup.ts` | Creates the AgentMail inbox/webhook and the Naive webhook, vault and research agent; `--stripe`: billing products, prices, portal and webhook (`scripts/lib/stripe-setup.ts`); `--crm`: HubSpot properties and the Notion leads database (`scripts/lib/crm-setup.ts`) (Bun) |
 | `scripts/lib/naive-agent.ts` | The Naive agent definition: tools and permissions, MCP servers, model, budget |
 | `playbooks/research.md` | The research agent's system prompt (versioned in its front matter) |
+| `bridge/` | iMessage bridge (Bun, Photon Spectrum): its own package, Dockerfile, tests and `deploy/aws.sh`. See [iMessage approvals](#imessage-approvals-photon) |
 | `web/` | Dashboard SPA (React + Vite + Tailwind, Clerk sign-in), built to `web/dist` and served as static assets. See [Web app](#web-app) |
 | `wrangler.jsonc` | Worker config (cron every minute, `PUBLIC_URL`, static assets with `/api`, `/mcp`, `/webhooks`, `/health` routed to the Worker first) |
 | `worker-configuration.d.ts` | Generated runtime types (`bun run cf-typegen`) |
@@ -49,6 +51,7 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 6. **Upload again and redeploy**: `bun run secrets && bun run deploy`.
 7. **Billing (optional)**: see [Billing (Stripe)](#billing-stripe).
 8. **CRM sync (optional)**: off until you turn it on; see [CRM sync](#crm-sync).
+9. **iMessage approvals (optional)**: off until you turn it on; see [iMessage approvals](#imessage-approvals-photon).
 
 ## Connect your agent (MCP)
 
@@ -185,7 +188,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | DELETE | `/api/suppressions/:email` | Remove |
 | GET | `/api/me` | `{user: {id, email?, name?}, auth: "clerk" \| "token"}` |
 | GET | `/api/summary` | Home: `pipeline` (found, researched, drafted, awaiting_approval, sent, replied, meetings: where leads are now), top 5 `pending_approvals`, `active_workflows`, 5 `recent_replies`, `spend` (`week_usd` from Naive session usage, `budget_usd` from `WEEKLY_BUDGET_USD`), `paused` |
-| GET | `/api/status` | `get_status` data plus `inbox_address`, `naive_agent_configured`, `mcp_url`, `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error) |
+| GET | `/api/status` | `get_status` data plus `inbox_address`, `naive_agent_configured`, `mcp_url`, `billing` (`configured`, `webhook_configured`, `mode`, `enforced`), `crm_sync` (per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error), `imessage` (`enabled`, `active`, `missing`, `bridge` as last reported with `online`, `undeliverable_notices`) |
 | GET, PUT | `/api/profile` | `{profile}`: company, website, sells, icp_description, segments, signals, sources (PUT replaces it) |
 | POST | `/api/onboarding/read-website` | `{url}` -> `{pages: [{url, title, text}]}`. Synchronous; Apify crawler with `APIFY_TOKEN` (a few cents), else a plain fetch |
 | POST | `/api/onboarding/propose` | `{url?, description?}` -> `{session_id}`: a Naive session reads the site and saves a proposed profile |
@@ -207,6 +210,8 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/integrations/hubspot/import` | Queue the HubSpot import (contacts, then companies, 100 per minute). Needs only the token; 409 while one runs |
 | POST | `/webhooks/agentmail` | Svix-signed. `message.received` (match by thread, then sender; classify; stop follow-ups; unsubscribe suppresses), `message.bounced` (permanent: suppress), `message.complained`, `message.delivered` |
 | POST | `/webhooks/naive` | `Vetta-Signature`-signed. `session.idle`: allowlisted tools (`AUTO_CONFIRM_TOOLS`) are allowed, other tools and `ask_operator` questions become approvals |
+| POST | `/webhooks/photon/poll` | iMessage bridge, `X-Crusonia-Signature`-signed (`BRIDGE_SECRET`): delivery acks + bridge status in, notices to text the owner out |
+| POST | `/webhooks/photon` | iMessage bridge, signed: one owner command (approve, reject, edit, answer, tapback, status, pause, resume); answers with the reply text |
 | POST | `/webhooks/stripe` | `Stripe-Signature`-signed (`STRIPE_WEBHOOK_SECRET`; no secret, no processing). Credits packs and monthly plans, tracks subscriptions, claws back refunds; see [Billing](#billing-stripe) |
 
 Rules enforced in code: the agent never sends; drafts are immutable (an edit is a new version and closes the old
@@ -405,25 +410,136 @@ Build and ship: `VITE_CLERK_PUBLISHABLE_KEY` (publishable, safe in the bundle) m
 user id in `CLERK_ALLOWED_USER_IDS`. Note: while an uploaded version is newer than the deployed one,
 `wrangler secret put` refuses to run; use `wrangler versions secret put` or deploy first.
 
+## iMessage approvals (Photon)
+
+The owner can approve drafts and agent requests from their phone. Off until `IMESSAGE_ENABLED=true`.
+
+```
+Worker  <── signed polls and commands ──  bridge (bridge/, one small box)  ── gRPC ──  Photon Spectrum  ──  owner's iPhone
+```
+
+Photon's Stable SDK sends iMessages over gRPC from Node or Bun; it has no HTTP send API, and a Worker cannot hold the
+connection. So a small Bun service, the **bridge**, holds it. The bridge is **outbound-only**: it accepts no connections,
+so its box has no open port, no TLS certificate and no inbound firewall rule.
+
+- **Notices.** Every ~5 s the bridge calls `POST /webhooks/photon/poll`. The Worker queues one notice per approval opened in
+  the last 24 hours, plus one reminder when an approval is in the last quarter of its life (at most its last 12 hours). It
+  leases up to 5 notices at a time with their text, and records the bridge's delivery acks, including the iMessage id of
+  each delivered bubble (`imessage_outbox`). A lease that is never acked is retried after 2 minutes, 5 attempts at most.
+- **Replies.** The bridge parses each owner message and posts it to `POST /webhooks/photon`. The Worker applies it through
+  the same services as the REST API and answers with the text the bridge sends back.
+
+What the owner sees:
+
+```
+Draft to Dana Okafor (Fieldnote) <dana@fieldnote.example>:
+"Quick question about Fieldnote"
+
+Hi Dana, ...
+
+Tap 👍 on this message to send it, 👎 to reject. Or reply A 7KXM, R 7KXM, or E 7KXM <new text>. Expires in 7d.
+```
+
+Tool requests read `Agent wants to run apify.run_actor (lead: ...)` with `Args: ...`, and questions read
+`Agent asks (lead: ...): "..."` with `Reply 9PQR <your answer>`.
+
+| Owner does | Effect |
+| --- | --- |
+| 👍 tapback on a notice | Approves exactly that approval and draft version (sends the email, or allows the tool call) |
+| 👎 tapback on a notice | Rejects the draft, or denies the tool call |
+| `A <code>` | Approve (exactly this, nothing after the code) |
+| `R <code> [reason]` | Reject / deny |
+| `E <code> <new text>` | A new draft version with this body. The old code closes and the new version gets its own notice to approve |
+| `<code> <answer>` | Answer an agent question. Several fields: `9PQR role: CTO; budget: 5k` |
+| `status` | Paused or running, and the 5 approvals expiring soonest |
+| `pause` / `resume` | The global kill switch (`/api/settings/pause`) |
+| `help` | The list above (answered by the bridge) |
+
+Codes are the approvals' 4-character short codes, and case doesn't matter. Other tapbacks (❤️, 😂) do nothing.
+
+### Security model
+
+- **Owner only.** The bridge acts only on direct messages from `OWNER_PHONE` (plus optional `OWNER_ALIASES`, such as the
+  owner's Apple ID email). Everything else is logged with a masked handle and dropped. It only ever texts `OWNER_PHONE`,
+  and the Worker's notices carry no recipient. Setting `OWNER_PHONE` on the Worker too makes `/webhooks/photon` refuse
+  any other sender.
+- **Signed calls.** Every bridge call is signed with HMAC-SHA256 over `<timestamp>.<path>.<raw body>`, using `BRIDGE_SECRET`:
+  - Headers: `X-Crusonia-Timestamp` and `X-Crusonia-Signature: v1=<hex>`.
+  - The 5-minute window rejects replays.
+  - The signed path binds a signature to its route, so a poll signature is not valid for a command.
+  - Commands are deduped by iMessage message id in `webhook_events`; a retried delivery gets the first reply and acts
+    only once.
+- **Same rules as the app.** Decisions go through the approval services: expiry, single use, latest draft version, same
+  recipient, consent, suppression and pause are all re-checked when the decision is applied. Each is recorded with
+  `decided_via = 'imessage'` and an `events` row.
+- **Tapbacks are bound to the bubble.** Each notice stores the iMessage id of its bubble and the draft version it showed.
+  A 👍 on an older version's bubble hits a closed approval and sends nothing. Plain text replies can't be tied to a bubble
+  (Photon), so they need the code.
+- **No ambiguous approvals.** "yes", "ok" or "approve" never decide anything, and approving needs exactly `A <code>`.
+- **Untrusted text.** Agent-written tool arguments and questions, and lead fields from CSVs or scraping, are flattened to
+  one line, capped and labeled ("Agent asks").
+- **A leaked box can do only what the bridge does:** text the owner, and send owner commands for codes it knows. The box
+  holds no database URL, no API key and no Worker secret other than `BRIDGE_SECRET`, and the Photon credentials live
+  nowhere else. To rotate: set a new `BRIDGE_SECRET` on the Worker, then recreate the box.
+- **Photon limits.** 5,000 messages per server per day, and 50 new conversations per line per day. On Free and Pro
+  plans the shared line only messages registered users: add the owner's number under **Users** in the Photon dashboard,
+  or sends fail with "Target not allowed for this project".
+
+### Turn it on
+
+1. **Photon** (Stable, app.photon.codes): open your project's **Settings** for the project ID and secret, add the owner's
+   number under **Users**, and text the line once from that phone. Conversations the user starts deliver better.
+2. **Secret:** `openssl rand -hex 32` into a private file as `BRIDGE_SECRET=...`. The same value goes to the Worker and
+   the bridge.
+3. **Worker:**
+   - `bun run migrate` (adds `imessage_outbox`).
+   - Set the secrets `BRIDGE_SECRET`, `IMESSAGE_ENABLED=true` and optionally `OWNER_PHONE`.
+   - Deploy.
+   - `GET /api/status` shows `imessage.bridge.online` once the bridge polls.
+4. **Bridge** on AWS Lightsail, $5/month (`nano_3_0`: 512 MB, public IPv4 included):
+
+   ```sh
+   GIT_REF=<pushed commit sha> CREDS_FILE=<file with SPECTRUM_PROJECT_ID/SECRET, OWNER_PHONE> \
+   BRIDGE_SECRET_FILE=<file with BRIDGE_SECRET> SEND_TEST_MESSAGE=1 bridge/deploy/aws.sh up
+   ```
+
+   - The script creates one Ubuntu instance tagged `project=crusonia`, closes every port, and requires IMDSv2 with hop
+     limit 1.
+   - A first-boot script installs Docker, builds the bridge at that commit and runs it: `--restart always`, read-only
+     root filesystem, no capabilities.
+   - It also writes the five settings to a root-only env file and, with `SEND_TEST_MESSAGE=1`, texts the owner once.
+   - There is no SSH. Check the conversation read-only with
+     `cd bridge && bun --env-file=<creds> deploy/check-history.ts`.
+   - Ship a new commit or rotate secrets with `bridge/deploy/aws.sh recreate` (the bridge keeps no state), and remove
+     everything with `bridge/deploy/aws.sh down --yes`.
+   - The settings travel in the instance's launch script, which AWS keeps as instance data, and processes on the box can
+     read them from the metadata service (the container cannot, because of the hop limit).
+   - Any Docker host works the same way: `docker build bridge` and run it with `--env-file` (see
+     `bridge/.env.example`). It never needs a published port.
+
+Locally, without Photon:
+
+```sh
+cd bridge && bun install && bun test
+SPECTRUM_MODE=mock OWNER_PHONE=+15550001111 BRIDGE_SECRET=<32+ chars> WORKER_URL=http://localhost:8787 bun src/index.ts
+BRIDGE_SECRET=<same> bun src/cli.ts inbound +15550001111 status   # simulate an owner text; prints the reply
+```
+
 ## Day to day
 
 - `bun run dev`: local Worker on :8787 (reads `.dev.vars`). `bunx wrangler dev --test-scheduled` to trigger the cron at `/__scheduled`.
 - `bun run typecheck`: Worker (`tsconfig.json`), Bun scripts (`scripts/tsconfig.json`), tests (`test/tsconfig.json`) and the web app (`web/tsconfig.json`).
 - `bun test`: unit tests (signatures, approval rules and lifetimes, CSV, allowlist, classifier, providers with mocked
   fetch, auth, API keys, routes, the Naive agent definition and playbook, summary/experiment/run-step logic; CRM sync
-  field mapping, queue retry/backoff and 429s, and HubSpot/Notion pushes and setup against in-memory fakes). With
-  `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts` (send/reply/Naive flows),
-  `test/web-api.integration.test.ts` (keys, summary, experiments, replies, workflows, onboarding) and
-  `test/crm-sync.integration.test.ts` (trigger, queue, pushes, import) also run against a real database with mocked
-  providers (never point it at production; they clean up their rows).
-- `bun run deploy:dry`: build the web app and the Worker without deploying. `bun run deploy` builds the web app first too.
   field mapping, queue retry/backoff and 429s, and HubSpot/Notion pushes and setup against in-memory fakes; billing with
-  an in-memory Stripe). With `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts` (send/reply/Naive flows),
+  an in-memory Stripe; iMessage wording, signatures and webhook checks; and the bridge's own tests in `bridge/test`).
+  With `TEST_DATABASE_URL=<dev branch>`, `test/db.integration.test.ts` (send/reply/Naive flows),
   `test/web-api.integration.test.ts` (keys, summary, experiments, replies, workflows, onboarding),
-  `test/crm-sync.integration.test.ts` (trigger, queue, pushes, import) and `test/billing.integration.test.ts` (webhook,
-  ledger, refunds, rollover, usage debits, the 402 gate) also run against a real database with mocked providers (never
-  point it at production; they clean up their rows).
-- `bun run deploy:dry`: build without deploying.
+  `test/crm-sync.integration.test.ts` (trigger, queue, pushes, import), `test/billing.integration.test.ts` (webhook,
+  ledger, refunds, rollover, usage debits, the 402 gate) and `test/imessage.integration.test.ts` (bridge poll, owner
+  commands and tapbacks through the real approval services) also run against a real database with mocked providers
+  (never point it at production; they clean up their rows).
+- `bun run deploy:dry`: build the web app and the Worker without deploying. `bun run deploy` builds the web app first too.
 - `bun run cf-typegen`: regenerate runtime types after changing `compatibility_date` or flags.
 
 ## Contributing
