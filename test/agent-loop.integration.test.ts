@@ -15,7 +15,8 @@ import { createDraft } from "../src/services/drafts.ts";
 import { addLeads, getLeadDetail, saveResearch, scoreLead } from "../src/services/leads.ts";
 import { addNote, deleteNote, editNote, excludeLead, recentOwnerNotes, unexcludeLead } from "../src/services/notes.ts";
 import { getQualificationWorkflow, saveQualificationWorkflow } from "../src/services/qualification.ts";
-import { getRunDetail } from "../src/services/runs.ts";
+import { getFindRun, getRunDetail, startFindLeads } from "../src/services/runs.ts";
+import { searchLeads } from "../src/services/crm.ts";
 import { listTasks, markTaskSent, skipTask } from "../src/services/tasks.ts";
 import { exportTrace, getTrace, pruneTraces } from "../src/services/traces.ts";
 import { handleSessionIdle, startResearch } from "../src/services/workflows.ts";
@@ -398,6 +399,54 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
       if (before) await sql`update settings set value = ${JSON.stringify(before)}::jsonb where key = 'qualification_workflow'`;
       else await sql`delete from settings where key = 'qualification_workflow'`;
       await sql`delete from events where kind = 'qualification_workflow_saved' and data->>'actor' = 'test' and data->'workflow'->>'name' = ${`IT ${run}`}`;
+    }
+  });
+
+  test("leads list: notes_count and the latest rating per row", async () => {
+    const { results } = await addLeads(sql, [found("rated"), found("plain")]);
+    const [rated, plain] = results.map((r) => r.id!);
+    await addNote(sql, { leadId: rated!, author: "user:owner", body: "Agency", kind: "thumbs_down" });
+    await addNote(sql, { leadId: rated!, author: "user:owner", body: "Actually a product company", kind: "thumbs_up" });
+    await addNote(sql, { leadId: rated!, author: "user:owner", body: "Call next week" });
+    const page = await searchLeads(sql, { q: `-${run}-itloop.dev`, limit: 200 });
+    const row = (id: string) => page.data.find((l) => l.id === id) as { notes_count: number; rating: string | null } | undefined;
+    expect(row(rated!)).toMatchObject({ notes_count: 3, rating: "up" });
+    expect(row(plain!)).toMatchObject({ notes_count: 0, rating: null });
+  });
+
+  test("find runs: like_lead_id shapes the brief; GET /api/leads/find/:id lists the leads the run touched with their status", async () => {
+    const before = (await sql`select value from settings where key = 'profile'`)[0]?.value ?? null;
+    try {
+      if (!before) await sql`insert into settings (key, value) values ('profile', ${JSON.stringify({ company: "IT", sells: "x", icp_description: "y" })}::jsonb)`;
+      const { results } = await addLeads(sql, [found("like")]);
+      const likeId = results[0]!.id!;
+      const nv = provider((c) => (c.method === "POST" && c.url.endsWith("/v1/sessions") ? Response.json({ id: sid("find"), status: "running" }) : undefined));
+      expect(await failure(startFindLeads(sql, env, 5, "test", nv.fn, { likeLeadId: "lead_missing" }))).toBe("404 not_found");
+      const { session_id } = await startFindLeads(sql, env, 5, "test", nv.fn, { likeLeadId: likeId });
+      expect(session_id).toBe(sid("find"));
+      expect(nv.calls[0]!.body.message).toContain(`companies like lead ${likeId}`);
+      expect((await sql`select input from naive_sessions where id = ${session_id}`)[0]!.input).toEqual({ count: 5, like_lead_id: likeId });
+
+      // The run's add_leads call, as the trace stores it.
+      const added = await addLeads(sql, [found("found1"), found("like")]);
+      const output = JSON.stringify(added, null, 2);
+      const events = provider((c) =>
+        c.url.includes(`/sessions/${session_id}/events`)
+          ? Response.json({
+              data: Number(new URL(c.url).searchParams.get("after_seq")) > 0 ? [] : [
+                { seq: 1, type: "tool.completed", data: { tool_call_id: "a1", name: "crusonia.add_leads", output, is_error: false }, created_at: new Date().toISOString() },
+              ],
+              has_more: false,
+              next_cursor: null,
+            })
+          : undefined,
+      );
+      const res = await getFindRun(sql, env, session_id, events.fn);
+      expect(res.run).toMatchObject({ id: session_id, purpose: "find_leads" });
+      expect(Object.fromEntries(res.leads.map((l) => [l.domain, l.find_status]))).toEqual({ [domain("found1")]: "created", [domain("like")]: "known" });
+      await expect(getFindRun(sql, env, sid("nope"))).rejects.toMatchObject({ status: 404 });
+    } finally {
+      if (!before) await sql`delete from settings where key = 'profile'`;
     }
   });
 
