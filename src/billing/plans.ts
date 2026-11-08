@@ -2,7 +2,7 @@
 // `bun run setup --stripe` (creates or updates the Stripe products and prices by lookup_key) and a deploy.
 //
 // TODO(owner): pending pricing decision. Every name, price and credit amount below is a placeholder (the owner's
-// $0 / $20 / $100 structure on top of the "Pricing research" proposal in Notion); nothing here is public yet.
+// Free / Pro $20 / Scale $100 structure on top of the "Pricing research" proposal in Notion); nothing is public yet.
 //
 // The credit
 // - credit_ledger.amount is in whole credits (signed bigint): + grants and purchases, - usage and refunds.
@@ -13,7 +13,9 @@
 //   on provider cost (before Stripe fees). Data calls (Apify search and page reads) are not metered yet.
 // - Packs and plans grant the fixed amounts below. The amount a customer paid never sets the credits (coupons,
 //   taxes and currency rounding change what is paid, not what is granted).
-// - Credits do not expire yet. TODO(owner): the proposal rolls unused plan credit over for one month only.
+// - Included plan credits roll over for INCLUDED_CREDIT_ROLLOVER_MONTHS after the period they were granted for,
+//   then the unused rest expires (an `expire` ledger row, written by the minute cron). Usage spends the
+//   soonest-expiring credits first. Top-up packs and the free sample never expire.
 // - Plan changes in the Customer Portal apply without proration: the new plan's credits arrive with its next paid
 //   invoice (an upgrade can top up with a pack meanwhile). TODO(owner): prorated upgrades would need a rule for
 //   the credits granted mid-period.
@@ -36,6 +38,12 @@ export const USAGE_MARKUP_BPS = 20_000;
  * 60 credits for a hosted-agent lead end to end. The BILLING_FREE_CREDITS var overrides it; "0" turns it off.
  */
 export const FREE_SAMPLE_CREDITS = 300;
+
+/**
+ * How long unused included plan credits carry over after the billing period they were granted for: 1 = credits
+ * for March can still be spent in April and expire at the end of April. null = they never expire.
+ */
+export const INCLUDED_CREDIT_ROLLOVER_MONTHS: number | null = 1;
 
 export type SubscriptionPlan = {
   kind: "subscription";
@@ -77,20 +85,20 @@ export const FREE_PLAN = {
 export const PLANS: readonly SubscriptionPlan[] = [
   {
     kind: "subscription",
-    key: "starter",
-    name: "Crusonia Starter",
-    description: "2,000 credits ($20 of usage) every month.",
-    lookupKey: "crusonia_starter_monthly",
+    key: "pro",
+    name: "Crusonia Pro",
+    description: "2,000 credits ($20 of usage) every month. Unused credit rolls over for one month.",
+    lookupKey: "crusonia_pro_monthly",
     unitAmount: 2_000,
     interval: "month",
     monthlyCredits: 2_000,
   },
   {
     kind: "subscription",
-    key: "pro",
-    name: "Crusonia Pro",
-    description: "10,000 credits ($100 of usage) every month.",
-    lookupKey: "crusonia_pro_monthly",
+    key: "scale",
+    name: "Crusonia Scale",
+    description: "10,000 credits ($100 of usage) every month. Unused credit rolls over for one month.",
+    lookupKey: "crusonia_scale_monthly",
     unitAmount: 10_000,
     interval: "month",
     monthlyCredits: 10_000,

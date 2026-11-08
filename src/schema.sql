@@ -261,24 +261,29 @@ create table if not exists billing_accounts (
 );
 
 -- Append-only credit ledger. `amount` is in whole credits (1 credit = $0.01 of list value), signed:
--- + grant | pack | plan, - usage | refund. The balance is sum(amount) per owner (may go negative after a refund
--- or a long session). `source` makes every write idempotent:
+-- + grant | pack | plan, - usage | refund | expire. The balance is sum(amount) per owner (may go negative after a
+-- refund or a long session). Plan grants carry `expires_at` (the period end plus the rollover month); usage spends
+-- the soonest-expiring credits first and the cron writes off what is left at expiry. `source` makes every write
+-- idempotent:
 --   signup:<owner>          free sample (once per owner)
 --   checkout:<session id>   credit pack bought through Checkout (payment mode)
 --   invoice:<invoice id>    monthly plan credits for a paid subscription invoice
 --   usage:<naive session>   hosted agent spend x markup when the session finishes (+ `:<micro-usd>` top-ups if
 --                           the session resumes and spends more)
 --   refund:<charge>:<cumulative amount refunded>   claw-back of the purchase in `purchase_source`
+--   expire:<grant source>   the unused rest of an expired plan grant (`purchase_source`)
 --   adjustment:<anything>   manual correction (insert by hand)
 create table if not exists credit_ledger (
   id                    bigserial primary key,
   owner_id              text not null,
   amount                bigint not null check (amount <> 0),
-  reason                text not null check (reason in ('grant', 'pack', 'plan', 'usage', 'refund', 'adjustment')),
+  reason                text not null check (reason in ('grant', 'pack', 'plan', 'usage', 'refund', 'expire', 'adjustment')),
   source                text not null unique,
-  -- usage rows: the Naive session; refund rows: the source of the purchase clawed back
+  -- usage rows: the Naive session; refund and expire rows: the source of the purchase they reduce
   session_id            text,
   purchase_source       text,
+  -- plan grants: when the unused rest expires (null = never)
+  expires_at            timestamptz,
   -- purchases paid through a Checkout payment: the PaymentIntent a later refund points to
   stripe_payment_intent text,
   data                  jsonb not null default '{}',
@@ -288,6 +293,7 @@ create index if not exists credit_ledger_owner_idx on credit_ledger (owner_id, i
 create index if not exists credit_ledger_session_idx on credit_ledger (session_id) where session_id is not null;
 create index if not exists credit_ledger_purchase_idx on credit_ledger (purchase_source) where purchase_source is not null;
 create index if not exists credit_ledger_pi_idx on credit_ledger (stripe_payment_intent) where stripe_payment_intent is not null;
+create index if not exists credit_ledger_expires_idx on credit_ledger (expires_at) where expires_at is not null;
 
 -- Enforce append-only: corrections are new rows. Deletes are allowed only inside a transaction that sets
 -- `crusonia.allow_ledger_delete = 'on'` (test cleanup on a dev branch).

@@ -13,7 +13,7 @@ import type { FetchFn } from "../providers/http.ts";
 import type { StripeList } from "../providers/stripe.ts";
 import { addLedgerRow } from "./accounts.ts";
 import { offerForPriceId, stripeFor } from "./checkout.ts";
-import { offerForPrice, packByKey, type CreditPack } from "./plans.ts";
+import { INCLUDED_CREDIT_ROLLOVER_MONTHS, offerForPrice, packByKey, type CreditPack } from "./plans.ts";
 
 export const StripeEventSchema = z.looseObject({
   id: z.string().min(1).max(255),
@@ -70,6 +70,8 @@ export type BillingAction =
       subscription: string | null;
       billingReason: string;
       priceId: string | null;
+      /** End of the billing period the line covers (unix seconds): included credits roll over from here. */
+      periodEnd: number | null;
     }
   | {
       kind: "refund";
@@ -138,6 +140,7 @@ export function interpretStripeEvent(event: StripeEvent): BillingAction {
         subscription: idOf(details.subscription),
         billingReason,
         priceId: line ? idOf(obj(obj(line.pricing).price_details).price) : null,
+        periodEnd: line ? num(obj(line.period).end) : null,
       };
     }
 
@@ -307,6 +310,7 @@ export async function handleStripeEvent(sql: Sql, env: Env, event: StripeEvent, 
         reason: "plan",
         source,
         data: { plan: offer.key, billing_reason: action.billingReason, subscription: action.subscription },
+        expiry: { periodEnd: action.periodEnd, rolloverMonths: INCLUDED_CREDIT_ROLLOVER_MONTHS },
       });
       await audit("billing_credited", { owner_id: who.owner, reason: "plan", plan: offer.key, credits: offer.monthlyCredits, source, duplicate: !written });
       return { action: action.kind, credits: written ? offer.monthlyCredits : 0, duplicate_source: !written };
@@ -365,14 +369,16 @@ async function applyRefund(
     const target = clawbackTarget(granted, action.amount, action.amountRefunded);
     const source = `refund:${action.charge}:${action.amountRefunded}${purchases.length > 1 ? `:${p.source}` : ""}`;
     const data = { charge: action.charge, amount: action.amount, amount_refunded: action.amountRefunded, granted, clawback_total: target };
-    // Serialized per purchase: the row claws back only what earlier refunds of this purchase did not.
+    // Serialized per purchase: the row claws back only what earlier refunds of this purchase did not, and never
+    // what already expired unused (that was written off by an `expire` row).
     const [, rows] = await sql.transaction([
       sql`select pg_advisory_xact_lock(hashtext(${`refund:${p.source}`}))::text as locked`,
       sql`
         insert into credit_ledger (owner_id, amount, reason, source, purchase_source, data)
-        select ${p.owner_id}, -(${target}::bigint - r.clawed), 'refund', ${source}, ${p.source}, ${JSON.stringify(data)}::jsonb
-        from (select coalesce(-sum(amount), 0)::bigint as clawed from credit_ledger where purchase_source = ${p.source} and reason = 'refund') r
-        where ${target}::bigint > r.clawed
+        select ${p.owner_id}, -(greatest(${target}::bigint - x.expired, 0) - r.clawed), 'refund', ${source}, ${p.source}, ${JSON.stringify(data)}::jsonb
+        from (select coalesce(-sum(amount), 0)::bigint as clawed from credit_ledger where purchase_source = ${p.source} and reason = 'refund') r,
+             (select coalesce(-sum(amount), 0)::bigint as expired from credit_ledger where purchase_source = ${p.source} and reason = 'expire') x
+        where greatest(${target}::bigint - x.expired, 0) > r.clawed
         on conflict (source) do nothing
         returning amount::text`,
     ]);

@@ -82,12 +82,22 @@ export async function addLedgerRow(
     source: string;
     paymentIntent?: string | null;
     data?: Record<string, unknown>;
+    /**
+     * Included credits that roll over: they expire `rolloverMonths` after `periodEnd` (unix seconds; about a month
+     * from now when unknown). Omitted, or rolloverMonths null: they never expire.
+     */
+    expiry?: { periodEnd: number | null; rolloverMonths: number | null };
   },
 ): Promise<boolean> {
+  const months = row.expiry?.rolloverMonths ?? null;
+  const periodEnd = row.expiry?.periodEnd ?? null;
   const inserted = await sql`
-    insert into credit_ledger (owner_id, amount, reason, source, stripe_payment_intent, data)
+    insert into credit_ledger (owner_id, amount, reason, source, stripe_payment_intent, data, expires_at)
     values (${row.ownerId}, ${row.amount}::bigint, ${row.reason}, ${row.source}, ${row.paymentIntent ?? null},
-            ${JSON.stringify(row.data ?? {})}::jsonb)
+            ${JSON.stringify(row.data ?? {})}::jsonb,
+            case when ${months}::int is null then null
+                 else coalesce(to_timestamp(${periodEnd}::double precision), now() + interval '1 month') + make_interval(months => ${months}::int)
+            end)
     on conflict (source) do nothing
     returning id`;
   return inserted.length > 0;

@@ -9,8 +9,11 @@ import { describe, expect, test } from "bun:test";
 import { checkStripeKey, setupStripe } from "../scripts/lib/stripe-setup.ts";
 import { billingOwnerOf, requireCredits } from "../src/billing/accounts.ts";
 import { STRIPE_EVENTS, crusoniaMetadata } from "../src/billing/constants.ts";
+import { replayLedger, type LedgerEntry } from "../src/billing/expiry.ts";
 import {
+  FREE_PLAN,
   FREE_SAMPLE_CREDITS,
+  INCLUDED_CREDIT_ROLLOVER_MONTHS,
   OFFERS,
   PACKS,
   PLANS,
@@ -52,15 +55,18 @@ describe("plans", () => {
     expect(PACKS.every((p) => p.credits > 0)).toBe(true);
   });
 
-  test("placeholder tiers ($0 / $20 / $100): 1 credit = $0.01, Starter 2,000 credits, Pro 10,000 credits", () => {
-    expect(planByKey("starter")).toMatchObject({ unitAmount: 2_000, monthlyCredits: 2_000, interval: "month" });
-    expect(planByKey("pro")).toMatchObject({ unitAmount: 10_000, monthlyCredits: 10_000, interval: "month" });
+  test("placeholder tiers (Free / Pro $20 / Scale $100): 1 credit = $0.01, Pro 2,000 credits, Scale 10,000 credits", () => {
+    expect(planByKey("pro")).toMatchObject({ unitAmount: 2_000, monthlyCredits: 2_000, interval: "month", lookupKey: "crusonia_pro_monthly" });
+    expect(planByKey("scale")).toMatchObject({ unitAmount: 10_000, monthlyCredits: 10_000, interval: "month", lookupKey: "crusonia_scale_monthly" });
+    expect(FREE_PLAN).toMatchObject({ key: "free", unitAmount: 0 });
+    expect(INCLUDED_CREDIT_ROLLOVER_MONTHS).toBe(1);
     expect(PACKS.map((p) => [p.unitAmount, p.credits])).toEqual([
       [1_000, 1_000],
       [5_000, 5_000],
       [20_000, 20_000],
     ]);
-    expect(displayPrice(planByKey("pro")!)).toBe("$100/mo");
+    expect(displayPrice(planByKey("pro")!)).toBe("$20/mo");
+    expect(displayPrice(planByKey("scale")!)).toBe("$100/mo");
     expect(OFFERS.map((o) => o.description).join(" ")).not.toMatch(/hubspot|notion/i);
     expect(displayPrice(packByKey("small")!)).toBe("$10");
   });
@@ -213,12 +219,24 @@ describe("interpretStripeEvent", () => {
           lines: {
             data: [
               { id: "il_p", parent: { type: "subscription_item_details", subscription_item_details: { proration: true } }, pricing: { price_details: { price: "price_old" } } },
-              { id: "il_1", parent: { type: "subscription_item_details", subscription_item_details: { proration: false } }, pricing: { price_details: { price: "price_pro" } } },
+              {
+                id: "il_1",
+                parent: { type: "subscription_item_details", subscription_item_details: { proration: false } },
+                pricing: { price_details: { price: "price_pro" } },
+                period: { start: 1_800_000_000, end: 1_802_592_000 },
+              },
             ],
           },
         }),
       );
-    expect(invoice("subscription_create")).toMatchObject({ kind: "invoice_paid", invoice: "in_1", priceId: "price_pro", owner: "user_a", subscription: "sub_1" });
+    expect(invoice("subscription_create")).toMatchObject({
+      kind: "invoice_paid",
+      invoice: "in_1",
+      priceId: "price_pro",
+      owner: "user_a",
+      subscription: "sub_1",
+      periodEnd: 1_802_592_000,
+    });
     expect(invoice("subscription_cycle")).toMatchObject({ kind: "invoice_paid" });
     expect(invoice("subscription_update")).toEqual({ kind: "ignore", reason: "billing_reason subscription_update does not grant credits" });
     expect(interpretStripeEvent(event("invoice.paid", { id: "in_2", parent: null })).kind).toBe("ignore");
@@ -257,6 +275,65 @@ describe("interpretStripeEvent", () => {
       const action = interpretStripeEvent(event(type, { metadata: meta() }));
       expect(action.kind === "ignore" ? action.reason : "").not.toStartWith(`event type ${type}`);
     }
+  });
+});
+
+describe("included credits roll over for one month, then the unused rest expires", () => {
+  const day = 86_400_000;
+  const t0 = Date.UTC(2026, 10, 1);
+  let id = 0;
+  const row = (amount: number, reason: string, at: number, over: Partial<LedgerEntry> = {}): LedgerEntry => ({
+    id: ++id,
+    amount,
+    reason,
+    source: `${reason}:${id}`,
+    purchase_source: null,
+    expires_at: null,
+    created_at: new Date(at),
+    ...over,
+  });
+  const plan = (credits: number, at: number, expiresAt: number, source = `invoice:${id + 1}`) => row(credits, "plan", at, { expires_at: new Date(expiresAt), source });
+
+  test("the unused rest of a plan grant expires at its expiry; nothing before", () => {
+    const rows = [plan(2_000, t0, t0 + 60 * day, "invoice:a"), row(-500, "usage", t0 + 10 * day)];
+    expect(replayLedger(rows, new Date(t0 + 59 * day))).toEqual({
+      due: [],
+      upcoming: [{ source: "invoice:a", credits: 1_500, expiresAt: new Date(t0 + 60 * day) }],
+    });
+    expect(replayLedger(rows, new Date(t0 + 61 * day)).due).toEqual([{ source: "invoice:a", credits: 1_500, expiresAt: new Date(t0 + 60 * day) }]);
+  });
+
+  test("usage spends expiring credits first, soonest expiry first, then packs and the free sample", () => {
+    const rows = [
+      row(1_000, "pack", t0, { source: "checkout:pack" }),
+      plan(2_000, t0, t0 + 60 * day, "invoice:may"),
+      plan(2_000, t0 + 30 * day, t0 + 90 * day, "invoice:june"),
+      row(-2_500, "usage", t0 + 40 * day),
+    ];
+    const at61 = replayLedger(rows, new Date(t0 + 61 * day));
+    expect(at61.due).toEqual([]); // May's 2,000 were spent first
+    expect(at61.upcoming).toEqual([{ source: "invoice:june", credits: 1_500, expiresAt: new Date(t0 + 90 * day) }]);
+  });
+
+  test("spending after the expiry cannot use expired credits; already written-off grants are not due again", () => {
+    const rows = [plan(2_000, t0, t0 + 60 * day, "invoice:a"), row(-300, "usage", t0 + 70 * day)];
+    expect(replayLedger(rows, new Date(t0 + 71 * day)).due).toEqual([{ source: "invoice:a", credits: 2_000, expiresAt: new Date(t0 + 60 * day) }]);
+    const written = [...rows, row(-2_000, "expire", t0 + 60 * day + 60_000, { source: "expire:invoice:a", purchase_source: "invoice:a" })];
+    expect(replayLedger(written, new Date(t0 + 71 * day)).due).toEqual([]);
+  });
+
+  test("a negative balance is paid off by the next grant before it can roll over", () => {
+    const rows = [row(-300, "usage", t0), plan(2_000, t0 + day, t0 + 60 * day, "invoice:a")];
+    expect(replayLedger(rows, new Date(t0 + 61 * day)).due).toEqual([{ source: "invoice:a", credits: 1_700, expiresAt: new Date(t0 + 60 * day) }]);
+  });
+
+  test("a refund spends its own purchase first", () => {
+    const rows = [
+      plan(2_000, t0, t0 + 60 * day, "invoice:a"),
+      row(1_000, "pack", t0 + day, { source: "checkout:p" }),
+      row(-1_000, "refund", t0 + 2 * day, { purchase_source: "checkout:p" }),
+    ];
+    expect(replayLedger(rows, new Date(t0 + 61 * day)).due).toEqual([{ source: "invoice:a", credits: 2_000, expiresAt: new Date(t0 + 60 * day) }]);
   });
 });
 

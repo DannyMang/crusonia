@@ -18,7 +18,7 @@ Live: https://crusonia.veri-web.workers.dev/health · MCP: https://crusonia.veri
 | `src/mcp/route.ts` | `/mcp`: MCP Streamable HTTP (stateless, JSON responses), fresh server per request |
 | `src/mcp/server.ts` | MCP tool definitions: a thin layer over `src/services` |
 | `src/api/*.ts` | REST routers: `auth` (Clerk, API key or `MCP_TOKEN`), `leads`, `approvals`, `workflows`, `settings`, signed `webhooks`; web app: `dashboard` (me, summary, status, replies), `onboarding` (profile, read-website, propose), `experiments`, `keys`, `billing` |
-| `src/billing/*.ts` | Stripe billing: `plans` (tiers, packs, the credit definition: the one file to edit), `accounts` (billing owner, ledger, 402 gate), `checkout` (Checkout and Customer Portal), `webhook` (Stripe events), `usage` (debits for finished Naive sessions), `overview`, `constants` |
+| `src/billing/*.ts` | Stripe billing: `plans` (tiers, packs, the credit definition: the one file to edit), `accounts` (billing owner, ledger, 402 gate), `checkout` (Checkout and Customer Portal), `webhook` (Stripe events), `usage` (debits for finished Naive sessions), `expiry` (plan credit rollover), `overview`, `constants` |
 | `src/services/*.ts` | Logic shared by MCP and REST: `leads`, `drafts`, `profile`, `status`, `apify`, `web`, `errors`; core loop: `crm` (lead admin, CSV import), `csv`, `approvals`, `approval-rules`, `send`, `inbound`, `classify`, `workflows` (Naive), `policy`, `settings`, `cron`; web app: `runs` (workflows/runs from Naive sessions and events, onboarding and find-leads sessions), `summary`, `replies`, `experiments`, `api-keys` |
 | `src/providers/*.ts` | Thin REST clients: `agentmail`, `naive`, `stripe` (no SDK, pinned API version) |
 | `src/lib/*.ts` | Errors (`{error: {code, message}}`), request helpers, Web Crypto, webhook signatures |
@@ -196,7 +196,7 @@ Lists are `{"data": [...]}` (plus `next_cursor` where paginated).
 | POST | `/api/experiments/:id/leads` | Enroll more leads `{lead_ids}` (each keeps its variant; leads in another running experiment are skipped) |
 | GET, POST | `/api/keys` | API keys for `/mcp` and `/api`: list (no secrets) / create `{name}` (full key returned once) |
 | DELETE | `/api/keys/:id` | Revoke |
-| GET | `/api/billing` | The caller's `plan` (key, status, `current_period_end`, `cancel_at_period_end`), `balance` (credits) and `balance_usd`, the last 20 `ledger` rows, and the `plans` and `packs` with display prices |
+| GET | `/api/billing` | The caller's `plan` (key, status, `current_period_end`, `cancel_at_period_end`), `balance` (credits) and `balance_usd`, `expiring` included credits, the last 20 `ledger` rows, and the `plans` and `packs` with display prices |
 | POST | `/api/billing/checkout` | `{plan}` or `{pack}` -> `{url}`: a Stripe Checkout Session (subscription or one-time). 409 `already_subscribed` for a second plan |
 | POST | `/api/billing/portal` | -> `{url}`: the Stripe Customer Portal (change or cancel the plan, invoices, payment methods) |
 | POST | `/webhooks/agentmail` | Svix-signed. `message.received` (match by thread, then sender; classify; stop follow-ups; unsubscribe suppresses), `message.bounced` (permanent: suppress), `message.complained`, `message.delivered` |
@@ -218,8 +218,8 @@ experiment runs carry its id; `sent` counts those drafts once sent, `replies` th
 send, `positive` those labeled `interested`. Stop rules are reported (`stop_rule_met`); stopping is a `PATCH`.
 
 The minute cron expires stale approvals (an expired tool call is denied to the agent), reconciles running Naive
-sessions that missed a webhook (events after `last_seq`), settles unconfirmed sends, and debits finished Naive
-sessions that still owe credits.
+sessions that missed a webhook (events after `last_seq`), settles unconfirmed sends, debits finished Naive sessions
+that still owe credits, and expires unused plan credits after their rollover month.
 
 ## Billing (Stripe)
 
@@ -230,17 +230,19 @@ Self-hosting needs none of this: without `STRIPE_SECRET_KEY` the billing endpoin
 placeholders until the owner decides (marked `TODO(owner)`):
 
 - 1 credit = $0.01 of list value. Ledger amounts are whole credits.
-- **Free** $0/month; **Starter** $20/month grants 2,000 credits and **Pro** $100/month grants 10,000 credits on each
-  paid subscription invoice (first payment and each renewal). Top-up packs: $10, $50 and $200 for 1,000, 5,000 and
-  20,000 credits.
+- **Free** $0/month: the first 5 leads are free, then top-ups from $10. **Pro** $20/month grants 2,000 credits and
+  **Scale** $100/month grants 10,000 credits on each paid subscription invoice (first payment and each renewal).
+  Top-up packs: $10, $50 and $200 for 1,000, 5,000 and 20,000 credits.
 - A free sample of 300 credits (about 5 leads) is granted once per billing account; `BILLING_FREE_CREDITS` changes
   it, `0` turns it off.
 - Usage: when a Naive session finishes, the billing owner that started it is debited its reported spend
   (`naive_sessions.consumed_micro_usd`) times 2, rounded up: $0.30 of agent spend = 60 credits. A session that
   resumes and spends more is topped up; nothing is debited twice. Data calls (Apify) are not metered yet.
 - The amount paid never decides the credits (coupons, tax and rounding change what is paid, not what is granted).
-- Credits do not expire yet. Plan changes in the portal apply without proration; the new plan's credits arrive with
-  its next paid invoice.
+- Unused included plan credits roll over for one month after the period they were granted for, then expire (the
+  minute cron writes an `expire` row for what is left). Usage spends the soonest-expiring credits first. Top-up packs
+  and the free sample never expire.
+- Plan changes in the portal apply without proration; the new plan's credits arrive with its next paid invoice.
 
 To change pricing: edit `plans.ts`, run `bun run setup --stripe`, deploy. Prices are found by `lookup_key`, so no
 Stripe ids live in this repo; a changed amount gets a new price that takes over the lookup key (existing
@@ -252,8 +254,8 @@ metadata `app: crusonia` and `crusonia_user_id` (customers, Checkout Sessions, s
 `subscription_data.metadata`, payment intents), and the webhook ignores objects without `app: crusonia`.
 
 **Ledger.** `credit_ledger` is append-only (a trigger refuses updates and deletes); the balance is the sum per owner.
-Each row's `source` makes it idempotent: `signup:<owner>`, `checkout:<session>`, `invoice:<invoice>`,
-`usage:<naive session>`, `refund:<charge>:<amount refunded>`.
+Each row's `source` makes it idempotent: `signup:<owner>`, `checkout:<session>`, `invoice:<invoice>` (with
+`expires_at`), `usage:<naive session>`, `refund:<charge>:<amount refunded>`, `expire:<grant source>`.
 
 **Webhook events** (`POST /webhooks/stripe`, signature verified on the raw body, deduped by event id in
 `webhook_events`, every event written to `events`):
@@ -264,7 +266,7 @@ Each row's `source` makes it idempotent: `signup:<owner>`, `checkout:<session>`,
 | `checkout.session.async_payment_succeeded` | Credits a pack whose payment settled later (same source: never twice) |
 | `invoice.paid` | Grants the plan's monthly credits for `subscription_create` and `subscription_cycle` invoices, once per invoice |
 | `customer.subscription.created` / `.updated` / `.deleted` | Plan, status, period end and cancel-at-period-end on the account (older events never overwrite newer ones) |
-| `charge.refunded` | Claws back the purchase's credits in proportion to the amount refunded (packs by PaymentIntent, plan invoices through the Invoice Payments API) |
+| `charge.refunded` | Claws back the purchase's credits in proportion to the amount refunded, minus any that already expired (packs by PaymentIntent, plan invoices through the Invoice Payments API) |
 
 **Turn it on (test mode first).**
 

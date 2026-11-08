@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { setupStripe } from "../scripts/lib/stripe-setup.ts";
 import { addLedgerRow, ensureAccount, getAccount, getBalance } from "../src/billing/accounts.ts";
 import { createCheckout, createPortal, resetBillingCaches } from "../src/billing/checkout.ts";
+import { expireCredits } from "../src/billing/expiry.ts";
 import { settleSessionUsage, settleUsage } from "../src/billing/usage.ts";
 import { handleStripeEvent, type StripeEvent } from "../src/billing/webhook.ts";
 import { getSql, type Sql } from "../src/db.ts";
@@ -61,15 +62,24 @@ const packSession = (o: string, name: string, over: Record<string, unknown> = {}
   metadata: meta(o, { crusonia_kind: "pack", crusonia_key: "large" }),
   ...over,
 });
-const invoice = (o: string, name: string, id: string, priceId: string, billing_reason = "subscription_cycle") => ({
+const invoice = (o: string, name: string, id: string, priceId: string, billing_reason = "subscription_cycle", periodEnd?: number) => ({
   id,
   object: "invoice",
   customer: cus(name),
   billing_reason,
   status: "paid",
-  amount_paid: 10_000,
+  amount_paid: 2_000,
   parent: { type: "subscription_details", subscription_details: { subscription: `sub_it_${run}_${name}`, metadata: meta(o) } },
-  lines: { data: [{ id: "il_1", parent: { type: "subscription_item_details", subscription_item_details: { proration: false } }, pricing: { price_details: { price: priceId } } }] },
+  lines: {
+    data: [
+      {
+        id: "il_1",
+        parent: { type: "subscription_item_details", subscription_item_details: { proration: false } },
+        pricing: { price_details: { price: priceId } },
+        ...(periodEnd ? { period: { start: periodEnd - 30 * 86_400, end: periodEnd } } : {}),
+      },
+    ],
+  },
 });
 
 async function ledger(o: string) {
@@ -93,7 +103,7 @@ function stripeWithPro(opts: { invoicePayments?: Record<string, string> } = {}):
     object: "price",
     active: true,
     currency: "usd",
-    unit_amount: 10_000,
+    unit_amount: 2_000,
     type: "recurring",
     recurring: { interval: "month", interval_count: 1 },
     lookup_key: null, // moved to a newer price: metadata still resolves the plan
@@ -212,16 +222,51 @@ suite("billing (database, faked Stripe and Naive)", () => {
     const env = baseEnv();
     const inv = `in_it_${run}_1`;
     const first = await handleStripeEvent(sql, env, stripeEvent("invoice.paid", invoice(o, "invoice", inv, "price_pro_it", "subscription_create")), { fetchFn: stripe.fetch });
-    expect(first).toEqual({ action: "invoice_paid", credits: 10_000, duplicate_source: false });
+    expect(first).toEqual({ action: "invoice_paid", credits: 2_000, duplicate_source: false });
     const replay = await handleStripeEvent(sql, env, stripeEvent("invoice.paid", invoice(o, "invoice", inv, "price_pro_it")), { fetchFn: stripe.fetch });
     expect(replay).toEqual({ action: "invoice_paid", credits: 0, duplicate_source: true });
     const update = await handleStripeEvent(sql, env, stripeEvent("invoice.paid", invoice(o, "invoice", `in_it_${run}_2`, "price_pro_it", "subscription_update")), { fetchFn: stripe.fetch });
     expect(update.action).toBe("ignore");
     const foreign = await handleStripeEvent(sql, env, stripeEvent("invoice.paid", invoice(o, "invoice", `in_it_${run}_3`, "price_not_ours")), { fetchFn: stripe.fetch });
     expect(foreign).toMatchObject({ action: "ignore" });
-    expect(await ledger(o)).toEqual([{ amount: 10_000, reason: "plan", source: `invoice:${inv}`, stripe_payment_intent: null, purchase_source: null }]);
+    expect(await ledger(o)).toEqual([{ amount: 2_000, reason: "plan", source: `invoice:${inv}`, stripe_payment_intent: null, purchase_source: null }]);
     // The price was looked up once (then cached), with the pinned API version.
     expect(stripe.requests.filter((r) => r.path === "/v1/prices/price_pro_it")).toHaveLength(1);
+  });
+
+  test("included plan credits roll over one month after their period, then the unused rest expires (cron), once", async () => {
+    resetBillingCaches();
+    const o = owner("rollover");
+    await link(o, "rollover");
+    const inv = `in_it_${run}_rollover`;
+    const pi = `pi_it_${run}_rollover`;
+    const stripe = stripeWithPro({ invoicePayments: { [pi]: inv } });
+    const env = baseEnv();
+    // Far enough out that no other test's grant expires within the cron's 3-day window around it.
+    const periodEnd = Math.floor(Date.now() / 1000) + 200 * 86_400;
+    await handleStripeEvent(sql, env, stripeEvent("invoice.paid", invoice(o, "rollover", inv, "price_pro_it", "subscription_create", periodEnd)), { fetchFn: stripe.fetch });
+    const [grant] = await sql`select expires_at, expires_at = to_timestamp(${periodEnd}) + interval '1 month' as one_month_after from credit_ledger where source = ${`invoice:${inv}`}`;
+    expect(grant!.one_month_after).toBe(true);
+    await addLedgerRow(sql, { ownerId: o, amount: 1_000, reason: "pack", source: `checkout:cs_it_${run}_rollover` });
+    await addLedgerRow(sql, { ownerId: o, amount: -500, reason: "usage", source: `usage:ses_it_${run}_rollover` });
+
+    // Before the expiry nothing happens; after it the unused 1,500 included credits go, the pack stays.
+    expect(await expireCredits(sql, new Date())).toBe(0);
+    const after = new Date(new Date(grant!.expires_at).getTime() + 3_600_000);
+    expect(await expireCredits(sql, after)).toBe(1);
+    expect(await expireCredits(sql, after)).toBe(0);
+    expect((await ledger(o)).at(-1)).toEqual({ amount: -1_500, reason: "expire", source: `expire:invoice:${inv}`, stripe_payment_intent: null, purchase_source: `invoice:${inv}` });
+    expect(await getBalance(sql, o)).toBe(1_000);
+
+    // Refunding that invoice now claws back only the 500 credits that were used, not the 1,500 that expired.
+    const res = await handleStripeEvent(
+      sql,
+      env,
+      stripeEvent("charge.refunded", { id: `ch_it_${run}_rollover`, customer: cus("rollover"), payment_intent: pi, amount: 2_000, amount_refunded: 2_000, metadata: {} }),
+      { fetchFn: stripe.fetch },
+    );
+    expect(res).toEqual({ action: "refund", credits: -500 });
+    expect(await getBalance(sql, o)).toBe(500);
   });
 
   test("subscription events update the account in order; a stale event is ignored; deletion clears the plan", async () => {
@@ -296,10 +341,10 @@ suite("billing (database, faked Stripe and Naive)", () => {
     const res = await handleStripeEvent(
       sql,
       env,
-      stripeEvent("charge.refunded", { id: `ch_it_${run}_subrefund`, customer: cus("subrefund"), payment_intent: pi, amount: 10_000, amount_refunded: 10_000, metadata: {} }),
+      stripeEvent("charge.refunded", { id: `ch_it_${run}_subrefund`, customer: cus("subrefund"), payment_intent: pi, amount: 2_000, amount_refunded: 2_000, metadata: {} }),
       { fetchFn: stripe.fetch },
     );
-    expect(res).toEqual({ action: "refund", credits: -10_000 });
+    expect(res).toEqual({ action: "refund", credits: -2_000 });
     expect(await getBalance(sql, o)).toBe(0);
   });
 
@@ -452,10 +497,11 @@ suite("billing (database, faked Stripe and Naive)", () => {
       has_customer: false,
       balance: 100,
       balance_usd: 1,
-      credit: { usd: 0.01, usage_markup: 2, free_sample_credits: 0 },
+      credit: { usd: 0.01, usage_markup: 2, free_sample_credits: 0, included_rollover_months: 1 },
+      expiring: [],
     });
     expect(body.ledger).toHaveLength(1);
-    expect(body.plans.map((p: { key: string; price: string }) => `${p.key} ${p.price}`)).toEqual(["free $0/mo", "starter $20/mo", "pro $100/mo"]);
+    expect(body.plans.map((p: { key: string; price: string }) => `${p.key} ${p.price}`)).toEqual(["free $0/mo", "pro $20/mo", "scale $100/mo"]);
     expect(body.packs.map((p: { key: string; credits: number }) => `${p.key} ${p.credits}`)).toEqual(["small 1000", "medium 5000", "large 20000"]);
   });
 });

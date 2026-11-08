@@ -4,8 +4,10 @@ import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { stripeKeyMode } from "../providers/stripe.ts";
 import { billingEnforced, ensureAccount, getAccount, getBalance, recentLedger } from "./accounts.ts";
+import { loadLedger, replayLedger } from "./expiry.ts";
 import {
   FREE_PLAN,
+  INCLUDED_CREDIT_ROLLOVER_MONTHS,
   MICRO_USD_PER_CREDIT,
   PACKS,
   PLANS,
@@ -30,7 +32,13 @@ export function billingConfig(env: Env) {
 
 export async function getBillingOverview(sql: Sql, env: Env, ownerId: string) {
   await ensureAccount(sql, env, ownerId);
-  const [account, balance, ledger] = await Promise.all([getAccount(sql, ownerId), getBalance(sql, ownerId), recentLedger(sql, ownerId, 20)]);
+  const [account, balance, ledger, entries] = await Promise.all([
+    getAccount(sql, ownerId),
+    getBalance(sql, ownerId),
+    recentLedger(sql, ownerId, 20),
+    loadLedger(sql, ownerId),
+  ]);
+  const { upcoming } = replayLedger(entries);
   const plan = planByKey(account?.plan);
   const currentKey = plan?.key ?? FREE_PLAN.key;
   return {
@@ -46,6 +54,8 @@ export async function getBillingOverview(sql: Sql, env: Env, ownerId: string) {
     has_customer: Boolean(account?.stripe_customer_id),
     balance,
     balance_usd: creditsToUsd(balance),
+    // Included plan credits still unspent, soonest expiry first (packs and the free sample never expire).
+    expiring: upcoming.map((e) => ({ credits: e.credits, expires_at: e.expiresAt.toISOString() })),
     ledger: ledger.map((r) => ({
       id: r.id,
       amount: r.amount,
@@ -94,6 +104,7 @@ export async function getBillingOverview(sql: Sql, env: Env, ownerId: string) {
       usd: MICRO_USD_PER_CREDIT / 1_000_000,
       usage_markup: USAGE_MARKUP_BPS / 10_000,
       free_sample_credits: freeSampleCredits(env.BILLING_FREE_CREDITS),
+      included_rollover_months: INCLUDED_CREDIT_ROLLOVER_MONTHS,
     },
   };
 }
