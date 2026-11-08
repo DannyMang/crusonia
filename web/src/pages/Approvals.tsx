@@ -80,6 +80,12 @@ export default function Approvals() {
     setSearch("");
   };
 
+  // Like the design, open the first waiting item when the page opens without a code.
+  const first = ordered[0]?.code;
+  useEffect(() => {
+    if (!code && first) navigate(`/app/approvals/${encodeURIComponent(first)}`, { replace: true });
+  }, [code, first, navigate]);
+
   // J / K move through the visible queue (and open the first item when nothing is selected).
   const orderedRef = useRef(ordered);
   orderedRef.current = ordered;

@@ -141,14 +141,14 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-/** For /sign-in and /sign-up: a signed-in visitor goes straight to the app. */
-export function RedirectIfSignedIn({ children }: { children: ReactNode }) {
+/** For /sign-in and /sign-up: a signed-in visitor goes on to `redirect_url`, else `fallback` (the app). */
+export function RedirectIfSignedIn({ children, fallback = "/app" }: { children: ReactNode; fallback?: string }) {
   const { isLoaded, isSignedIn } = useSession();
   const location = useLocation();
   if (devBypass) return <>{children}</>;
   if (isLoaded && isSignedIn) {
     const next = new URLSearchParams(location.search).get("redirect_url");
-    return <Navigate to={next && next.startsWith("/") && !next.startsWith("//") ? next : "/app"} replace />;
+    return <Navigate to={next && next.startsWith("/") && !next.startsWith("//") ? next : fallback} replace />;
   }
   return <>{children}</>;
 }

@@ -1,7 +1,7 @@
 // /api/leads mocks. Sample rows follow "Dashboard · Leads" and "Dashboard · Lead detail".
 import { http } from "msw";
 import type { Draft, Evidence, Lead, LeadFull, TimelineEvent } from "../api.ts";
-import { ago, body, DAY, fail, HOUR, isEmpty, MIN, noContent, ok } from "./util.ts";
+import { ago, body, DAY, fail, HOUR, isEmpty, MIN, noContent, ok, scenario } from "./util.ts";
 
 type Seed = [id: string, company: string, domain: string, name: string | null, title: string | null, stage: string, score: number, source: string, updatedAgo: number, extra?: Partial<Lead>];
 
@@ -150,7 +150,12 @@ export const leadHandlers = [
     return ok({ data, next_cursor: null });
   }),
   // Backend: 202 {session_id}; 409 profile_missing without a saved profile; 503 not_configured without the Naive agent.
-  http.post("/api/leads/find", () => fail(503, "not_configured", "The Naive agent is not configured: NAIVE_AGENT_ID is not set")),
+  // Sample: the search starts (202). Empty / unconfigured: the Naive agent is missing (503), as in production today.
+  http.post("/api/leads/find", () =>
+    scenario() === "sample"
+      ? ok({ session_id: `ses_find_${Date.now()}` }, 202)
+      : fail(503, "not_configured", "The Naive agent is not configured: NAIVE_AGENT_ID is not set"),
+  ),
   // Same shape as the backend's importLeads: counts, skip_reasons, matched columns and per-row results.
   http.post("/api/leads/import", async ({ request }) => {
     const b = await body<{ csv?: string; dry_run?: boolean }>(request);

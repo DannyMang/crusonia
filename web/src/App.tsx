@@ -39,7 +39,7 @@ export function App() {
             {/* "/" is reserved for the public landing page (web/src/landing/), which sends signed-in visitors to /app. */}
 
             <Route path="sign-in/*" element={<RedirectIfSignedIn><SignIn /></RedirectIfSignedIn>} />
-            <Route path="sign-up/*" element={<RedirectIfSignedIn><SignUp /></RedirectIfSignedIn>} />
+            <Route path="sign-up/*" element={<RedirectIfSignedIn fallback="/onboarding/1"><SignUp /></RedirectIfSignedIn>} />
             <Route path="sso-callback" element={<SsoCallback />} />
 
             <Route element={<Protected />}>

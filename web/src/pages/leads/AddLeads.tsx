@@ -241,12 +241,12 @@ export function AddContactDialog({ open, onClose }: { open: boolean; onClose: ()
         <div className="flex gap-3">
           <div className="grow basis-0">
             <Field label="Name">
-              <input value={form.name} onChange={set("name")} placeholder="Maya Chen" className={inputClass} />
+              <input value={form.name} onChange={set("name")} placeholder="Full name" className={inputClass} />
             </Field>
           </div>
           <div className="grow basis-0">
             <Field label="Company">
-              <input value={form.company} onChange={set("company")} placeholder="Fieldnote" className={inputClass} />
+              <input value={form.company} onChange={set("company")} placeholder="Company name" className={inputClass} />
             </Field>
           </div>
         </div>
