@@ -81,6 +81,7 @@ function eventLine(e: TraceEvent): { title: string; body: string | null } {
 
 export function TraceDialog({ sessionId, open, onClose }: { sessionId: string; open: boolean; onClose: () => void }) {
   const api = useApi();
+  const [exportError, setExportError] = useState<unknown>(null);
   const trace = useInfiniteQuery({
     queryKey: keys.trace(sessionId),
     queryFn: ({ pageParam }) => api.trace(sessionId, { after_seq: pageParam, limit: 200 }),
@@ -104,14 +105,15 @@ export function TraceDialog({ sessionId, open, onClose }: { sessionId: string; o
             onClick={(e) => {
               // The export needs the auth header: fetch it and save it as a file instead of navigating.
               e.preventDefault();
-              void api.request<unknown>("GET", `/api/workflows/runs/${encodeURIComponent(sessionId)}/trace/export`).then((json) => {
+              setExportError(null);
+              api.request<unknown>("GET", `/api/workflows/runs/${encodeURIComponent(sessionId)}/trace/export`).then((json) => {
                 const url = URL.createObjectURL(new Blob([JSON.stringify(json, null, 2)], { type: "application/json" }));
                 const a = document.createElement("a");
                 a.href = url;
                 a.download = `crusonia-trace-${sessionId.replace(/[^a-zA-Z0-9_-]/g, "")}.json`;
                 a.click();
                 URL.revokeObjectURL(url);
-              });
+              }, setExportError);
             }}
             className="mr-auto text-[13px]/4 font-medium text-ink underline decoration-[#200D0D4D] underline-offset-[3px] hover:decoration-ink"
           >
@@ -133,6 +135,7 @@ export function TraceDialog({ sessionId, open, onClose }: { sessionId: string; o
         </div>
       ) : (
         <div className="flex flex-col gap-3">
+          {exportError ? <QueryError error={exportError} what="the download" /> : null}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs/4 tabular-nums text-muted">
             <span>{events.length} events</span>
             {spend?.naive_usd !== null && spend?.naive_usd !== undefined ? <span>Agent {usd(spend.naive_usd)}</span> : null}

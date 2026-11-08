@@ -561,6 +561,7 @@ export const coreLeadHandlers = [
 
   // Full trace
   http.get("/api/workflows/runs/:id/trace", ({ params }) => (unshipped() ? missing("GET", "/api/workflows/runs/:id/trace") : ok(trace(String(params.id))))),
+  http.get("/api/workflows/runs/:id/trace/export", ({ params }) => ok(trace(String(params.id)))),
 ];
 
 export const openTasksFor = (leadId: string) => tasks().filter((t) => t.lead_id === leadId && t.status === "open");
