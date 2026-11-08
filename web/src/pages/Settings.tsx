@@ -1,5 +1,6 @@
-// Settings: the global pause, the do-not-contact list and the account. No Paper artboard of its own;
-// uses the card and form styles of the Integrations and Connect screens.
+// Settings · General: the global pause, the do-not-contact list and the account. No Paper artboard of its own;
+// uses the card and form styles of the Integrations and Connect screens, and the crumb bar and tabs of
+// "Settings · Billing" (pages/settings/Billing.tsx).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
@@ -8,24 +9,32 @@ import { Page } from "../components/AppShell.tsx";
 import { Button, Card, EmptyState, QueryError, Skeleton } from "../components/ui.tsx";
 import { cx, longDate } from "../lib/format.ts";
 import { keys, usePause, useProfile, useSetPause } from "../queries.ts";
+import { CrumbBar } from "./connect/CrumbBar.tsx";
+import { SettingsTabs } from "./settings/SettingsTabs.tsx";
 
 const cardTitle = "text-[15px]/4.5 font-semibold tracking-[-0.01em] text-ink";
 const muted = "text-[13px]/5 font-medium text-[#200D0D99]";
 
 export default function Settings() {
   return (
-    <Page className="px-12 pb-14 pt-10">
-      <div className="flex max-w-[864px] flex-col gap-6">
-      <div className="flex flex-col gap-1.5">
-        <h1 className="text-2xl/7.5 font-semibold tracking-[-0.02em]">Settings</h1>
-        <p className="text-sm/5 font-medium text-[#200D0D99]">Workspace controls. Changes apply right away.</p>
-      </div>
-      <PauseCard />
-      <ProfileCard />
-      <Suppressions />
-      <AccountCard />
-      </div>
-    </Page>
+    <>
+      <CrumbBar here="Settings" />
+      <Page>
+        <div className="flex w-240 max-w-full flex-col gap-4 px-12 pb-14 pt-8">
+          <SettingsTabs />
+          <div className="flex flex-col gap-2 pb-2 pt-3">
+            <h1 className="text-xl/5.75 font-medium tracking-[-0.01em] text-ink">General</h1>
+            <p className="text-[13px]/4.5 font-medium text-[#200D0D99]">Workspace controls. Changes apply right away.</p>
+          </div>
+          <div className="flex flex-col gap-6">
+            <PauseCard />
+            <ProfileCard />
+            <Suppressions />
+            <AccountCard />
+          </div>
+        </div>
+      </Page>
+    </>
   );
 }
 

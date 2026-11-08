@@ -30,6 +30,7 @@ export const keys = {
   experiment: (id: string) => ["experiment", id] as const,
   keys: ["keys"] as const,
   suppressions: (q?: string) => ["suppressions", q ?? ""] as const,
+  billing: ["billing"] as const,
 };
 
 export function useMe() {
@@ -118,4 +119,10 @@ export function useExperiment(id: string | undefined) {
 export function useApiKeys() {
   const api = useApi();
   return useQuery({ queryKey: keys.keys, queryFn: () => api.keys() });
+}
+
+/** GET /api/billing: balance, plan, ledger, plans and packs. Shared by the sidebar credits pill and the billing page. */
+export function useBilling({ enabled = true, poll }: { enabled?: boolean; poll?: number | false } = {}) {
+  const api = useApi();
+  return useQuery({ queryKey: keys.billing, queryFn: () => api.billing(), enabled, staleTime: 30_000, refetchInterval: poll ?? false });
 }
