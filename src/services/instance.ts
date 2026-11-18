@@ -1,10 +1,10 @@
 // The instance's own brakes, on top of each workspace's limits (./limits.ts). Every workspace spends the instance's one
-// Naive and Apify account, so with open sign-up someone has to watch the total:
-//   - a spend cap: Naive + Apify spend of every workspace but the owner's over a rolling 24 hours, against
+// model and Apify account, so with open sign-up someone has to watch the total:
+//   - a spend cap: agent + Apify spend of every workspace but the owner's over a rolling 24 hours, against
 //     INSTANCE_DAILY_CAP_USD (default $25);
 //   - a kill switch for platform admins (PUT /api/admin/instance), which also stops the owner's workspace.
 // Either one stops new paid work: 429 instance_busy for a person, a quiet skip for Autopilot. Sessions already running
-// finish, but their web reads stop too, because Apify spend sits outside Naive's budgets. Both go in the events log of
+// finish, but their web reads stop too, because Apify spend sits outside a run's own budget. Both go in the events log of
 // the owner workspace, the only one that has anything to do with the instance as a whole.
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
@@ -14,7 +14,7 @@ import { isOwnerWorkspace, OWNER_WORKSPACE_ID } from "./workspaces.ts";
 const DEFAULT_CAP_USD = 25;
 /**
  * A running session reports its spend late, so it counts as at least this much: otherwise a burst of starts all see $0
- * and overshoot the cap. Naive's budget limits one session to $1; a researched lead costs far less. Apify runs still
+ * and overshoot the cap. A run's own limit is $1; a researched lead costs far less. Apify runs still
  * open count as their maxTotalChargeUsd.
  */
 export const RUNNING_SESSION_RESERVE_MICRO_USD = 250_000;
@@ -36,7 +36,7 @@ export async function instanceState(sql: Sql, env: Env): Promise<InstanceState> 
     select
       (select coalesce(sum(case when status = 'running' then greatest(coalesce(consumed_micro_usd, 0), ${RUNNING_SESSION_RESERVE_MICRO_USD}::bigint)
                                 else coalesce(consumed_micro_usd, 0) end), 0)::text
-         from agent_runs where workspace_id <> ${OWNER_WORKSPACE_ID} and created_at > now() - interval '1 day') as naive,
+         from agent_runs where workspace_id <> ${OWNER_WORKSPACE_ID} and created_at > now() - interval '1 day') as agent,
       (select coalesce(sum(case when usage_final then coalesce(usage_micro_usd, 0)
                                 else greatest(coalesce(usage_micro_usd, 0), (coalesce(max_charge_usd, 0) * 1000000)::bigint) end), 0)::text
          from apify_runs where workspace_id <> ${OWNER_WORKSPACE_ID} and created_at > now() - interval '1 day') as apify,
@@ -46,7 +46,7 @@ export async function instanceState(sql: Sql, env: Env): Promise<InstanceState> 
     halted: control?.halted === true,
     halted_at: control?.halted === true ? (control.at ?? null) : null,
     halted_by: control?.halted === true ? (control.by ?? null) : null,
-    spent_micro_usd: Number(row?.naive ?? 0) + Number(row?.apify ?? 0),
+    spent_micro_usd: Number(row?.agent ?? 0) + Number(row?.apify ?? 0),
     cap_micro_usd: instanceCapMicroUsd(env),
   };
 }

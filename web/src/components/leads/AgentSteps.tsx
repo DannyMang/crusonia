@@ -1,6 +1,6 @@
 // "What the agent did" (Paper: "Final · Research · Review queue" > Agent steps): the clean timeline of a lead's
 // latest research run (GET /api/workflows/runs/:id), with "View full trace" opening every stored event of the run
-// (GET /api/workflows/runs/:id/trace, paginated by Naive seq). Agent output is untrusted: shown as text only.
+// (GET /api/workflows/runs/:id/trace, paginated by event seq). Agent output is untrusted: shown as text only.
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { RunStep, Trace, TraceEvent } from "../../api.ts";
@@ -19,7 +19,7 @@ export function AgentSteps({ sessionId, className }: { sessionId: string; classN
   const [trace, setTrace] = useState(false);
   const run = detail.data?.run;
   const steps = (detail.data?.steps ?? []).filter(shown);
-  const active = run ? run.status === "running" || run.status === "idle" : false;
+  const active = run ? run.status === "running" || run.status === "queued" : false;
   const took = run ? new Date(run.updated_at).getTime() - new Date(run.started_at).getTime() : null;
 
   return (
@@ -29,7 +29,7 @@ export function AgentSteps({ sessionId, className }: { sessionId: string; classN
         <div className="flex shrink-0 items-center gap-2.5">
           {run ? (
             active ? (
-              <LiveChip>Working</LiveChip>
+              <LiveChip>{run.status === "queued" ? "Waiting for an agent" : "Working"}</LiveChip>
             ) : run.status === "error" ? (
               <span className="text-xs/4 font-medium text-[#B42318]">Stopped</span>
             ) : (
@@ -69,7 +69,7 @@ export function AgentSteps({ sessionId, className }: { sessionId: string; classN
 
 // ---------- full trace ----------
 
-/** One line for a stored Naive event: its type, then the tool name and a preview of what went in or came out. */
+/** One line for a stored agent event: its type, then the tool name and a preview of what went in or came out. */
 function eventLine(e: TraceEvent): { title: string; body: string | null } {
   const d = e.data ?? {};
   const name = typeof d.name === "string" ? d.name : typeof d.tool === "string" ? d.tool : null;
@@ -140,7 +140,6 @@ export function TraceDialog({ sessionId, open, onClose }: { sessionId: string; o
             <span>{events.length} events</span>
             {spend?.credits ?? spend?.credits_debited ? <span>{creditsLabel(spend?.credits ?? spend?.credits_debited)}</span> : null}
             {spend?.apify_runs.length ? <span>{spend.apify_runs.length} Apify runs</span> : null}
-            {first?.sync?.error ? <span className="text-[#B42318]">{first.sync.error}</span> : null}
           </div>
           <ol className="flex max-h-[60vh] flex-col overflow-y-auto rounded-[10px] border border-[#200D0D1A]">
             {events.map((e) => {

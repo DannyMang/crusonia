@@ -1,7 +1,7 @@
 // Outreach at /app/outreach (Paper: "Final · Outreach · Approvals" and "Final · Outreach · Tasks"), two tabs:
 // - Approvals: what the agent wants to send by email, one exact draft version per request code. Approve & send
 //   takes two presses (it emails a real person); Edit saves a new version, which gets a new code and replaces the
-//   approval; Reject takes an optional reason. Tool calls and agent questions open the existing detail views.
+//   approval; Reject takes an optional reason.
 // - Tasks: the manual queue (LinkedIn, X, warm intro, own mailbox): copy the text, open the profile, send it
 //   yourself, mark it sent or skip it; after sending, record the outcome. Recent replies sit on the right.
 // Routes: /app/outreach(/:code) and /app/outreach/tasks(/:id); /app/approvals(/:code) redirects here.
@@ -12,7 +12,6 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from "react-route
 import type { ApprovalListItem, Reply, Task } from "../api.ts";
 import { useApi } from "../auth.tsx";
 import { Page } from "../components/AppShell.tsx";
-import { QuestionDetail, ToolDetail } from "../components/approvals/AgentDetail.tsx";
 import { isTypingTarget, useNow } from "../components/approvals/controls.tsx";
 import type { OnDecided } from "../components/approvals/parts.tsx";
 import { MailIcon } from "../components/core-icons.tsx";
@@ -168,13 +167,7 @@ function ApprovalsTab({ onToast }: { onToast: (m: string) => void }) {
     <div className="flex items-start gap-5">
       <div className="flex min-w-0 grow basis-0 flex-col gap-4">
         {selected ? (
-          selected.kind === "send" ? (
-            <SendCard key={selected.code} a={selected} now={now} onDecided={onDecided} editingRef={editingRef} />
-          ) : (
-            <div className="flex min-h-100 flex-col overflow-clip rounded-xl border border-[#200D0D1A]">
-              {selected.kind === "tool" ? <ToolDetail a={selected} now={now} onDecided={onDecided} /> : <QuestionDetail a={selected} now={now} onDecided={onDecided} />}
-            </div>
-          )
+          <SendCard key={selected.code} a={selected} now={now} onDecided={onDecided} editingRef={editingRef} />
         ) : code ? (
           <div className="rounded-xl border border-[#200D0D1A]">
             <EmptyState title={`${code} is no longer waiting`} action={<Link to="/app/outreach" className="text-[13px]/4 font-medium text-ink underline underline-offset-2">Open the next one</Link>} />
@@ -190,7 +183,7 @@ function ApprovalsTab({ onToast }: { onToast: (m: string) => void }) {
                     {a.lead?.company && a.lead.name ? <span className="font-normal text-muted"> · {a.lead.company}</span> : null}
                   </span>
                   <span className="shrink-0 text-xs/4 tabular-nums text-muted">
-                    {a.code} · {a.kind === "send" ? `expires in ${timeLeft(a.expires_at, now)}` : a.kind === "tool" ? "Tool call" : "Question"}
+                    {a.code} · expires in {timeLeft(a.expires_at, now)}
                   </span>
                 </Link>
               </li>

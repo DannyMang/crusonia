@@ -6,8 +6,8 @@ import { requireBearer, type McpEnv } from "../auth.ts";
 import { createMcpServer } from "./server.ts";
 import { resolveRole } from "./toolsets.ts";
 
-// The bearer decides the workspace (MCP_TOKEN = the owner workspace, an API key = its own); a Naive agent's
-// per-workspace URL (/mcp?ws=<id>) must name the same workspace.
+// The bearer decides the workspace (MCP_TOKEN = the owner workspace, an API key = its own); a
+// `?ws=<id>` on the URL must name the same workspace.
 export const mcp = new Hono<McpEnv>();
 
 mcp.use("*", requireBearer);

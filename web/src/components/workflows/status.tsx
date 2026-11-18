@@ -1,19 +1,15 @@
 // Status helpers for "Dashboard · Workflow run".
 
 /** Runs that can still change: poll them, list them under "Running". */
-export const isActive = (status: string) => status === "running" || status === "idle";
+export const isActive = (status: string) => status === "running" || status === "queued";
 
 const STOP: Record<string, string> = {
-  end_turn: "finished",
-  awaiting_approval: "waiting for a tool approval",
-  awaiting_answer: "waiting for your answer",
-  awaiting_input: "waiting for input",
-  awaiting_delegation: "waiting on a delegated task",
-  budget_paused: "paused at its budget",
-  interrupted: "interrupted",
-  max_iterations: "too many steps",
-  context_exhausted: "ran out of context",
-  error: "an error",
+  finished: "Finished",
+  failed: "Stopped with an error",
+  out_of_time: "Out of time",
+  out_of_tool_calls: "Out of tool calls",
+  out_of_budget: "Out of budget",
+  unclaimed: "No agent picked this up in time",
 };
 
 export const stopLabel = (reason: string | null | undefined) => (reason ? (STOP[reason] ?? reason.replace(/_/g, " ")) : null);

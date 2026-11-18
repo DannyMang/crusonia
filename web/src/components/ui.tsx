@@ -232,10 +232,10 @@ export function errorCopy(err: unknown, what = "this", userId?: string | null): 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function notConfiguredHint(message: string) {
-  if (/NAIVE|Naive agent/i.test(message)) return "Needs the Naive agent, which is still being set up. Nothing is lost in the meantime.";
   if (/APIFY/i.test(message)) return "Needs the Apify connection, which is still being set up.";
   if (/AGENTMAIL/i.test(message)) return "Needs the AgentMail inbox, which is still being set up.";
   if (/DATABASE/i.test(message) || /schema/i.test(message)) return "The database is being set up. Try again in a minute.";
+  if (/\bagent\b/i.test(message)) return "Needs the agent, which is still being set up. Nothing is lost in the meantime.";
   return "A connection this needs is still being set up.";
 }
 

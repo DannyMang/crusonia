@@ -1,4 +1,4 @@
-// Autopilot against a real Postgres (a Neon dev branch or database, never production), Naive and Apify mocked at fetch.
+// Autopilot against a real Postgres (a Neon dev branch or database, never production), Apify mocked at fetch.
 // Skipped unless TEST_DATABASE_URL is set:
 //   TEST_DATABASE_URL=<dev branch url> bun test test/autopilot.integration.test.ts
 // Covers: a new workspace gets its workflow and first run with no click; find -> research; one active run; schedules due
@@ -11,7 +11,6 @@ import type { Env } from "../src/env.ts";
 import worker from "../src/index.ts";
 import { createMcpServer } from "../src/mcp/server.ts";
 import type { McpRole } from "../src/mcp/toolsets.ts";
-import type { FetchFn } from "../src/providers/http.ts";
 import { activityFeed, autonomyCounts } from "../src/services/activity.ts";
 import { ensureAutopilotWorkflow, getAutopilot, operatorSnapshot, runAutopilot, setAutopilot } from "../src/services/autopilot.ts";
 import { writeCompanySummary } from "../src/services/company-summary.ts";
@@ -20,7 +19,7 @@ import { spendStatus } from "../src/services/limits.ts";
 import { addNote } from "../src/services/notes.ts";
 import { createDefinition, getDefinition } from "../src/services/workflow-defs.ts";
 import { listRuns, runWorkflow } from "../src/services/workflow-runs.ts";
-import { handleSessionIdle, reconcileSessions } from "../src/services/workflows.ts";
+import { closeRun, recordToolCall } from "../src/services/agent-runs.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -33,61 +32,42 @@ const created: string[] = [];
 const baseEnv = (ws: string): Env => ({
   PUBLIC_URL: "https://example.test",
   DATABASE_URL: url,
-  NAIVE_API_KEY: "nv_test",
-  NAIVE_AGENT_ID: "agt_research",
-  NAIVE_OPERATOR_AGENT_ID: "agt_operator",
-  NAIVE_VAULT_ID: "vlt_test",
   AUTOPILOT_WORKSPACES: ws,
 });
 
-/** Mocked Naive: each session gets an id, and the messages sent are recorded. */
-let n = 0; // Session ids are unique across this file's workspaces, like Naive's.
-function naive() {
-  const sessions: { id: string; agent_id: string; message: string; metadata: Record<string, string> }[] = [];
-  let failCreate = false;
-  const events = new Map<string, unknown[]>();
-  const fn: FetchFn = async (input, init) => {
-    const u = String(input);
-    const method = init?.method ?? "GET";
-    const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
-    if (u.includes("/v1/sessions") && method === "POST" && !/\/v1\/sessions\/[^/]+\//.test(u)) {
-      if (failCreate) return json({ error: "boom" }, 400);
-      const body = JSON.parse(String(init!.body));
-      const id = `ses_ap_${run}_${++n}`;
-      sessions.push({ id, ...body });
-      return json({ id, status: "running" });
-    }
-    const ev = /\/v1\/sessions\/([^/]+)\/events/.exec(u);
-    if (ev) return json({ data: events.get(ev[1]!) ?? [], has_more: false, next_cursor: null });
-    const one = /\/v1\/sessions\/([^/?]+)$/.exec(u);
-    if (one) return json({ id: one[1], status: "idle", stop_reason: "end_turn", pending_actions: [] });
-    if (/\/v1\/agents\/[^/]+$/.test(u) && method === "GET") return json({ id: u.split("/").pop(), name: "T", model: "m", window: "immediate", system: "s", tools: { default_config: { permission: "deny" }, configs: {} }, mcp_servers: [], budget: { cap_micro_usd: 1, max_task_micro_usd: 1, period: "day" }, metadata: { playbook: "p", playbook_version: "1" }, current_version: 1 });
-    if (u.endsWith("/v1/agents") && method === "POST") return json({ id: `agt_copy_${++n}`, current_version: 1 });
-    if (u.includes("/credentials") && method === "POST") return json({ id: `vcr_${++n}`, mcp_server_url: "x", agent_id: "y" });
-    return json({}, 200);
+/**
+ * The agent runs queued since this was made, oldest first, in this file's workspaces (rows a test inserts by hand have
+ * no message and don't count). `metadata` is what a test asks about a run: its purpose, workspace and lead.
+ */
+function queued() {
+  const before = sql`select id from agent_runs where workspace_id = any(${[...created]}::text[])`.then((rows) => new Set(rows.map((r) => r.id as string)));
+  const sessions = async () => {
+    const skip = await before;
+    const rows = await sql`select id, purpose, workspace_id, lead_id, message, status from agent_runs where workspace_id = any(${[...created]}::text[]) and message is not null order by created_at, id`;
+    return rows
+      .filter((r) => !skip.has(r.id as string))
+      .map((r) => ({ id: r.id as string, message: r.message as string, status: r.status as string, metadata: { purpose: r.purpose as string, workspace_id: r.workspace_id as string, lead_id: r.lead_id as string | null } }));
   };
-  return { fn, sessions, events, fail: (v: boolean) => (failCreate = v) };
+  return { sessions };
 }
 
 async function workspace(label: string) {
   const ws = await createTestWorkspace(sql, `ap_${label}_${run}`);
   created.push(ws);
-  // Pretend its research agent exists, so sessions start without provisioning one.
-  await sql`update workspaces set naive_agent_id = 'agt_ws', naive_credential_id = 'vcr_x', naive_synced_at = now() + interval '1 hour' where id = ${ws}`;
   await sql`insert into credit_ledger (workspace_id, owner_id, amount, reason, source) values (${ws}, ${ws}, 100000, 'grant', ${`test:${ws}`})`;
   return ws;
 }
 const summary = (ws: string) => writeCompanySummary(sql, ws, { markdown: "# Acme\n\n## What we sell\n\nThings\n", author: "onboarding" });
 
 /** The find session of a run finished with these leads added. */
-async function finishFind(n: ReturnType<typeof naive>, ws: string, sessionId: string, names: string[], score = 80) {
+async function finishFind(ws: string, sessionId: string, names: string[], score = 80) {
   const out = await addLeads(
     sql,
     ws,
     names.map((name, i) => ({ company: name, domain: `${name}-${run}.dev`, source: "it", source_url: `https://${name}-${run}.dev/`, score: score - i, qualified: score - i >= 50, rationale: "r", why_summary: `${name} is hiring [1].`, evidence: [{ claim: "hiring", source_url: `https://${name}-${run}.dev/jobs` }] })),
     { cohort: `run:${sessionId}` },
   );
-  n.events.set(sessionId, [{ seq: 1, type: "tool.completed", data: { name: "crusonia.add_leads", output: JSON.stringify(out) }, created_at: new Date().toISOString() }]);
+  await recordToolCall(sql, ws, sessionId, { name: "add_leads", args: {}, output: JSON.stringify(out), isError: false, startedAt: new Date() });
   await sql`update agent_runs set status = 'done' where id = ${sessionId}`;
   return out;
 }
@@ -104,7 +84,7 @@ async function mcp(ws: string, env: Env, role: McpRole) {
   };
 }
 
-suite("autopilot (database, mocked Naive)", () => {
+suite("autopilot (database)", () => {
   beforeAll(() => {
     sql = getSql(url);
   });
@@ -117,10 +97,10 @@ suite("autopilot (database, mocked Naive)", () => {
   test("nothing happens without AUTOPILOT_WORKSPACES, and a workspace outside the list stays untouched", async () => {
     const ws = await workspace("off");
     await summary(ws);
-    const n = naive();
-    expect(await runAutopilot(sql, { ...baseEnv(ws), AUTOPILOT_WORKSPACES: undefined }, n.fn)).toEqual({ skipped: "off" });
-    await runAutopilot(sql, { ...baseEnv("ws_other"), AUTOPILOT_WORKSPACES: "ws_other" }, n.fn);
-    expect(n.sessions.filter((s) => s.metadata.workspace_id === ws)).toHaveLength(0);
+    const n = queued();
+    expect(await runAutopilot(sql, { ...baseEnv(ws), AUTOPILOT_WORKSPACES: undefined })).toEqual({ skipped: "off" });
+    await runAutopilot(sql, { ...baseEnv("ws_other"), AUTOPILOT_WORKSPACES: "ws_other" });
+    expect((await n.sessions()).filter((s) => s.metadata.workspace_id === ws)).toHaveLength(0);
     const [row] = await sql`select autopilot, autopilot_provisioned_at from workspaces where id = ${ws}`;
     expect(row).toMatchObject({ autopilot: false, autopilot_provisioned_at: null });
   });
@@ -128,49 +108,49 @@ suite("autopilot (database, mocked Naive)", () => {
   test("zero clicks: a Company summary gives a workspace its workflow and first run; found leads go to research; drafts follow", async () => {
     const ws = await workspace("flow");
     const env = baseEnv(ws);
-    const n = naive();
+    const n = queued();
     // Before the summary: nothing.
-    await runAutopilot(sql, env, n.fn);
-    expect(n.sessions).toHaveLength(0);
+    await runAutopilot(sql, env);
+    expect((await n.sessions())).toHaveLength(0);
 
     // An onboarding session still writing: wait.
     await sql`insert into agent_runs (id, workspace_id, purpose, status) values (${`ses_ob_${run}`}, ${ws}, 'onboarding', 'running')`;
     await summary(ws);
-    await runAutopilot(sql, env, n.fn);
-    expect(n.sessions).toHaveLength(0);
+    await runAutopilot(sql, env);
+    expect((await n.sessions())).toHaveLength(0);
     await sql`update agent_runs set status = 'done' where id = ${`ses_ob_${run}`}`;
 
-    await runAutopilot(sql, env, n.fn);
+    await runAutopilot(sql, env);
     const state = await getAutopilot(sql, env, ws);
     expect(state).toMatchObject({ available: true, enabled: true });
     expect(state.workflow?.name).toBe("Find and qualify");
     expect(state.workflow?.every_hours).toBe(6);
-    expect(n.sessions).toHaveLength(1);
-    const find = n.sessions[0]!;
+    expect((await n.sessions())).toHaveLength(1);
+    const find = (await n.sessions())[0]!;
     expect(find.message).toStartWith("Find up to 5 new leads");
-    expect(find.message).toContain("Don't call ask_operator");
-    expect(find.agent_id).toBe("agt_ws");
+    expect(find.message).toContain("the owner is away");
+    expect(find.status).toBe("queued");
     const [fr] = await sql`select * from workflow_runs where workspace_id = ${ws}`;
     expect(fr).toMatchObject({ phase: "finding", trigger: "schedule", find_session_id: find.id });
     const [s] = await sql`select workflow_run_id, workflow_id from agent_runs where id = ${find.id}`;
     expect(s).toMatchObject({ workflow_run_id: fr!.id, workflow_id: state.workflow!.id });
 
     // Not due again, and the running find session isn't touched.
-    await runAutopilot(sql, env, n.fn);
-    expect(n.sessions).toHaveLength(1);
+    await runAutopilot(sql, env);
+    expect((await n.sessions())).toHaveLength(1);
 
     // The find step finishes: 5 companies, one judged out by its score. The best 3 go to research.
-    await finishFind(n, ws, find.id, ["alpha", "beta", "gamma", "delta"]);
+    await finishFind(ws, find.id, ["alpha", "beta", "gamma", "delta"]);
     await addLeads(sql, ws, [{ company: "out", domain: `out-${run}.dev`, source: "it", source_url: `https://out-${run}.dev/`, score: 10, qualified: false, rationale: "no" }], { cohort: `run:${find.id}` });
-    await runAutopilot(sql, env, n.fn);
+    await runAutopilot(sql, env);
     const [after] = await sql`select phase from workflow_runs where id = ${fr!.id}`;
     expect(after!.phase).toBe("researching");
     // The same tick queues them and starts them on the next pass.
-    await runAutopilot(sql, env, n.fn);
-    const research = n.sessions.filter((x) => x.metadata.purpose === "research");
+    await runAutopilot(sql, env);
+    const research = (await n.sessions()).filter((x) => x.metadata.purpose === "research");
     expect(research).toHaveLength(3);
     expect(research[0]!.message).toStartWith("Research lead");
-    expect(research[0]!.message).toContain("Don't call ask_operator");
+    expect(research[0]!.message).toContain("the owner is away");
     const rows = await sql`select l.company, rl.status from workflow_run_leads rl join leads l on l.id = rl.lead_id where rl.run_id = ${fr!.id} order by l.company`;
     expect(rows.map((r) => `${r.company}:${r.status}`).filter((r) => r.endsWith(":started")).map((r) => r.split(":")[0]).sort()).toEqual(["alpha", "beta", "gamma"]);
     const [session] = await sql`select workflow_run_id from agent_runs where id = ${research[0]!.id}`;
@@ -178,29 +158,29 @@ suite("autopilot (database, mocked Naive)", () => {
 
     // One active run per workflow: a due schedule waits, and says so once.
     await sql`update workflow_defs set next_run_at = now() - interval '1 minute' where workspace_id = ${ws} and is_autopilot`;
-    await runAutopilot(sql, env, n.fn);
-    await runAutopilot(sql, env, n.fn);
-    expect(n.sessions.filter((x) => x.metadata.purpose === "find_leads")).toHaveLength(1);
+    await runAutopilot(sql, env);
+    await runAutopilot(sql, env);
+    expect((await n.sessions()).filter((x) => x.metadata.purpose === "find_leads")).toHaveLength(1);
     const [skips] = await sql`select count(*)::int as n from events where workspace_id = ${ws} and kind = 'workflow_skipped' and data->>'reason' = 'active_run'`;
     expect(skips!.n).toBe(1);
 
     // Research finishes: the run ends and logs it. The Operator runs next, on its own agent. The due schedule starts too.
     await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
     await sql`update workflow_defs set next_run_at = now() + interval '1 hour' where workspace_id = ${ws} and is_autopilot`;
-    await runAutopilot(sql, env, n.fn);
+    await runAutopilot(sql, env);
     const [done] = await sql`select phase, finished_at from workflow_runs where id = ${fr!.id}`;
     expect(done!.phase).toBe("done");
     const [ev] = await sql`select data from events where workspace_id = ${ws} and kind = 'workflow_run_finished'`;
     expect(ev!.data).toMatchObject({ run_id: fr!.id, researched: 3 });
 
-    await runAutopilot(sql, env, n.fn);
-    const operator = n.sessions.filter((x) => x.metadata.purpose === "operate");
+    await runAutopilot(sql, env);
+    const operator = (await n.sessions()).filter((x) => x.metadata.purpose === "operate");
     expect(operator).toHaveLength(1);
     expect(operator[0]!.message).toStartWith("Operate Crusonia");
     expect(operator[0]!.message).toContain('"pipeline"');
     // Only one Operator at a time.
-    await runAutopilot(sql, env, n.fn);
-    expect(n.sessions.filter((x) => x.metadata.purpose === "operate")).toHaveLength(1);
+    await runAutopilot(sql, env);
+    expect((await n.sessions()).filter((x) => x.metadata.purpose === "operate")).toHaveLength(1);
 
     // The feed and the tally.
     const feed = await activityFeed(sql, ws);
@@ -218,62 +198,50 @@ suite("autopilot (database, mocked Naive)", () => {
   test("pause, the switch, caps and credits stop a due schedule", async () => {
     const ws = await workspace("gates");
     const env = baseEnv(ws);
-    const n = naive();
+    const n = queued();
     await summary(ws);
     await sql`update workspaces set autopilot_provisioned_at = now() where id = ${ws}`;
     await ensureAutopilotWorkflow(sql, env, ws);
-    const finds = () => n.sessions.filter((x) => x.metadata.purpose === "find_leads").length;
+    const finds = async () => (await n.sessions()).filter((x) => x.metadata.purpose === "find_leads").length;
 
     // Off (a provisioned workspace stays off until the owner turns it on).
-    await runAutopilot(sql, env, n.fn);
-    expect(finds()).toBe(0);
+    await runAutopilot(sql, env);
+    expect(await finds()).toBe(0);
 
     await setAutopilot(sql, env, ws, true, "clerk:u1");
     await sql`update workspaces set paused = true where id = ${ws}`;
-    await runAutopilot(sql, env, n.fn);
-    expect(finds()).toBe(0);
+    await runAutopilot(sql, env);
+    expect(await finds()).toBe(0);
     await sql`update workspaces set paused = false where id = ${ws}`;
 
     // Daily cap.
     await sql`update workspaces set daily_cap_micro_usd = 0 where id = ${ws}`;
-    await runAutopilot(sql, env, n.fn);
-    expect(finds()).toBe(0);
+    await runAutopilot(sql, env);
+    expect(await finds()).toBe(0);
     expect((await getAutopilot(sql, env, ws)).workflow?.last_skip).toBe("daily_cap_reached");
     await sql`update workspaces set daily_cap_micro_usd = null where id = ${ws}`;
 
     // Weekly cap on the workflow.
     await sql`update workflow_defs set spend_cap_usd = 0 where workspace_id = ${ws} and is_autopilot`;
-    await runAutopilot(sql, env, n.fn);
-    expect(finds()).toBe(0);
+    await runAutopilot(sql, env);
+    expect(await finds()).toBe(0);
     expect((await getAutopilot(sql, env, ws)).workflow?.last_skip).toBe("spend_cap_reached");
     await sql`update workflow_defs set spend_cap_usd = 5 where workspace_id = ${ws} and is_autopilot`;
 
     // Credits.
     await sql`insert into credit_ledger (workspace_id, owner_id, amount, reason, source) values (${ws}, ${ws}, -200000, 'usage', ${`test:drain:${ws}`})`;
-    await runAutopilot(sql, env, n.fn);
-    expect(finds()).toBe(0);
+    await runAutopilot(sql, env);
+    expect(await finds()).toBe(0);
     expect((await getAutopilot(sql, env, ws)).workflow?.last_skip).toBe("no_credits");
     await sql`insert into credit_ledger (workspace_id, owner_id, amount, reason, source) values (${ws}, ${ws}, 200000, 'grant', ${`test:fill:${ws}`})`;
 
     // All clear: it runs, and next_run_at moves forward by its interval.
-    await runAutopilot(sql, env, n.fn);
-    expect(finds()).toBe(1);
+    await runAutopilot(sql, env);
+    expect(await finds()).toBe(1);
     const [def] = await sql`select next_run_at, last_skip from workflow_defs where workspace_id = ${ws} and is_autopilot`;
     expect(new Date(def!.next_run_at as string).getTime()).toBeGreaterThan(Date.now() + 5 * 3_600_000);
     expect(def!.last_skip).toBeNull();
 
-    // A failed start retries soon, and closes its run.
-    await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
-    await sql`update workflow_runs set phase = 'done' where workspace_id = ${ws}`;
-    await sql`update workflow_defs set next_run_at = now() - interval '1 minute' where workspace_id = ${ws} and is_autopilot`;
-    n.fail(true);
-    await runAutopilot(sql, env, n.fn);
-    n.fail(false);
-    const [retry] = await sql`select next_run_at, last_skip from workflow_defs where workspace_id = ${ws} and is_autopilot`;
-    expect(new Date(retry!.next_run_at as string).getTime()).toBeLessThan(Date.now() + 10 * 60_000);
-    expect(retry!.last_skip).toBe("failed");
-    const [open] = await sql`select count(*)::int as n from workflow_runs where workspace_id = ${ws} and phase <> 'done'`;
-    expect(open!.n).toBe(0);
   }, 60_000);
 
   test("the index keeps one active run per workflow, whatever starts it", async () => {
@@ -295,28 +263,28 @@ suite("autopilot (database, mocked Naive)", () => {
     const env = baseEnv(ws);
     const id = await ensureAutopilotWorkflow(sql, env, ws);
     await sql`insert into workflow_runs (id, workspace_id, workflow_id, version, phase, started_at) values (${`wfr_s_${run}`}, ${ws}, ${id}, 1, 'finding', now() - interval '4 hours')`;
-    await runAutopilot(sql, env, naive().fn);
+    await runAutopilot(sql, env);
     const [r] = await sql`select phase from workflow_runs where id = ${`wfr_s_${run}`}`;
     expect(r!.phase).toBe("done");
   }, 30_000);
 
-  test("a find session out of budget ends the find step with what it saved, and doesn't hold the run", async () => {
+  test("a find run closed by a limit ends the find step with what it saved, and doesn't hold the run", async () => {
     const ws = await workspace("budget");
     const env = baseEnv(ws);
-    const n = naive();
+    const n = queued();
     await summary(ws);
-    await runAutopilot(sql, env, n.fn);
-    const find = n.sessions[0]!;
+    await runAutopilot(sql, env);
+    const find = (await n.sessions())[0]!;
     await addLeads(sql, ws, [{ company: "Saved", domain: `saved-${run}.dev`, source: "it", source_url: `https://saved-${run}.dev/`, score: 80, qualified: true, rationale: "r" }], { cohort: `run:${find.id}` }).then((out) =>
-      n.events.set(find.id, [{ seq: 1, type: "tool.completed", data: { name: "crusonia.add_leads", output: JSON.stringify(out) }, created_at: new Date().toISOString() }]),
+      recordToolCall(sql, ws, find.id, { name: "add_leads", args: {}, output: JSON.stringify(out), isError: false, startedAt: new Date() }),
     );
-    await sql`update agent_runs set status = 'idle', stop_reason = 'budget_paused' where id = ${find.id}`;
-    await runAutopilot(sql, env, n.fn);
-    await runAutopilot(sql, env, n.fn);
-    const research = n.sessions.filter((s) => s.metadata.purpose === "research");
+    expect(await closeRun(sql, find.id, "out_of_budget")).toBe(true);
+    await runAutopilot(sql, env);
+    await runAutopilot(sql, env);
+    const research = (await n.sessions()).filter((s) => s.metadata.purpose === "research");
     expect(research).toHaveLength(1);
-    await sql`update agent_runs set status = 'idle', stop_reason = 'budget_paused' where id = ${research[0]!.id}`;
-    await runAutopilot(sql, env, n.fn);
+    await closeRun(sql, research[0]!.id, "out_of_budget");
+    await runAutopilot(sql, env);
     const [r] = await sql`select phase from workflow_runs where workspace_id = ${ws}`;
     expect(r!.phase).toBe("done");
     // Nothing waits on the owner, and these sessions don't use up the workspace's active limit.
@@ -328,42 +296,42 @@ suite("autopilot (database, mocked Naive)", () => {
   test("imports nobody ran start by themselves on the default workflow; consented ones first", async () => {
     const ws = await workspace("csv");
     const env = baseEnv(ws);
-    const n = naive();
+    const n = queued();
     await summary(ws);
     await setAutopilot(sql, env, ws, true, "clerk:u1");
     await sql`update workflow_defs set next_run_at = now() + interval '1 hour' where workspace_id = ${ws} and is_autopilot`;
     const [lead] = await sql`
       insert into leads (id, workspace_id, email, company, source, stage, variant, consent_text, consent_at, import_meta, cohort)
       values (${`lead_csv_${run}`}, ${ws}, ${`a-${run}@ex.test`}, 'Imported', 'import', 'new', 'A', 'form', now(), '{"row":1}', 'batch') returning id`;
-    await runAutopilot(sql, env, n.fn);
-    const research = n.sessions.filter((s) => s.metadata.purpose === "research");
+    await runAutopilot(sql, env);
+    const research = (await n.sessions()).filter((s) => s.metadata.purpose === "research");
     expect(research.map((s) => s.metadata.lead_id)).toEqual([lead!.id as string]);
     const [r] = await sql`select trigger, phase from workflow_runs where workspace_id = ${ws}`;
     expect(r).toMatchObject({ trigger: "csv_import", phase: "researching" });
-    await runAutopilot(sql, env, n.fn);
-    expect(n.sessions.filter((s) => s.metadata.purpose === "research")).toHaveLength(1);
+    await runAutopilot(sql, env);
+    expect((await n.sessions()).filter((s) => s.metadata.purpose === "research")).toHaveLength(1);
   }, 60_000);
 
   test("a run nobody started by hand starts at most 5 sessions, whatever it was asked for; a person's isn't limited this way", async () => {
     const ws = await workspace("cap");
     const env = { ...baseEnv(ws), MAX_ACTIVE_SESSIONS: "100" };
-    const n = naive();
+    const n = queued();
     await summary(ws);
     const id = await ensureAutopilotWorkflow(sql, env, ws);
     const out = await addLeads(sql, ws, Array.from({ length: 12 }, (_, i) => ({ company: `C${i}`, domain: `c${i}-${run}.dev`, source: "it", source_url: `https://c${i}-${run}.dev/` })), { cohort: "big" });
     const ids = out.results.map((r) => r.id!);
-    const auto = await runWorkflow(sql, env, ws, id, { lead_ids: ids, trigger: "operator" }, "agent:x", { fetch: n.fn });
+    const auto = await runWorkflow(sql, env, ws, id, { lead_ids: ids, trigger: "operator" }, "agent:x");
     expect(auto.started).toHaveLength(5);
     await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
     await sql`update workflow_runs set phase = 'done' where workspace_id = ${ws}`;
-    const person = await runWorkflow(sql, env, ws, id, { lead_ids: ids }, "clerk:u1", { fetch: n.fn });
+    const person = await runWorkflow(sql, env, ws, id, { lead_ids: ids }, "clerk:u1");
     expect(person.started).toHaveLength(12);
   }, 60_000);
 
   test("a reply starts a workflow with a reply trigger, once", async () => {
     const ws = await workspace("reply");
     const env = baseEnv(ws);
-    const n = naive();
+    const n = queued();
     await summary(ws);
     await setAutopilot(sql, env, ws, true, "clerk:u1");
     await sql`update workflow_defs set enabled = false where workspace_id = ${ws} and is_autopilot`;
@@ -372,21 +340,21 @@ suite("autopilot (database, mocked Naive)", () => {
     const [lead] = await sql`
       insert into leads (id, workspace_id, email, company, source, stage, variant) values (${`lead_rep_${run}`}, ${ws}, ${`r-${run}@ex.test`}, 'Replier', 'it', 'replied', 'A') returning id`;
     await sql`insert into messages (workspace_id, lead_id, direction, subject, body, from_addr) values (${ws}, ${lead!.id}, 'in', 'Re: hi', 'tell me more', ${`r-${run}@ex.test`})`;
-    await runAutopilot(sql, env, n.fn);
-    const research = n.sessions.filter((s) => s.metadata.purpose === "research");
+    await runAutopilot(sql, env);
+    const research = (await n.sessions()).filter((s) => s.metadata.purpose === "research");
     expect(research).toHaveLength(1);
     expect(research[0]!.message).toContain("This lead replied");
     await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
-    await runAutopilot(sql, env, n.fn);
-    await runAutopilot(sql, env, n.fn);
-    expect(n.sessions.filter((s) => s.metadata.purpose === "research")).toHaveLength(1);
+    await runAutopilot(sql, env);
+    await runAutopilot(sql, env);
+    expect((await n.sessions()).filter((s) => s.metadata.purpose === "research")).toHaveLength(1);
     expect(made.data.workflow.trigger.kind).toBe("reply");
   }, 60_000);
 
   test("a re-research schedule works on leads researched long ago: not new ones, recent ones, or ones with an open draft", async () => {
     const ws = await workspace("stale");
     const env = baseEnv(ws);
-    const n = naive();
+    const n = queued();
     await summary(ws);
     await sql`update workspaces set autopilot = true, autopilot_provisioned_at = now() where id = ${ws}`;
     await addLeads(
@@ -416,17 +384,17 @@ suite("autopilot (database, mocked Naive)", () => {
       { actor: "test", source: "template" },
     );
 
-    await runAutopilot(sql, env, n.fn);
+    await runAutopilot(sql, env);
 
-    const research = n.sessions.filter((x) => x.metadata.purpose === "research");
-    expect(n.sessions.filter((x) => x.metadata.purpose === "find_leads")).toHaveLength(0);
+    const research = (await n.sessions()).filter((x) => x.metadata.purpose === "research");
+    expect((await n.sessions()).filter((x) => x.metadata.purpose === "find_leads")).toHaveLength(0);
     expect(research.map((x) => x.metadata.lead_id).sort()).toEqual([id("old"), id("older")].sort());
   });
 
   test("a lookalike schedule waits for a rating, then looks for companies like the last lead you liked", async () => {
     const ws = await workspace("like");
     const env = baseEnv(ws);
-    const n = naive();
+    const n = queued();
     await summary(ws);
     await sql`update workspaces set autopilot = true, autopilot_provisioned_at = now() where id = ${ws}`;
     await addLeads(sql, ws, [{ company: "Liked", domain: `liked-${ws.replace(/_/g, "-")}.dev`, source: "it", source_url: `https://liked-${ws.replace(/_/g, "-")}.dev/` }], { cohort: "like" });
@@ -443,15 +411,15 @@ suite("autopilot (database, mocked Naive)", () => {
     );
 
     // Nothing rated: no paid run, and it says why once.
-    await runAutopilot(sql, env, n.fn);
-    expect(n.sessions.filter((x) => x.metadata.purpose === "find_leads")).toHaveLength(0);
+    await runAutopilot(sql, env);
+    expect((await n.sessions()).filter((x) => x.metadata.purpose === "find_leads")).toHaveLength(0);
     const [skipped] = await sql`select last_skip from workflow_defs where id = ${def.workflow.id}`;
     expect(skipped!.last_skip).toBe("no_leads");
 
     await addNote(sql, ws, { leadId, author: "user:owner", body: "Good one", kind: "thumbs_up" });
     await sql`update workflow_defs set next_run_at = now() - interval '1 minute' where id = ${def.workflow.id}`;
-    await runAutopilot(sql, env, n.fn);
-    const find = n.sessions.filter((x) => x.metadata.purpose === "find_leads");
+    await runAutopilot(sql, env);
+    const find = (await n.sessions()).filter((x) => x.metadata.purpose === "find_leads");
     expect(find).toHaveLength(1);
     expect(find[0]!.message).toContain(leadId);
   });
@@ -509,8 +477,8 @@ suite("autopilot (database, mocked Naive)", () => {
       { cohort: "x" },
     );
     const [mine, other] = results.map((r) => r.id!);
-    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, input) values (${`ses_r_${run}`}, ${ws}, ${mine}, 'research', 'running', ${JSON.stringify({ run_id: `run_r_${run}` })}::jsonb)`;
-    await sql`insert into agent_runs (id, workspace_id, purpose, status, input) values (${`ses_f_${run}`}, ${ws}, 'find_leads', 'running', ${JSON.stringify({ run_id: `run_f_${run}`, like_lead_id: other })}::jsonb)`;
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, input) values (${`run_r_${run}`}, ${ws}, ${mine}, 'research', 'running', ${JSON.stringify({ run_id: `run_r_${run}` })}::jsonb)`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, input) values (${`run_f_${run}`}, ${ws}, 'find_leads', 'running', ${JSON.stringify({ run_id: `run_f_${run}`, like_lead_id: other })}::jsonb)`;
     await addNote(sql, ws, { leadId: other!, author: "user:u1", body: "secret note about other", kind: "note" });
     await sql`update leads set excluded_at = now(), excluded_reason = 'x' where id = ${other}`;
     const call = await mcp(ws, env, "researcher");
@@ -543,7 +511,7 @@ suite("autopilot (database, mocked Naive)", () => {
   test("the Operator's tools: reads, starts through the gates, cap rules, text rules, a log", async () => {
     const ws = await workspace("op");
     const env = baseEnv(ws);
-    const n = naive();
+    const n = queued();
     await summary(ws);
     await setAutopilot(sql, env, ws, true, "clerk:u1");
     await sql`update workflow_defs set next_run_at = now() + interval '5 hours' where workspace_id = ${ws} and is_autopilot`;
@@ -553,7 +521,7 @@ suite("autopilot (database, mocked Naive)", () => {
     expect((await call("get_autopilot")).data.enabled).toBe(true);
     expect((await call("list_workflows")).data.workflows[0].name).toBe("Find and qualify");
     expect((await call("get_billing_balance")).data).toMatchObject({ enforced: true });
-    expect((await call("get_integrations")).data.providers.naive.configured).toBe(true);
+    expect((await call("get_integrations")).data.providers).not.toHaveProperty("naive");
     expect((await call("get_company_summary")).data).toMatchObject({ version: 1, updated_by: "onboarding" });
 
     // The summary: one section at a time, no new links.
@@ -590,7 +558,7 @@ suite("autopilot (database, mocked Naive)", () => {
     const [p] = await sql`select consent_at from leads where workspace_id = ${ws} and email = ${`p-${run}@ex.test`}`;
     expect(p!.consent_at).toBeNull();
 
-    // Starts go through the gates. (These reach Naive through the default fetch, so the caps are what's tested here.)
+    // Starts go through the gates.
     await sql`update workspaces set paused = true where id = ${ws}`;
     expect((await call("find_more_leads", { count: 5 })).error).toContain("paused");
     expect((await call("start_research", { lead_ids: [lead] })).error).toContain("paused");
@@ -598,9 +566,10 @@ suite("autopilot (database, mocked Naive)", () => {
     await setAutopilot(sql, env, ws, false, "clerk:u1");
     expect((await call("find_more_leads", { count: 5 })).error).toContain("Autopilot is off");
     // A person's own agent isn't bound by the switch; the Operator is.
-    const full = await mcp(ws, { ...env, NAIVE_API_KEY: undefined }, "full");
-    expect((await full("find_more_leads", { count: 5 })).error ?? "").not.toContain("Autopilot is off");
+    const full = await mcp(ws, env, "full");
+    expect((await full("find_more_leads", { count: 5 })).error).toBeUndefined();
     await sql`update workflow_runs set phase = 'done' where workspace_id = ${ws}`;
+    await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
     await setAutopilot(sql, env, ws, true, "clerk:u1");
     await sql`update workspaces set daily_cap_micro_usd = 0 where id = ${ws}`;
     expect((await call("find_more_leads", { count: 5 })).error).toContain("daily spend cap");
@@ -618,102 +587,7 @@ suite("autopilot (database, mocked Naive)", () => {
     // At most so many starts an hour.
     await sql`insert into events (workspace_id, kind, data) select ${ws}, 'research_started', '{"actor":"agent:x"}'::jsonb from generate_series(1, 10)`;
     expect((await call("start_research", { lead_ids: [lead] })).error).toContain("this hour");
-    expect(n.sessions).toHaveLength(0);
+    // Only the person's own agent started anything: every Operator start above was refused.
+    expect((await n.sessions()).map((s) => s.metadata.purpose)).toEqual(["find_leads"]);
   }, 60_000);
-
-  test("an Operator session auto-confirms its own tools and never a web tool", async () => {
-    const ws = await workspace("confirm");
-    const env = baseEnv(ws);
-    const confirms: { tool_call_id: string; decision: string }[] = [];
-    const fetchFn: FetchFn = async (input, init) => {
-      if (String(input).includes("/tool_confirmations")) confirms.push(JSON.parse(String(init!.body)));
-      return new Response(JSON.stringify({ id: "x", status: "idle", stop_reason: "awaiting_approval", pending_actions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
-    };
-    const id = `ses_conf_${run}`;
-    await sql`insert into agent_runs (id, workspace_id, purpose, status) values (${id}, ${ws}, 'operate', 'running')`;
-    const res = await handleSessionIdle(
-      sql,
-      env,
-      {
-        sessionId: id,
-        stopReason: "awaiting_approval",
-        pendingActions: [
-          { tool_call_id: `c1_${run}`, name: "crusonia.list_leads", args: {} },
-          { tool_call_id: `c2_${run}`, name: "crusonia.search_web", args: {} },
-          { tool_call_id: `c3_${run}`, name: "web_fetch", args: { url: "https://evil.test" } },
-        ],
-      },
-      fetchFn,
-    );
-    expect(res.auto_allowed).toEqual(["crusonia.list_leads"]);
-    expect(confirms.map((c) => c.tool_call_id)).toEqual([`c1_${run}`]);
-    expect(res.approvals).toHaveLength(2);
-    await sql`delete from webhook_events where event_id like ${`%${id}%`}`;
-  });
-
-  test("a session already stuck on a parked call recovers, though its idle event is behind the cursor", async () => {
-    const ws = await workspace("stuck");
-    const env = baseEnv(ws);
-    const confirms: string[] = [];
-    const id = `ses_stuck_${run}`;
-    const call = `tc_stuck_${run}`;
-    let parked = true;
-    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
-    const fetchFn: FetchFn = async (input, init) => {
-      const u = String(input);
-      if (u.includes("/tool_confirmations")) {
-        confirms.push(JSON.parse(String(init!.body)).tool_call_id);
-        parked = false;
-        return json({});
-      }
-      // No events after the cursor: the idle event was read long ago.
-      if (u.includes("/events")) return json({ data: [], has_more: false, next_cursor: null });
-      return json(parked
-        ? { id, status: "idle", stop_reason: "awaiting_approval", pending_actions: [{ kind: "tool", tool_call_id: call, name: "crusonia.search_web", args: {}, parked_seq: 79 }] }
-        : { id, status: "running", stop_reason: null, pending_actions: [] });
-    };
-    await sql`insert into agent_runs (id, workspace_id, purpose, status, last_seq, updated_at)
-              values (${id}, ${ws}, 'research', 'running', 100, now() - interval '10 minutes')`;
-    // What the bug left behind: the first park's claim, with the same id.
-    await sql`insert into webhook_events (source, event_id) values ('naive-autoconfirm', ${`autoconfirm:${id}:${call}`})`;
-
-    await reconcileSessions(sql, env, fetchFn);
-    expect(confirms).toEqual([call]);
-    const [row] = await sql`select status from agent_runs where id = ${id}`;
-    expect(row!.status).toBe("running");
-
-    // Once it's running again, the same pass finds nothing to answer.
-    await sql`update agent_runs set updated_at = now() - interval '10 minutes' where id = ${id}`;
-    await reconcileSessions(sql, env, fetchFn);
-    expect(confirms).toEqual([call]);
-    await sql`delete from webhook_events where event_id like ${`%${id}%`}`;
-    await sql`update agent_runs set status = 'done' where id = ${id}`;
-  });
-
-  test("a tool call parked again with the same id is confirmed again; a duplicate delivery of one park isn't", async () => {
-    const ws = await workspace("repark");
-    const env = baseEnv(ws);
-    const confirms: string[] = [];
-    const fetchFn: FetchFn = async (input, init) => {
-      if (String(input).includes("/tool_confirmations")) confirms.push(JSON.parse(String(init!.body)).tool_call_id);
-      return new Response(JSON.stringify({ id: "x", status: "idle", stop_reason: "awaiting_approval", pending_actions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
-    };
-    const id = `ses_repark_${run}`;
-    const call = `tc_repark_${run}`;
-    await sql`insert into agent_runs (id, workspace_id, purpose, status) values (${id}, ${ws}, 'research', 'running')`;
-    const park = (seq: number) =>
-      handleSessionIdle(sql, env, { sessionId: id, stopReason: "awaiting_approval", pendingActions: [{ tool_call_id: call, name: "crusonia.search_web", args: {}, parked_seq: seq }] }, fetchFn);
-
-    await park(30);
-    expect(confirms).toEqual([call]);
-    // The webhook and the reconcile cron both saw this park: one confirmation.
-    await park(30);
-    expect(confirms).toEqual([call]);
-    // Later Naive parks the same call again. Before this, nobody answered it and the session stayed open for good.
-    await park(79);
-    expect(confirms).toEqual([call, call]);
-    const [row] = await sql`select status from agent_runs where id = ${id}`;
-    expect(row!.status).toBe("running");
-    await sql`delete from webhook_events where event_id like ${`%${id}%`}`;
-  });
 });

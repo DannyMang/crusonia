@@ -1,4 +1,4 @@
-// The run timeline on "Dashboard · Workflow run": one row per step (Naive events merged with Crusonia's audit
+// The run timeline on "Dashboard · Workflow run": one row per step (agent events merged with Crusonia's audit
 // events), a time bar placed by start time and sized by duration, and INPUT / OUTPUT on click. Step data comes
 // from the agent: untrusted, rendered as plain text only.
 import { Fragment, useState, type ReactNode } from "react";
@@ -36,8 +36,6 @@ const TYPE_CAPTION: Record<string, string> = {
   model: "Model call",
   message: "Agent message",
   status: "Session",
-  warning: "Warning",
-  error: "Error",
   crusonia: "Crusonia",
   other: "Event",
 };
@@ -50,8 +48,7 @@ export function categorize(step: RunStep): { cat: CatKey; name: string; caption:
     if (MCP.has(tool)) return { cat: "mcp", name: tool, caption: "Crusonia MCP" };
     return { cat: "external", name: tool, caption: "Agent tool" };
   }
-  if (step.type === "approval") return { cat: "human", name: tool ?? "approval", caption: "Needs your approval" };
-  if (step.type === "error" || (step.is_error && step.type !== "tool")) return { cat: "error", name: step.type, caption: TYPE_CAPTION[step.type] ?? "Error" };
+  if (step.is_error && step.type !== "tool") return { cat: "error", name: step.type, caption: TYPE_CAPTION[step.type] ?? "Error" };
   if (step.type === "crusonia" && HUMAN_EVENT.test(step.summary)) return { cat: "human", name: "crusonia", caption: "Human" };
   return { cat: "agent", name: tool ?? step.type, caption: TYPE_CAPTION[step.type] ?? step.type };
 }
@@ -120,7 +117,6 @@ export function Timeline({
   lead,
   live,
   now,
-  notice,
   footer,
 }: {
   steps: RunStep[];
@@ -129,7 +125,6 @@ export function Timeline({
   /** The run can still change: the last open-ended step counts up. */
   live: boolean;
   now: number;
-  notice?: ReactNode;
   footer?: ReactNode;
 }) {
   const [open, setOpen] = useState<number | null>(null);
@@ -158,7 +153,6 @@ export function Timeline({
           ))}
         </div>
       </div>
-      {notice}
       <table className="w-full table-fixed border-collapse text-left text-xs/4">
         {/* Tool and the time bar are narrower below 1440px so "What happened" keeps room. */}
         <colgroup>

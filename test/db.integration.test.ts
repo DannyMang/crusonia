@@ -1,4 +1,4 @@
-// Integration tests against a real Postgres (a Neon dev branch, never production) with AgentMail and Naive
+// Integration tests against a real Postgres (a Neon dev branch, never production) with AgentMail
 // mocked at fetch. Skipped unless TEST_DATABASE_URL is set:
 //   TEST_DATABASE_URL=<dev branch url> bun test test/db.integration.test.ts
 // Creates rows marked with source 'it_test' / @it.example.com and deletes them afterwards.
@@ -9,12 +9,12 @@ import worker from "../src/index.ts";
 import { ApiError } from "../src/lib/errors.ts";
 import type { FetchFn } from "../src/providers/http.ts";
 import { sendApprovalTtlMinutes } from "../src/services/approval-ttl.ts";
-import { answerQuestion, createAgentApproval, expireStaleApprovals, getApproval, resolveTool, type Deps } from "../src/services/approvals.ts";
+import { expireStaleApprovals, getApproval, type Deps } from "../src/services/approvals.ts";
 import { createLead } from "../src/services/crm.ts";
 import { createDraft } from "../src/services/drafts.ts";
 import { handleAgentMailEvent } from "../src/services/inbound.ts";
 import { approveAndSend, reconcileSending } from "../src/services/send.ts";
-import { handleSessionIdle, reconcileSessions, startResearch } from "../src/services/workflows.ts";
+import { startResearch } from "../src/services/workflows.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -43,8 +43,6 @@ const env: Env = {
   PUBLIC_URL: "https://example.test",
   AGENTMAIL_API_KEY: "am_test",
   AGENTMAIL_INBOX_ID: "it@agentmail.to",
-  NAIVE_API_KEY: "nv_test",
-  NAIVE_AGENT_ID: "agt_test",
   // Earlier tests leave sessions 'running' in this workspace; the per-workspace limits have their own tests.
   MAX_ACTIVE_SESSIONS: "100",
 };
@@ -194,143 +192,25 @@ suite("database integration (mocked providers)", () => {
     expect((await sql`select status from drafts where id = ${pending.draftId}`)[0]!.status).toBe("cancelled");
   });
 
-  test("Naive idle: allowlisted tools are auto-allowed once, others and questions become approvals", async () => {
-    const lead = await newLead("naive");
-    const sessionId = `ses_it_${run}_1`;
-    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
-    const nv = provider([(c) => (c.method === "POST" ? ok({}, 202) : undefined)]);
-    const pendingActions = [
-      { tool_call_id: "c1", name: "crusonia.get_lead", args: { lead_id: lead.id } },
-      { tool_call_id: "c2", name: "gmail.send", args: { to: "someone@example.com" } },
-      { kind: "question" as const, tool_call_id: "c3", name: "ask_operator", question: { prompt: "Which mailbox?", fields: [{ key: "mailbox" }] } },
-    ];
-    const first = await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
-    expect(first.auto_allowed).toEqual(["crusonia.get_lead"]);
-    expect(first.approvals).toHaveLength(2);
-    expect(nv.calls).toHaveLength(1);
-    expect(nv.calls[0]).toMatchObject({ url: `https://api.vetta.sh/v1/sessions/${sessionId}/tool_confirmations`, body: { tool_call_id: "c1", decision: "allow", scope: "call" } });
-
-    const again = await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
-    expect(again.approvals).toHaveLength(0);
-    expect(nv.calls).toHaveLength(1);
-
-    const deps: Deps = { sql, ws: WS, env, actor: "test", sendTtlMinutes: sendApprovalTtlMinutes(env), fetch: nv.fn };
-    const [toolCode, questionCode] = first.approvals as [string, string];
-    const tool = await getApproval(sql, WS, toolCode);
-    expect(tool).toMatchObject({ kind: "tool", tool_call_id: "c2", payload: { name: "gmail.send" } });
-    await resolveTool(deps, tool, { decision: "deny", reason: "not allowed" });
-    expect(nv.calls.at(-1)).toMatchObject({ body: { tool_call_id: "c2", decision: "deny", reason: "not allowed" } });
-    expect((await getApproval(sql, WS, toolCode)).status).toBe("rejected");
-
-    const question = await getApproval(sql, WS, questionCode);
-    expect(await failure(answerQuestion(deps, question, { other: "x" }))).toBe("400 invalid_answers");
-    await answerQuestion(deps, question, { mailbox: "hi@example.com" });
-    expect(nv.calls.at(-1)).toMatchObject({ url: `https://api.vetta.sh/v1/sessions/${sessionId}/answers`, body: { tool_call_id: "c3", answers: { mailbox: "hi@example.com" } } });
-    expect((await sql`select status from agent_runs where id = ${sessionId}`)[0]!.status).toBe("running");
-  });
-
-  test("onboarding answers its own question instead of waiting on the owner", async () => {
-    const sessionId = `ses_it_${run}_onboard`;
-    await sql`insert into agent_runs (id, workspace_id, purpose, status) values (${sessionId}, ${WS}, 'onboarding', 'running')`;
-    const nv = provider([(c) => (c.method === "POST" ? ok({}, 202) : undefined)]);
-    const pendingActions = [{ kind: "question" as const, tool_call_id: "q1", name: "ask_operator", question: { prompt: "Who buys?", fields: [{ key: "buyer" }, { key: "tags", multiple: true }] } }];
-    const first = await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
-    expect(first.approvals).toHaveLength(0);
-    expect(nv.calls).toHaveLength(1);
-    expect(nv.calls[0]).toMatchObject({ url: `https://api.vetta.sh/v1/sessions/${sessionId}/answers`, body: { tool_call_id: "q1" } });
-    const answers = (nv.calls[0]!.body as { answers: Record<string, unknown> }).answers;
-    expect(answers.buyer).toContain("best guess");
-    expect(Array.isArray(answers.tags)).toBe(true);
-    expect((await sql`select status from agent_runs where id = ${sessionId}`)[0]!.status).toBe("running");
-
-    await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
-    expect(nv.calls).toHaveLength(1);
-  });
-
-  test("the cron answers an onboarding question that was already waiting, and closes its card", async () => {
-    const sessionId = `ses_it_${run}_onboard_old`;
-    await sql`insert into agent_runs (id, workspace_id, purpose, status, stop_reason, updated_at)
-              values (${sessionId}, ${WS}, 'onboarding', 'idle', 'awaiting_answer', now() - interval '30 days')`;
-    const action = { kind: "question" as const, tool_call_id: "q2", name: "ask_operator", question: { prompt: "Who buys?", fields: [{ key: "buyer" }] } };
-    const code = (await createAgentApproval(sql, { workspaceId: WS, sessionId, leadId: null, action, ttlMinutes: 60 }))!;
-    const nv = provider([
-      (c) => (c.method === "POST" ? ok({}, 202) : undefined),
-      (c) => (c.url.includes("/events") ? ok({ data: [], has_more: false, next_cursor: null }) : undefined),
-      (c) => (c.url.endsWith(`/sessions/${sessionId}`) ? ok({ id: sessionId, status: "idle", stop_reason: "awaiting_answer", pending_actions: [action] }) : undefined),
-    ]);
-    await reconcileSessions(sql, env, nv.fn);
-    expect(nv.calls.filter((c) => c.url.endsWith(`/sessions/${sessionId}/answers`))).toHaveLength(1);
-    expect(await getApproval(sql, WS, code)).toMatchObject({ status: "answered", decided_via: "auto" });
-    expect((await sql`select status from agent_runs where id = ${sessionId}`)[0]!.status).toBe("running");
-  });
-
-  test("paused: nothing is auto-allowed", async () => {
-    const lead = await newLead("paused");
-    const sessionId = `ses_it_${run}_p`;
-    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
-    await sql`update workspaces set paused = true where id = ${WS}`;
-    const nv = provider([() => ok({}, 202)]);
-    try {
-      const res = await handleSessionIdle(sql, env, { sessionId, pendingActions: [{ tool_call_id: "p1", name: "crusonia.get_lead" }] }, nv.fn);
-      expect(res).toMatchObject({ auto_allowed: [], approvals: [expect.any(String)] });
-      expect(nv.calls).toHaveLength(0);
-    } finally {
-      await sql`update workspaces set paused = false where id = ${WS}`;
-    }
-  });
-
-  test("cron: reconciles a session from its events and denies expired tool approvals", async () => {
-    const lead = await newLead("cron");
-    const sessionId = `ses_it_${run}_c`;
-    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, updated_at) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running', now() - interval '5 minutes')`;
-    const nv = provider([
-      (c) =>
-        c.url.startsWith(`https://api.vetta.sh/v1/sessions/${sessionId}/events`)
-          ? ok({
-              data: [
-                { seq: 1, type: "session.running", data: {} },
-                { seq: 2, type: "session.idle", data: { stop_reason: "awaiting_approval", pending_actions: [{ tool_call_id: "w1", name: "web_search" }, { tool_call_id: "x1", name: "shell.exec" }] } },
-              ],
-              has_more: false,
-              next_cursor: null,
-            })
-          : undefined,
-      (c) => (c.url.includes("/events") ? ok({ data: [], has_more: false, next_cursor: null }) : undefined),
-      (c) => (c.method === "POST" ? ok({}, 202) : undefined),
-    ]);
-    expect(await reconcileSessions(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
-    const [s] = await sql`select status, last_seq from agent_runs where id = ${sessionId}`;
-    expect(s).toEqual({ status: "running", last_seq: 2 }); // web_search auto-allowed, so it resumed
-    const [approval] = await sql`select code from approvals where naive_session_id = ${sessionId} and tool_call_id = 'x1'`;
-    expect(approval).toBeDefined();
-
-    await sql`update approvals set expires_at = now() - interval '1 second' where code = ${approval!.code}`;
-    expect(await expireStaleApprovals(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
-    expect((await getApproval(sql, WS, approval!.code as string)).status).toBe("expired");
-    expect(nv.calls.at(-1)).toMatchObject({ body: { tool_call_id: "x1", decision: "deny" } });
-  });
-
-  test("research starts one Naive session per lead and skips leads with an open session", async () => {
+  test("research queues one run per lead, with its first message and limits, and skips leads with an open run", async () => {
     const lead = await newLead("research");
-    // A workspace other than the owner's runs on its own copy of the template agent (src/services/naive-agents.ts).
-    await sql`update workspaces set naive_agent_id = 'agt_ws_copy', naive_credential_id = 'vcr_x', naive_synced_at = now(),
-                naive_workflow_version = 'research@3, agent v7' where id = ${WS}`;
-    const nv = provider([(c) => (c.url.endsWith("/v1/sessions") ? ok({ id: `ses_it_${run}_r`, status: "queued" }) : undefined)]);
-    const first = await startResearch(sql, env, WS, { lead_ids: [lead.id, "lead_missing"] }, "test", nv.fn);
+    const first = await startResearch(sql, env, WS, { lead_ids: [lead.id, "lead_missing"] }, "test");
     expect(first.failed).toEqual([]);
-    expect(first.started).toEqual([{ lead_id: lead.id, session_id: `ses_it_${run}_r` }]);
+    expect(first.started).toHaveLength(1);
+    expect(first.started[0]).toMatchObject({ lead_id: lead.id });
     expect(first.skipped).toEqual([{ lead_id: "lead_missing", reason: "not_found" }]);
-    expect(nv.calls[0]!.body).toMatchObject({ agent_id: "agt_ws_copy", metadata: { lead_id: lead.id, purpose: "research", workspace_id: WS } });
-    expect(nv.calls[0]!.body.message).toContain("There is no Company summary yet");
+    const runId = first.started[0]!.session_id;
+    expect(runId).toStartWith("run_");
     expect((await sql`select stage from leads where id = ${lead.id}`)[0]!.stage).toBe("researching");
-    expect((await sql`select workspace_id, billing_owner_id, workflow_version from agent_runs where id = ${`ses_it_${run}_r`}`)[0]).toEqual({
-      workspace_id: WS,
-      billing_owner_id: WS,
-      workflow_version: "research@3, agent v7",
-    });
-    const second = await startResearch(sql, env, WS, { lead_ids: [lead.id] }, "test", nv.fn);
+    const [row] = await sql`select workspace_id, billing_owner_id, workflow_version, status, role, message, input, max_minutes, max_tool_calls, max_cost_micro_usd::text
+                            from agent_runs where id = ${runId}`;
+    expect(row).toMatchObject({ workspace_id: WS, billing_owner_id: WS, workflow_version: "research@11", status: "queued", role: "researcher", max_minutes: 15, max_tool_calls: 60, max_cost_micro_usd: "1000000" });
+    expect(row!.input).toMatchObject({ run_id: runId });
+    expect(row!.message).toStartWith(`Research lead ${lead.id} for Crusonia.`);
+    expect(row!.message).toContain(`Crusonia run id: ${runId}`);
+    expect(row!.message).toContain("There is no Company summary yet");
+    const second = await startResearch(sql, env, WS, { lead_ids: [lead.id] }, "test");
     expect(second.skipped).toEqual([{ lead_id: lead.id, reason: "session_open" }]);
-    expect(nv.calls).toHaveLength(1);
   });
 
   describe("approval lifetimes", () => {
@@ -389,70 +269,18 @@ suite("database integration (mocked providers)", () => {
       expect(await lifetime(await mcpDraft(lead.id, { SEND_APPROVAL_TTL_HOURS: "24" }))).toBe(24 * HOUR);
     });
 
-    test("agent tool and question approvals last 1 hour by default", async () => {
-      const lead = await newLead("ttl-tool");
-      const sessionId = `ses_it_${run}_ttl`;
-      await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
-      const nv = provider([() => ok({}, 202)]);
-      const res = await handleSessionIdle(
-        sql,
-        env,
-        {
-          sessionId,
-          stopReason: "awaiting_approval",
-          pendingActions: [
-            { tool_call_id: "t1", name: "shell.exec", args: {} },
-            { kind: "question", tool_call_id: "q1", name: "ask_operator", question: { prompt: "Which one?", fields: [{ key: "pick" }] } },
-          ],
-        },
-        nv.fn,
-      );
-      expect(res.approvals).toHaveLength(2);
-      for (const code of res.approvals) expect(await lifetime(code)).toBe(HOUR);
-
-      const sessionId2 = `ses_it_${run}_ttl2`;
-      await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sessionId2}, ${WS}, ${lead.id}, 'research', 'running')`;
-      const custom = await handleSessionIdle(
-        sql,
-        { ...env, TOOL_APPROVAL_TTL_MINUTES: "5" },
-        { sessionId: sessionId2, stopReason: "awaiting_approval", pendingActions: [{ tool_call_id: "t2", name: "shell.exec" }] },
-        nv.fn,
-      );
-      expect(await lifetime(custom.approvals[0]!)).toBe(5 * 60);
-    });
-
-    test("after an hour the cron denies a tool approval to Naive; a send approval from the same moment stays open", async () => {
+    test("a send approval stays open for its 7 days, then the cron expires it and its draft goes back to 'draft'", async () => {
       const lead = await newLead("ttl-cron");
-      const sessionId = `ses_it_${run}_ttlc`;
-      await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
-      const nv = provider([() => ok({}, 202)]);
-      const idle = await handleSessionIdle(
-        sql,
-        env,
-        { sessionId, stopReason: "awaiting_approval", pendingActions: [{ tool_call_id: "tc1", name: "shell.exec" }] },
-        nv.fn,
-      );
-      const toolCode = idle.approvals[0]!;
       const send = await newApproval(lead.id);
 
-      // Move both approvals 61 minutes into the past, as if an hour went by with no decision.
-      await sql`update approvals set created_at = created_at - interval '61 minutes', expires_at = expires_at - interval '61 minutes'
-                where code = any(${[toolCode, send.code]}::text[])`;
-      expect(await expireStaleApprovals(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
-      expect((await getApproval(sql, WS, toolCode)).status).toBe("expired");
-      expect(nv.calls.at(-1)).toMatchObject({
-        url: `https://api.vetta.sh/v1/sessions/${sessionId}/tool_confirmations`,
-        body: { tool_call_id: "tc1", decision: "deny" },
-      });
+      await sql`update approvals set created_at = created_at - interval '61 minutes', expires_at = expires_at - interval '61 minutes' where code = ${send.code}`;
+      await expireStaleApprovals(sql);
       expect((await getApproval(sql, WS, send.code)).status).toBe("pending");
 
-      // Past 7 days the send approval expires too, and its draft goes back to 'draft' (nothing to deny).
-      const calls = nv.calls.length;
       await sql`update approvals set created_at = created_at - interval '7 days', expires_at = expires_at - interval '7 days' where code = ${send.code}`;
-      expect(await expireStaleApprovals(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
+      expect(await expireStaleApprovals(sql)).toBeGreaterThanOrEqual(1);
       expect((await getApproval(sql, WS, send.code)).status).toBe("expired");
       expect((await sql`select status from drafts where id = ${send.draftId}`)[0]!.status).toBe("draft");
-      expect(nv.calls).toHaveLength(calls);
     });
   });
 });

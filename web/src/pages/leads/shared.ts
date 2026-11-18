@@ -23,7 +23,6 @@ const SOURCES: Record<string, string> = {
   hubspot: "HubSpot",
   agent: "Agent",
   mcp: "Agent",
-  naive: "Agent",
   csv: "CSV",
   csv_import: "CSV",
   api: "API",

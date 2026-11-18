@@ -7,7 +7,7 @@
 // - credit_ledger.amount is in whole credits (signed bigint): + grants and purchases, - usage and refunds.
 // - 1 credit = $0.01 of list value (MICRO_USD_PER_CREDIT micro-USD): $10 buys 1,000 credits.
 // - Usage is debited at our provider cost times USAGE_MARKUP_BPS, rounded up to whole credits. Today the only
-//   metered cost is hosted agent time: a Naive session that reported $0.30 of spend debits
+//   metered cost is hosted agent time: an agent run that reported $0.30 of spend debits
 //   ceil(300,000 x 2.0 / 10,000) = 60 credits. At 2x every credit spent at list price carries a 50% gross margin
 //   on provider cost (before Stripe fees). Data calls (Apify search and page reads) are not metered yet.
 // - Packs and plans grant the fixed amounts below. The amount a customer paid never sets the credits (coupons,

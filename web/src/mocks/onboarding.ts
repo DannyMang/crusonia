@@ -54,8 +54,6 @@ const polls = new Map<string, number>();
 const status = (session_id: string, rest: Partial<ProposeStatus> & Pick<ProposeStatus, "status">): ProposeStatus => ({
   session_id,
   stop_reason: null,
-  waiting_on: null,
-  pending_approvals: [],
   ...rest,
 });
 
@@ -96,17 +94,17 @@ export const onboardingHandlers = [
     return ok({ pages, mode: "apify" });
   }),
   http.post("/api/onboarding/propose", () => {
-    if (scenario() === "unconfigured") return fail(503, "not_configured", "NAIVE_AGENT_ID is not set");
+    if (scenario() === "unconfigured") return fail(503, "not_configured", "The agent is not set up yet");
     const id = `ses_prop_${Date.now()}`;
     polls.set(id, 0);
     return ok({ session_id: id }, 202);
   }),
   http.get("/api/onboarding/propose/:id", ({ params }) => {
-    if (scenario() === "unconfigured") return fail(503, "not_configured", "NAIVE_AGENT_ID is not set");
+    if (scenario() === "unconfigured") return fail(503, "not_configured", "The agent is not set up yet");
     const n = (polls.get(String(params.id)) ?? 0) + 1;
     polls.set(String(params.id), n);
     const id = String(params.id);
-    if (isEmpty()) return ok(n < 3 ? status(id, { status: "running" }) : status(id, { status: "done", stop_reason: "end_turn" }));
-    return ok(n < 5 ? status(id, { status: "running", profile: partialProfile(n) }) : status(id, { status: "done", profile: sampleProfile, stop_reason: "end_turn" }));
+    if (isEmpty()) return ok(n < 2 ? status(id, { status: "queued" }) : n < 3 ? status(id, { status: "running" }) : status(id, { status: "done", stop_reason: "finished" }));
+    return ok(n < 2 ? status(id, { status: "queued" }) : n < 5 ? status(id, { status: "running", profile: partialProfile(n) }) : status(id, { status: "done", profile: sampleProfile, stop_reason: "finished" }));
   }),
 ];

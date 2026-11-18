@@ -4,7 +4,7 @@
 -- A workspace is one customer's private space: its Company summary, leads, approvals, budget and credits.
 -- 'ws_owner' is the instance owner's workspace (MCP_TOKEN, OWNER_CLERK_USER_ID, and every row that existed
 -- before workspaces). Per-workspace settings are columns here: `paused` (the kill switch), `daily_cap_micro_usd`
--- (Naive spend cap per rolling day; null = WORKSPACE_DAILY_CAP_USD) and the workspace's own Naive agent.
+-- (agent spend cap per rolling day; null = WORKSPACE_DAILY_CAP_USD).
 create table if not exists workspaces (
   id         text primary key,
   name       text not null,
@@ -12,16 +12,6 @@ create table if not exists workspaces (
 );
 alter table workspaces add column if not exists paused boolean not null default false;
 alter table workspaces add column if not exists daily_cap_micro_usd bigint;
--- The workspace's Naive agent (src/services/naive-agents.ts): a copy of the owner's template agent whose crusonia
--- MCP server URL is /mcp?ws=<id>, with a vault credential bound to that agent holding a workspace API key.
--- Null for the owner workspace, which uses NAIVE_AGENT_ID and the MCP_TOKEN credential.
-alter table workspaces add column if not exists naive_agent_id text;
-alter table workspaces add column if not exists naive_credential_id text;
-alter table workspaces add column if not exists naive_api_key_id text;
-alter table workspaces add column if not exists naive_mcp_url text;
-alter table workspaces add column if not exists naive_template_version int;
-alter table workspaces add column if not exists naive_synced_at timestamptz;
-alter table workspaces add column if not exists naive_provisioning_at timestamptz;
 insert into workspaces (id, name) values ('ws_owner', 'Owner') on conflict (id) do nothing;
 
 -- Who belongs to a workspace. A user can belong to several; the web app names one per request (X-Crusonia-Workspace),
@@ -123,11 +113,10 @@ create table if not exists drafts (
 -- One row per human decision the system is waiting on. `code` is its short public id.
 create table if not exists approvals (
   code             text primary key,
+  -- Only 'send' is created now ('tool' and 'question' were parked agent calls of the old hosted runtime).
   kind             text not null check (kind in ('send', 'tool', 'question')),
   lead_id          text references leads(id) on delete cascade,
   draft_id         text references drafts(id) on delete cascade,
-  naive_session_id text,
-  tool_call_id     text,
   summary          text not null,
   -- pending | approved | rejected | answered | expired
   status           text not null default 'pending',
@@ -137,8 +126,6 @@ create table if not exists approvals (
   decided_at       timestamptz,
   created_at       timestamptz not null default now()
 );
-create unique index if not exists approvals_tool_call_uq
-  on approvals (naive_session_id, tool_call_id) where tool_call_id is not null;
 
 create table if not exists messages (
   id                  bigserial primary key,
@@ -180,10 +167,10 @@ create table if not exists agent_runs (
   id          text primary key,
   lead_id     text references leads(id) on delete cascade,
   purpose     text not null,
-  -- running | idle | done | error
+  -- queued (waiting for an agent) | running (claimed) | done | error
   status      text not null default 'running',
+  -- Why it ended: finished, failed, out_of_time, out_of_tool_calls, out_of_budget, unclaimed
   stop_reason text,
-  last_seq    int not null default 0,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
@@ -249,19 +236,17 @@ create index if not exists agent_runs_status_idx on agent_runs (status, updated_
 -- Web app API (dashboard, onboarding, workflows, experiments, API keys). Additive and idempotent.
 -- ---------------------------------------------------------------------------
 
--- Naive sessions as workflow runs. `input` is what the owner started the run with (onboarding url or
--- description, find_leads count). `consumed_micro_usd` is Naive's running total for the session (null =
--- not reported yet). `events_seq` is how far the event cache below goes; it is separate from `last_seq`,
--- which belongs to the reconcile cron. `leads_processed` counts leads a find_leads run added or updated.
+-- Agent runs as workflow runs. `input` is what the owner started the run with (onboarding url or description,
+-- find_leads count). `consumed_micro_usd` is the run's model spend so far (null = none reported). `events_seq` is the
+-- seq of the run's last trace event below. `leads_processed` counts leads a find_leads run added or updated.
 alter table agent_runs add column if not exists input jsonb not null default '{}';
 alter table agent_runs add column if not exists consumed_micro_usd bigint;
 alter table agent_runs add column if not exists events_seq int not null default 0;
-alter table agent_runs add column if not exists events_synced_at timestamptz;
 alter table agent_runs add column if not exists last_event_at timestamptz;
 alter table agent_runs add column if not exists leads_processed int not null default 0;
 create index if not exists agent_runs_purpose_idx on agent_runs (purpose, created_at desc);
 
--- Cached Naive session events for the run view (GET /api/workflows/runs/:id). Tool outputs and messages
+-- A run's trace (GET /api/workflows/runs/:id): its tool calls as Crusonia saw them. Tool outputs and messages
 -- came from the agent and the web: untrusted, stored as data and truncated.
 create table if not exists agent_run_events (
   session_id text not null references agent_runs(id) on delete cascade,
@@ -340,7 +325,7 @@ create table if not exists billing_accounts (
 --   signup:<owner>          free sample (once per owner)
 --   checkout:<session id>   credit pack bought through Checkout (payment mode)
 --   invoice:<invoice id>    monthly plan credits for a paid subscription invoice
---   usage:<naive session>   hosted agent spend x markup when the session finishes (+ `:<micro-usd>` top-ups if
+--   usage:<agent run>       hosted agent spend x markup when the session finishes (+ `:<micro-usd>` top-ups if
 --                           the session resumes and spends more)
 --   apify:<run id>:<total credits>   an Apify Actor run's usage x markup (a later row tops up if usage grew)
 --   refund:<charge>:<cumulative amount refunded>   claw-back of the purchase in `purchase_source`
@@ -352,7 +337,7 @@ create table if not exists credit_ledger (
   amount                bigint not null check (amount <> 0),
   reason                text not null check (reason in ('grant', 'pack', 'plan', 'usage', 'refund', 'expire', 'adjustment')),
   source                text not null unique,
-  -- usage rows: the Naive session; refund and expire rows: the source of the purchase they reduce
+  -- usage rows: the agent run; refund and expire rows: the source of the purchase they reduce
   session_id            text,
   purchase_source       text,
   -- plan grants: when the unused rest expires (null = never)
@@ -387,7 +372,7 @@ drop trigger if exists credit_ledger_append_only on credit_ledger;
 create trigger credit_ledger_append_only before update or delete on credit_ledger
   for each row execute function credit_ledger_append_only();
 
--- Who pays for a Naive session (the billing owner of the caller that started it). Null for sessions started
+-- Who pays for an agent run (the billing owner of the caller that started it). Null for sessions started
 -- before billing existed: those are never debited.
 alter table agent_runs add column if not exists billing_owner_id text;
 create index if not exists agent_runs_billing_idx on agent_runs (status, updated_at) where billing_owner_id is not null;
@@ -514,7 +499,7 @@ alter table leads add column if not exists next_step text;
 
 -- Every Apify Actor run Crusonia starts (search_web, read_website). `usage_micro_usd` is the run's
 -- usageTotalUsd in micro-USD; Apify finalizes it shortly after the run ends, so the cron re-reads it once
--- (`usage_final`). The billing owner is debited usage x the markup in src/billing/plans.ts, like Naive spend:
+-- (`usage_final`). The billing owner is debited usage x the markup in src/billing/plans.ts, like agent spend:
 -- ledger rows `apify:<run id>:<total credits>`, `debited_credits` is what was debited so far (top-ups only).
 create table if not exists apify_runs (
   run_id           text primary key,
@@ -729,7 +714,6 @@ create index if not exists leads_ws_cohort_idx on leads (workspace_id, cohort);
 alter table agent_runs add column if not exists workflow_version text;
 alter table drafts add column if not exists workflow_version text;
 alter table drafts add column if not exists session_id text;
-alter table workspaces add column if not exists naive_workflow_version text;
 
 -- The do-not-contact list is per workspace.
 alter table suppressions drop constraint if exists suppressions_pkey;
@@ -745,8 +729,8 @@ create index if not exists credit_ledger_ws_idx on credit_ledger (workspace_id, 
 create index if not exists lead_notes_ws_idx on lead_notes (workspace_id, id desc);
 create index if not exists drafts_ws_tasks_idx on drafts (workspace_id, status, created_at desc) where channel <> 'email';
 
--- API keys: 'user' keys are made in "Connect your agent"; an 'agent' key is the one a workspace's Naive agent
--- uses (held only in the Naive vault, see src/services/naive-agents.ts). Both act only on their workspace.
+-- API keys: 'user' keys are made in "Connect your agent"; an 'agent' or 'operator' key is one an
+-- agent holds: it works on /mcp only, with that role's tools (src/mcp/toolsets.ts). All act only on their workspace.
 alter table api_keys add column if not exists kind text not null default 'user';
 create index if not exists api_keys_ws_idx on api_keys (workspace_id, created_at desc);
 
@@ -757,8 +741,8 @@ delete from settings where key = 'paused';
 
 -- Company summary: what Crusonia knows about the business, as one markdown document per workspace (like a GTM.md).
 -- Only the current text is stored: a save overwrites it, and there is no history. `version` counts saves, for the
--- stale-write check. Agents edit it directly. `updated_by`: 'user:<clerk id>', 'agent:<naive session id>' (or
--- 'agent:api_key:<id>' / 'agent:mcp_token' for an agent outside Naive), or 'onboarding'. Capped at 20,000 characters;
+-- stale-write check. Agents edit it directly. `updated_by`: 'user:<clerk id>', 'agent:<run id>' (or
+-- 'agent:api_key:<id>' / 'agent:mcp_token' for an agent working outside a run), or 'onboarding'. Capped at 20,000 characters;
 -- the web app renders it as sanitized markdown.
 create table if not exists company_summaries (
   workspace_id text primary key references workspaces(id),
@@ -1086,8 +1070,6 @@ end
 $$;
 -- The next time the Operator runs by the clock. It also runs when something changes.
 alter table workspaces add column if not exists autopilot_operator_next_at timestamptz;
--- The workspace's copy of the Operator agent (src/services/naive-agents.ts): agent, credential and key ids, versions.
-alter table workspaces add column if not exists naive_operator jsonb;
 
 -- `next_run_at`: when a schedule fires next (null: as soon as it can). `is_autopilot`: the workspace's default "Find and
 -- qualify" workflow. `last_skip`: why the last due run didn't start, so a skip is logged once rather than every minute.
@@ -1106,3 +1088,45 @@ alter table workflow_runs add column if not exists finished_at timestamptz;
 create index if not exists workflow_runs_active_idx on workflow_runs (workspace_id) where phase <> 'done';
 -- One active run per workflow, whichever way it started.
 create unique index if not exists workflow_runs_one_active_uq on workflow_runs (workflow_id) where phase <> 'done';
+
+-- ---------------------------------------------------------------------------
+-- The agent job queue (src/services/agent-runs.ts). A run is queued with its first message and its limits, claimed by
+-- an agent (status running, deadline_at set), then closed. Idempotent.
+-- ---------------------------------------------------------------------------
+alter table agent_runs add column if not exists message text;
+alter table agent_runs add column if not exists role text not null default 'researcher';
+alter table agent_runs add column if not exists claimed_at timestamptz;
+alter table agent_runs add column if not exists claimed_by text;
+alter table agent_runs add column if not exists deadline_at timestamptz;
+alter table agent_runs add column if not exists tool_calls int not null default 0;
+alter table agent_runs add column if not exists max_minutes int not null default 15;
+alter table agent_runs add column if not exists max_tool_calls int not null default 60;
+alter table agent_runs add column if not exists max_cost_micro_usd bigint;
+create index if not exists agent_runs_queue_idx on agent_runs (workspace_id, created_at) where status = 'queued';
+
+-- The hosted agent platform (Naive) was removed. Once, on a database that still has its columns: close the sessions it
+-- left open, and drop what only it used (its agents' API keys, parked tool calls and questions, webhook dedupe rows).
+do $$
+begin
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'agent_runs' and column_name = 'last_seq') then
+    update agent_runs set status = 'error', stop_reason = 'failed', updated_at = now() where status in ('running', 'idle');
+    delete from api_keys where kind in ('agent', 'operator');
+    delete from approvals where kind in ('tool', 'question');
+    delete from webhook_events where source in ('naive', 'naive-autoconfirm');
+  end if;
+end
+$$;
+alter table agent_runs drop column if exists last_seq;
+alter table agent_runs drop column if exists events_synced_at;
+drop index if exists approvals_tool_call_uq;
+alter table approvals drop column if exists naive_session_id;
+alter table approvals drop column if exists tool_call_id;
+alter table workspaces drop column if exists naive_agent_id;
+alter table workspaces drop column if exists naive_credential_id;
+alter table workspaces drop column if exists naive_api_key_id;
+alter table workspaces drop column if exists naive_mcp_url;
+alter table workspaces drop column if exists naive_template_version;
+alter table workspaces drop column if exists naive_synced_at;
+alter table workspaces drop column if exists naive_provisioning_at;
+alter table workspaces drop column if exists naive_workflow_version;
+alter table workspaces drop column if exists naive_operator;
