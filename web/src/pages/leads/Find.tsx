@@ -31,7 +31,7 @@ export default function FindLeads() {
   const openId = params.get("lead");
   const sample = useSample(runId, latest?.id === runId ? latest : undefined);
   const run = sample.run;
-  const active = run ? run.status === "running" || run.status === "idle" : false;
+  const active = run ? run.status === "running" || run.status === "queued" : false;
 
   const setOpen = (id: string | null) =>
     setParams(
@@ -87,7 +87,7 @@ export default function FindLeads() {
  */
 function useSample(runId: string | null, fromList: Run | undefined) {
   const api = useApi();
-  const live = fromList ? fromList.status === "running" || fromList.status === "idle" : true;
+  const live = fromList ? fromList.status === "running" || fromList.status === "queued" : true;
   const found = useFindRun(runId, live);
   const fallback = Boolean(runId) && isApiError(found.error) && found.error.missingRoute;
   const needsList = fallback || Boolean(found.data?.leads.some((l) => l.rating === undefined));

@@ -120,8 +120,6 @@ export function leadFull(id: string): LeadFull | null {
             kind: "send",
             lead_id: id,
             draft_id: "drf_fn_2",
-            naive_session_id: "ses_8f3k21",
-            tool_call_id: null,
             summary: "Send v2 to maya@fieldnote.io",
             status: "pending",
             answer: null,
@@ -136,9 +134,9 @@ export function leadFull(id: string): LeadFull | null {
     lookalikes: [],
     messages: [],
     sessions: isFn
-      ? [{ id: "ses_8f3k21", purpose: "research", status: "idle", stop_reason: "requires_action", created_at: ago(2 * HOUR + 20 * MIN), updated_at: ago(2 * HOUR + 10 * MIN) }]
+      ? [{ id: "ses_8f3k21", purpose: "research", status: "done", stop_reason: "finished", created_at: ago(2 * HOUR + 20 * MIN), updated_at: ago(2 * HOUR + 10 * MIN) }]
       : RESEARCH_SESSIONS[id]
-        ? [{ id: RESEARCH_SESSIONS[id], purpose: "research", status: "done", stop_reason: "end_turn", created_at: ago(30 * MIN), updated_at: ago(29 * MIN) }]
+        ? [{ id: RESEARCH_SESSIONS[id], purpose: "research", status: "done", stop_reason: "finished", created_at: ago(30 * MIN), updated_at: ago(29 * MIN) }]
         : [],
     timeline: isFn ? fieldnoteTimeline : [],
   };
@@ -160,12 +158,12 @@ export const leadHandlers = [
     );
     return ok({ data, next_cursor: null });
   }),
-  // Backend: 202 {session_id}; 409 profile_missing without a saved profile; 503 not_configured without the Naive agent.
-  // Sample: the search starts (202). Empty / unconfigured: the Naive agent is missing (503), as in production today.
+  // Backend: 202 {session_id}; 409 profile_missing without a saved profile; 503 not_configured without the agent.
+  // Sample: the search starts (202). Empty / unconfigured: the agent is missing (503).
   http.post("/api/leads/find", () =>
     scenario() === "sample"
       ? ok({ session_id: `ses_find_${Date.now()}` }, 202)
-      : fail(503, "not_configured", "The Naive agent is not configured: NAIVE_AGENT_ID is not set"),
+      : fail(503, "not_configured", "The agent is not set up yet"),
   ),
   // Same shape as the backend's importLeads: counts, skip_reasons, matched columns and per-row results.
   http.post("/api/leads/import", async ({ request }) => {

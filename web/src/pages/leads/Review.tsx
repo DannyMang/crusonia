@@ -1,43 +1,38 @@
 // Review at /app/leads/review(/:id) (Paper: "Final · Research · Review queue"). The queue is every lead the agent
-// sent for review (stage needs_review, with its reason) and every open agent question (answered right in the
-// queue). The focus pane holds the agent's summary with numbered sources, Links & contacts, the decision (Confirm
+// sent for review (stage needs_review, with its reason). The focus pane holds the agent's summary with numbered sources, Links & contacts, the decision (Confirm
 // fit / Not a fit with a reason saved as a note / Fix a fact), notes, and what the agent did with its full trace.
 // Keys: J / K move, F fit, N not a fit (then 1-5 pick the reason), E fix a fact.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import type { ApprovalListItem, Lead, LeadFull } from "../../api.ts";
+import type { Lead, LeadFull } from "../../api.ts";
 import { useApi } from "../../auth.tsx";
 import { Page } from "../../components/AppShell.tsx";
 import { isTypingTarget } from "../../components/approvals/controls.tsx";
-import { questionOf } from "../../components/approvals/model.ts";
 import { AgentSteps } from "../../components/leads/AgentSteps.tsx";
 import { CitedText, LinksAndContacts, NoteComposer, NoteList, SourceRows } from "../../components/leads/core.tsx";
 import { EmptyState, QueryError, Skeleton } from "../../components/ui.tsx";
-import { cx, timeLeft } from "../../lib/format.ts";
-import { keys, useApprovals, useInvalidateLead, useLead, useLeads } from "../../queries.ts";
+import { cx } from "../../lib/format.ts";
+import { keys, useInvalidateLead, useLead, useLeads } from "../../queries.ts";
 
 const REASONS = ["Too late a stage", "Too big", "Not software", "Has a sales team already"] as const;
 
-type Item = { id: string; lead: Lead | null; question: ApprovalListItem | null; at: number };
+type Item = { id: string; lead: Lead; at: number };
 
 export default function Review() {
   const { id } = useParams();
   const navigate = useNavigate();
   const leads = useLeads({ stage: "needs_review", limit: 100 });
-  const questions = useApprovals({ status: "pending", kind: "question" });
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
 
-  const items = useMemo(() => {
-    const byId = new Map<string, Item>();
-    for (const l of leads.data?.data ?? []) byId.set(l.id, { id: l.id, lead: l, question: null, at: new Date(l.updated_at).getTime() });
-    for (const q of questions.data?.data ?? []) {
-      const key = q.lead_id ?? `q:${q.code}`;
-      const prev = byId.get(key);
-      byId.set(key, { id: key, lead: prev?.lead ?? null, question: q, at: Math.max(prev?.at ?? 0, new Date(q.created_at).getTime()) });
-    }
-    return [...byId.values()].filter((i) => !hidden.has(i.id)).sort((a, b) => b.at - a.at);
-  }, [leads.data, questions.data, hidden]);
+  const items = useMemo(
+    () =>
+      (leads.data?.data ?? [])
+        .map((l): Item => ({ id: l.id, lead: l, at: new Date(l.updated_at).getTime() }))
+        .filter((i) => !hidden.has(i.id))
+        .sort((a, b) => b.at - a.at),
+    [leads.data, hidden],
+  );
 
   const selected = items.find((i) => i.id === id) ?? null;
   const first = items[0]?.id;
@@ -75,8 +70,8 @@ export default function Review() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const loading = leads.isPending || questions.isPending;
-  const error = leads.error ?? questions.error;
+  const loading = leads.isPending;
+  const error = leads.error;
 
   return (
     <Page className="gap-6 px-4 pb-14 pt-6 sm:px-8 sm:pt-8">
@@ -111,12 +106,8 @@ export default function Review() {
       ) : (
         <div className="flex flex-col items-start gap-5 lg:flex-row">
           <Queue items={items} selectedId={selected?.id} loading={loading} />
-          {selected?.lead || selected?.question?.lead_id ? (
-            <Focus key={selected.id} leadId={selected.lead?.id ?? selected.question!.lead_id!} onDone={done} />
-          ) : selected ? (
-            <div className="w-full min-w-0 grow basis-0 rounded-xl border border-[#200D0D1A]">
-              <EmptyState title="Answer it in the queue" />
-            </div>
+          {selected ? (
+            <Focus key={selected.id} leadId={selected.lead.id} onDone={done} />
           ) : loading ? (
             <FocusSkeleton />
           ) : null}
@@ -145,10 +136,10 @@ function Queue({ items, selectedId, loading }: { items: Item[]; selectedId: stri
 }
 
 function QueueItem({ item, selected }: { item: Item; selected: boolean }) {
-  const { lead, question } = item;
-  const name = lead?.company ?? question?.lead?.company ?? lead?.domain ?? question?.lead?.name ?? "Agent question";
-  const who = lead ? (lead.name ? [lead.name, lead.title].filter(Boolean).join(" · ") : "No contact yet") : null;
-  const reason = lead?.stage === "needs_review" ? lead.review_question : null;
+  const { lead } = item;
+  const name = lead.company ?? lead.domain ?? lead.name ?? "Lead";
+  const who = lead.name ? [lead.name, lead.title].filter(Boolean).join(" · ") : "No contact yet";
+  const reason = lead.stage === "needs_review" ? lead.review_question : null;
   return (
     <div
       className={cx(
@@ -158,18 +149,13 @@ function QueueItem({ item, selected }: { item: Item; selected: boolean }) {
     >
       <Link to={`/app/leads/review/${encodeURIComponent(item.id)}`} replace aria-current={selected ? "true" : undefined} className="flex items-center justify-between gap-3">
         <span className="truncate text-sm/4.5 font-medium text-ink">{name}</span>
-        {question ? (
-          <span className="shrink-0 text-xs/4 text-muted">expires in {timeLeft(question.expires_at)}</span>
-        ) : who ? (
-          <span className="shrink-0 truncate text-xs/4 text-muted">{who}</span>
-        ) : null}
+        <span className="shrink-0 truncate text-xs/4 text-muted">{who}</span>
       </Link>
       {reason ? (
         <div className="flex gap-1.5">
           <ReasonChip reason={reason} />
         </div>
       ) : null}
-      {question ? <QuestionInline q={question} /> : null}
     </div>
   );
 }
@@ -187,49 +173,6 @@ function ReasonChip({ reason }: { reason: string }) {
     >
       <span className="truncate">{reason}</span>
     </span>
-  );
-}
-
-/** An agent question with one multiple-choice field is answered with one press; anything else opens in Outreach. */
-function QuestionInline({ q }: { q: ApprovalListItem }) {
-  const api = useApi();
-  const qc = useQueryClient();
-  const { prompt, fields } = questionOf(q);
-  const field = fields.length === 1 && fields[0]!.options.length ? fields[0]! : null;
-  const answer = useMutation({
-    mutationFn: (option: string) => api.answer(q.code, { answers: { [field!.key]: field!.multiple ? [option] : option } }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["approvals"] }),
-  });
-  return (
-    <>
-      <div className="flex gap-1.5">
-        <span className="inline-flex h-5.5 items-center rounded-full bg-lime px-2.25 text-xs/4 font-medium text-ink">agent asks</span>
-      </div>
-      <p className="text-[13px]/4.5 font-[450] text-ink [overflow-wrap:anywhere]">{prompt || q.summary}</p>
-      {field ? (
-        <div className="flex flex-wrap gap-1.5">
-          {field.options.map((o) => (
-            <button
-              key={o}
-              type="button"
-              disabled={answer.isPending}
-              onClick={() => answer.mutate(o)}
-              className={cx(
-                "flex h-7 items-center rounded-full border border-ink px-3 text-xs/4 font-medium disabled:opacity-60",
-                answer.variables === o ? "bg-ink text-white" : "bg-white text-ink hover:bg-[#200D0D08]",
-              )}
-            >
-              {o}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <Link to={`/app/outreach/${encodeURIComponent(q.code)}`} className="w-fit text-xs/4 font-medium text-ink underline decoration-1 underline-offset-2">
-          Answer
-        </Link>
-      )}
-      {answer.isError ? <QueryError error={answer.error} what="the answer" /> : null}
-    </>
   );
 }
 

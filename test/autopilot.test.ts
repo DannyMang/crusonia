@@ -180,7 +180,7 @@ describe("the feed", () => {
 
   test("says who did it", () => {
     expect(feedItem(row("lead_scored", { score: 1 }))?.by).toBe("agent");
-    expect(feedItem(row("approval_approved", { via: "imessage" }))).toMatchObject({ by: "you", text: "You approved the email to Weave by iMessage" });
+    expect(feedItem(row("approval_approved", { via: "api" }))).toMatchObject({ by: "you", text: "You approved the email to Weave" });
     expect(feedItem(row("note_added", { author: "user:u1", kind: "thumbs_up" }))).toMatchObject({ by: "you", text: "You liked Weave" });
     expect(feedItem(row("research_started", { actor: "autopilot:wfr_1" }))?.by).toBe("agent");
     expect(feedItem(row("research_started", { actor: "clerk:u1" }))?.by).toBe("you");

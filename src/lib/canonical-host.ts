@@ -1,5 +1,5 @@
 // One public hostname: PUBLIC_URL's. www.<that host> redirects everything to it. An old hostname (LEGACY_HOSTS) keeps
-// serving machines, because providers, agents and the iMessage bridge move to a new URL one at a time, and redirects
+// serving machines, because providers and agents move to a new URL one at a time, and redirects
 // browser pages with their path, so old invite links and bookmarks still land in the right place. Every other host
 // (staging, local dev) is left alone.
 import type { Env } from "../env.ts";

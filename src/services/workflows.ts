@@ -1,33 +1,25 @@
-// Naive sessions: start research per lead, react when a session goes idle (auto-confirm allowlisted tools,
-// turn everything else into owner approvals), and reconcile sessions whose webhooks we missed.
-// A session belongs to the workspace that started it (naive_sessions.workspace_id) and runs on that workspace's
-// Naive agent; webhooks and the cron find the workspace through the session row.
-import { settleSessionUsage } from "../billing/usage.ts";
+// Research and redraft runs: one queued agent run per lead (src/services/agent-runs.ts), with the first message the
+// playbook (playbooks/research.md) expects. A run belongs to the workspace that started it.
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
-import { newId } from "../ids.ts";
-import { ApiError, notConfigured } from "../lib/errors.ts";
-import { ProviderError, type FetchFn } from "../providers/http.ts";
-import { NaiveClient, type NaiveEvent, type NaiveSession, type PendingAction } from "../providers/naive.ts";
-import { toolApprovalTtlMinutes } from "./approval-ttl.ts";
-import { createAgentApproval } from "./approvals.ts";
+import { ApiError } from "../lib/errors.ts";
+import { ACTIVE_RUN_STATUSES, newRunId, queueRun } from "./agent-runs.ts";
 import { getCompanySummary, summaryForMessage, type SummaryView } from "./company-summary.ts";
 import { instanceBusy } from "./instance.ts";
 import { paidStartAllowance, requirePaidStart } from "./limits.ts";
-import { naiveAgentFor } from "./naive-agents.ts";
 import { workflowBrief, type QualificationWorkflow } from "./qualification.ts";
 import { researchBriefs } from "./workflow-defs.ts";
-import { isToolAllowed, OPERATOR_AUTO_CONFIRM, parseToolAllowlist } from "./policy.ts";
 import { isPaused } from "./settings.ts";
-import { claimWebhookEvents, releaseWebhookEvent } from "./webhook-events.ts";
-import { OWNER_WORKSPACE_ID } from "./workspaces.ts";
+
+/** The playbook a run follows, recorded on the run ("research@10"). */
+export const PLAYBOOK_VERSION = { research: "research@11", operator: "operator@4" } as const;
 
 /** A run's workflow version: the agent's (playbook, agent version) plus the qualification workflow's, if any. */
 const runVersion = (agent: string | null, workflow: QualificationWorkflow | null) =>
   [agent, workflow ? `qualification v${workflow.version}` : null].filter(Boolean).join(", ") || null;
 
 /** Autopilot runs start by themselves: nobody is watching, so they never stop to ask. */
-export const AWAY_LINE = "This run started by itself and the owner is away. Don't call ask_operator: when you are blocked, save what you found with save_research and a review_question, and finish.";
+export const AWAY_LINE = "This run started by itself and the owner is away. When you are blocked, save what you found with save_research and a review_question, and finish.";
 
 const runIdText = (runId: string) => `Crusonia run id: ${runId} (pass it as run_id on every crusonia tool that takes one: get_profile, get_lead, save_research, create_draft, add_note, flag_for_review, add_leads, update_company_summary).`;
 
@@ -39,11 +31,6 @@ export type ResearchInput = {
   lead_ids?: string[];
   cohort?: { stage?: string; source?: string; min_score?: number; limit?: number };
 };
-
-function naiveFrom(env: Env, fetchFn?: FetchFn): NaiveClient {
-  if (!env.NAIVE_API_KEY) throw notConfigured("NAIVE_API_KEY");
-  return new NaiveClient(env.NAIVE_API_KEY, fetchFn);
-}
 
 // Lead fields are not interpolated: CSV and scraped values are untrusted, so the agent reads the lead
 // through our MCP tools, where it arrives as data. The owner's qualification workflow (configuration, not lead data)
@@ -90,8 +77,8 @@ export function redraftMessage(input: { leadId: string; draftId: string; channel
 }
 
 /**
- * One research session per lead in workspace `ws`, on the workspace's Naive agent. Sessions are billed to the
- * workspace when they finish (`billable: false` leaves them unbilled). The daily spend cap and the rate limits can
+ * One queued research run per lead in workspace `ws`. Runs are billed to the workspace when they finish
+ * (`billable: false` leaves them unbilled). The daily spend cap and the rate limits can
  * start fewer sessions than asked: the rest are skipped with reason 'daily_cap_reached' or 'rate_limited'. The instance's
  * brakes refuse the whole batch: 429 instance_busy.
  */
@@ -101,11 +88,8 @@ export async function startResearch(
   ws: string,
   input: ResearchInput,
   actor: string,
-  fetchFn?: FetchFn,
   opts: ResearchOpts = {},
 ) {
-  naiveFrom(env, fetchFn);
-  if (!env.NAIVE_AGENT_ID) throw notConfigured("NAIVE_AGENT_ID");
   if (await isPaused(sql, ws)) throw new ApiError(423, "paused", "Crusonia is paused; no new work starts (PUT /api/settings/pause to resume)");
 
   const cohort = input.cohort ?? {};
@@ -123,8 +107,8 @@ export async function startResearch(
 
   const running = new Set(
     (
-      await sql`select lead_id from naive_sessions
-                where workspace_id = ${ws} and purpose in ('research', 'redraft') and status in ('running', 'idle')
+      await sql`select lead_id from agent_runs
+                where workspace_id = ${ws} and purpose in ('research', 'redraft') and status = any(${[...ACTIVE_RUN_STATUSES]}::text[])
                   and lead_id = any(${leads.map((l) => l.id)}::text[])`
     ).map((r) => r.lead_id as string),
   );
@@ -150,32 +134,31 @@ export async function startResearch(
   const toStart = eligible.slice(0, allowance.allowed);
   if (!toStart.length) return { started, skipped, failed };
 
-  const naive = await naiveAgentFor(sql, env, ws, fetchFn);
   const summary = await getCompanySummary(sql, ws);
   for (const lead of toStart) {
     const brief = briefs.get(lead.id);
     const workflow = brief?.workflow ?? null;
     try {
-      const runId = newId("run");
-      const session = await naive.client.createSession({
-        agent_id: naive.agentId,
-        message: researchMessage(lead.id, workflow, summary, runId, { variant: brief?.variant, angle: brief?.angle, draft: brief?.draft, autopilot: opts.autopilot, reply: opts.reply }),
-        metadata: { lead_id: lead.id, purpose: "research", workspace_id: ws, run_id: runId },
-      });
+      const runId = newRunId();
       await sql.transaction([
-        sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, billing_owner_id, input, workflow_version)
-            values (${session.id}, ${ws}, ${lead.id}, 'research', 'running', ${opts.billable === false ? null : ws},
-                    ${JSON.stringify({ run_id: runId, ...(workflow ? { workflow_id: brief?.workflow_id, workflow_version: workflow.version } : {}) })}::jsonb,
-                    ${runVersion(naive.workflowVersion, workflow)})
-            on conflict (id) do nothing`,
+        queueRun(sql, env, {
+          id: runId,
+          ws,
+          purpose: "research",
+          leadId: lead.id,
+          message: researchMessage(lead.id, workflow, summary, runId, { variant: brief?.variant, angle: brief?.angle, draft: brief?.draft, autopilot: opts.autopilot, reply: opts.reply }),
+          input: workflow ? { workflow_id: brief?.workflow_id, workflow_version: workflow.version } : {},
+          billable: opts.billable,
+          workflowVersion: runVersion(PLAYBOOK_VERSION.research, workflow),
+        }),
         sql`update leads set stage = 'researching', updated_at = now()
             where workspace_id = ${ws} and id = ${lead.id} and stage in ('new', 'no_consent', 'needs_review', 'qualified', 'disqualified')`,
         sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, ${lead.id}, 'research_started', ${JSON.stringify({
-          session_id: session.id,
+          session_id: runId,
           actor,
         })}::jsonb)`,
       ]);
-      started.push({ lead_id: lead.id, session_id: session.id });
+      started.push({ lead_id: lead.id, session_id: runId });
     } catch (err) {
       failed.push({ lead_id: lead.id, error: err instanceof Error ? err.message : String(err) });
     }
@@ -184,7 +167,7 @@ export async function startResearch(
 }
 
 /**
- * POST /api/tasks/:id/regenerate: a Naive session that writes a new version of a manual task (or any draft) on the
+ * POST /api/tasks/:id/regenerate: a queued agent run that writes a new version of a manual task (or any draft) on the
  * same channel, with the owner's optional notes. One open research or redraft session per lead. Paid like research.
  */
 export async function startRedraft(
@@ -193,15 +176,12 @@ export async function startRedraft(
   ws: string,
   input: { draftId: string; instructions?: string | null },
   actor: string,
-  fetchFn?: FetchFn,
 ): Promise<{ session_id: string; lead_id: string; draft_id: string }> {
-  naiveFrom(env, fetchFn);
-  if (!env.NAIVE_AGENT_ID) throw notConfigured("NAIVE_AGENT_ID");
   if (await isPaused(sql, ws)) throw new ApiError(423, "paused", "Crusonia is paused; no new work starts (PUT /api/settings/pause to resume)");
   const [draft] = (await sql`
     select d.id, d.lead_id, d.channel, d.status, l.stage,
-           exists (select 1 from naive_sessions s where s.workspace_id = d.workspace_id and s.lead_id = d.lead_id
-                   and s.purpose in ('research', 'redraft') and s.status in ('running', 'idle')) as session_open
+           exists (select 1 from agent_runs s where s.workspace_id = d.workspace_id and s.lead_id = d.lead_id
+                   and s.purpose in ('research', 'redraft') and s.status in ('queued', 'running')) as session_open
     from drafts d join leads l on l.id = d.lead_id where d.workspace_id = ${ws} and d.id = ${input.draftId}`) as {
     id: string;
     lead_id: string;
@@ -217,233 +197,21 @@ export async function startRedraft(
   }
   if (draft.session_open) throw new ApiError(409, "session_open", "An agent is already working on this lead; wait for it to finish");
   await requirePaidStart(sql, env, ws);
-  const naive = await naiveAgentFor(sql, env, ws, fetchFn);
   const summary = await getCompanySummary(sql, ws);
-  const runId = newId("run");
-  const session = await naive.client
-    .createSession({
-      agent_id: naive.agentId,
+  const runId = newRunId();
+  const data = { draft_id: draft.id, channel: draft.channel, ...(input.instructions ? { instructions: input.instructions.slice(0, 500) } : {}) };
+  await sql.transaction([
+    queueRun(sql, env, {
+      id: runId,
+      ws,
+      purpose: "redraft",
+      leadId: draft.lead_id,
       message: redraftMessage({ leadId: draft.lead_id, draftId: draft.id, channel: draft.channel, instructions: input.instructions, runId, summary }),
-      metadata: { lead_id: draft.lead_id, purpose: "redraft", draft_id: draft.id, workspace_id: ws, run_id: runId },
-    })
-    .catch((err) => {
-      throw err instanceof ProviderError ? new ApiError(502, "naive_error", err.message) : err;
-    });
-  const data = { draft_id: draft.id, channel: draft.channel, run_id: runId, ...(input.instructions ? { instructions: input.instructions.slice(0, 500) } : {}) };
-  await sql.transaction([
-    sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input, billing_owner_id, workflow_version)
-        values (${session.id}, ${ws}, ${draft.lead_id}, 'redraft', 'running', ${JSON.stringify(data)}::jsonb, ${ws}, ${naive.workflowVersion})
-        on conflict (id) do nothing`,
+      input: data,
+      workflowVersion: PLAYBOOK_VERSION.research,
+    }),
     sql`insert into events (workspace_id, lead_id, kind, data)
-        values (${ws}, ${draft.lead_id}, 'redraft_started', ${JSON.stringify({ ...data, session_id: session.id, actor })}::jsonb)`,
+        values (${ws}, ${draft.lead_id}, 'redraft_started', ${JSON.stringify({ ...data, run_id: runId, session_id: runId, actor })}::jsonb)`,
   ]);
-  return { session_id: session.id, lead_id: draft.lead_id, draft_id: draft.id };
-}
-
-type SessionRow = { id: string; workspace_id: string; lead_id: string | null; purpose: string; status: string; last_seq: number };
-
-/**
- * Our naive_sessions.status (running | idle | done | error) from Naive's status and stop_reason.
- * `idle` means waiting on the owner (or budget); a finished turn is `done`, so research can run again.
- */
-export function sessionStatus(remote: NaiveSession["status"] | undefined, stopReason: string | null | undefined): string {
-  if (remote === "completed") return "done";
-  if (remote === "failed" || remote === "cancelled") return "error";
-  if (remote === "queued" || remote === "running") return "running";
-  switch (stopReason) {
-    case "awaiting_approval":
-    case "awaiting_answer":
-    case "awaiting_input":
-    case "awaiting_delegation":
-    case "budget_paused":
-      return "idle";
-    case "end_turn":
-    case null:
-    case undefined:
-      return "done";
-    default:
-      return "error"; // error, interrupted, max_iterations, context_exhausted
-  }
-}
-
-const BEST_GUESS = "Nobody is available to answer. Use your best guess from the site and carry on; the owner edits it on the next step.";
-
-const bestGuessAnswers = (a: PendingAction) =>
-  Object.fromEntries((a.question?.fields ?? []).map((f) => [f.key, f.multiple ? [BEST_GUESS] : BEST_GUESS])) as Record<string, string | string[]>;
-
-/**
- * A session went idle (webhook or reconcile). Parked tool calls on the owner's allowlist are allowed;
- * other tool calls and ask_operator questions become approvals, except that onboarding answers its own questions. While
- * paused nothing is auto-allowed.
- */
-export async function handleSessionIdle(
-  sql: Sql,
-  env: Env,
-  input: { sessionId: string; stopReason?: string | null; pendingActions?: PendingAction[] },
-  fetchFn?: FetchFn,
-): Promise<{ known: boolean; auto_allowed: string[]; approvals: string[] }> {
-  const rows = (await sql`select id, workspace_id, lead_id, purpose, status, last_seq from naive_sessions where id = ${input.sessionId}`) as SessionRow[];
-  const session = rows[0];
-  if (!session) {
-    // Only act on sessions we started (audited in the owner workspace: it belongs to no workspace).
-    await sql`insert into events (workspace_id, lead_id, kind, data)
-              values (${OWNER_WORKSPACE_ID}, null, 'naive_unknown_session', ${JSON.stringify({ session_id: input.sessionId })}::jsonb)`;
-    return { known: false, auto_allowed: [], approvals: [] };
-  }
-  const client = naiveFrom(env, fetchFn);
-  let remoteStatus: string | undefined;
-  let stopReason = input.stopReason ?? null;
-  let pending = input.pendingActions;
-  let consumed: number | null = null;
-  if (!pending) {
-    const remote = await client.getSession(session.id);
-    remoteStatus = remote.status;
-    stopReason = remote.stop_reason ?? stopReason;
-    pending = remote.pending_actions ?? [];
-    consumed = typeof remote.consumed_micro_usd === "number" ? remote.consumed_micro_usd : null;
-  }
-  let status = sessionStatus(remoteStatus, stopReason);
-
-  const ws = session.workspace_id;
-  // The Operator has its own list: it reads the whole pipeline, so it can't have a web tool (src/mcp/toolsets.ts).
-  const allowlist = session.purpose === "operate" ? OPERATOR_AUTO_CONFIRM : parseToolAllowlist(env.AUTO_CONFIRM_TOOLS);
-  const paused = await isPaused(sql, ws);
-  const ttl = toolApprovalTtlMinutes(env);
-  const allowed = pending.filter((a) => a.kind !== "question" && !paused && isToolAllowed(a.name, allowlist));
-  // Onboarding never waits on the owner, who edits the result on the next step: a question gets "use your best guess".
-  const guessed = session.purpose === "onboarding" ? pending.filter((a) => a.kind === "question") : [];
-  const parked = pending.filter((a) => !allowed.includes(a) && !guessed.includes(a));
-
-  // Claim every (session, parked tool call) in one statement so a webhook, the poll and the reconcile cron never confirm
-  // the same call twice. A call another handler already claimed counts as auto-allowed: it is being confirmed, so
-  // the session is about to run again and must not be marked idle. The park's seq is part of the key because Naive can
-  // park the same tool_call_id again later (an identical search repeated, or a chat flagged for reading people's data,
-  // where every tool asks each time): that's a new request, and without an answer the session waits forever.
-  const key = (a: PendingAction) => `autoconfirm:${session.id}:${a.tool_call_id}${a.parked_seq === undefined ? "" : `:${a.parked_seq}`}`;
-  const answerable = [...allowed, ...guessed];
-  const claimed = await claimWebhookEvents(sql, "naive-autoconfirm", answerable.map(key));
-  const mine = answerable.filter((a) => claimed.has(key(a)));
-  const results = await Promise.allSettled(
-    mine.map((a) =>
-      a.kind === "question"
-        ? client.answer(session.id, { tool_call_id: a.tool_call_id, answers: bestGuessAnswers(a) })
-        : client.confirmTool(session.id, { tool_call_id: a.tool_call_id, decision: "allow", scope: "call" }),
-    ),
-  );
-  const confirmed = mine.filter((_, i) => results[i]!.status === "fulfilled");
-  const failed = mine.filter((_, i) => results[i]!.status === "rejected");
-  // A confirmation that failed is released, so the next webhook or the reconcile cron retries it.
-  await Promise.all(failed.map((a) => releaseWebhookEvent(sql, key(a)).catch(() => {})));
-  if (confirmed.length) {
-    await sql`
-      insert into events (workspace_id, lead_id, kind, data)
-      select ${ws}, ${session.lead_id}, 'naive_tool_auto_allowed', x.data
-      from jsonb_array_elements(${JSON.stringify(
-        confirmed.map((a) => ({ session_id: session.id, tool: a.name, tool_call_id: a.tool_call_id })),
-      )}::jsonb) as x(data)`;
-  }
-  if (failed.length) {
-    const reason = (results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason;
-    throw reason instanceof Error ? reason : new Error(String(reason));
-  }
-  // A question parked before this rule may already have a card: it's answered now, so it leaves the queue.
-  for (const a of confirmed.filter((c) => c.kind === "question")) {
-    await sql`update approvals set status = 'answered', decided_at = now(), decided_via = 'auto'
-              where workspace_id = ${ws} and naive_session_id = ${session.id} and tool_call_id = ${a.tool_call_id} and status = 'pending'`;
-  }
-  const autoAllowed = answerable.map((a) => a.name);
-  const handledElsewhere = answerable.length - mine.length;
-
-  const approvals: string[] = [];
-  for (const action of parked) {
-    const code = await createAgentApproval(sql, { workspaceId: ws, sessionId: session.id, leadId: session.lead_id, action, ttlMinutes: ttl });
-    if (code) approvals.push(code);
-  }
-
-  // Auto-allowing resumes the session; parked actions mean it waits on the owner; otherwise it is finished.
-  if (autoAllowed.length) status = "running";
-  else if (pending.length && status === "done") status = "idle";
-  // Nothing new to record when another handler already confirmed everything this one saw (a duplicate delivery).
-  const duplicate = pending.length > 0 && handledElsewhere === pending.length;
-  await sql.transaction([
-    sql`update naive_sessions set status = ${status}, stop_reason = ${stopReason}, updated_at = now(),
-          consumed_micro_usd = greatest(consumed_micro_usd, ${consumed}::bigint)
-        where id = ${session.id}`,
-    ...(duplicate
-      ? []
-      : [
-          sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, ${session.lead_id}, 'naive_idle', ${JSON.stringify({
-            session_id: session.id,
-            stop_reason: stopReason,
-            pending: pending.length,
-            auto_allowed: confirmed.length,
-            approvals,
-          })}::jsonb)`,
-        ]),
-  ]);
-  // A finished session pays for its spend now; the minute cron retries if this fails (src/billing/usage.ts).
-  if (status === "done" || status === "error") {
-    await settleSessionUsage(sql, session.id).catch((err) =>
-      console.error(`usage debit ${session.id}:`, err instanceof Error ? err.message : err),
-    );
-  }
-  return { known: true, auto_allowed: autoAllowed, approvals };
-}
-
-/** The last lifecycle event decides whether the session is idle now (a later session.running resumes it). */
-export function latestIdle(events: NaiveEvent[]): NaiveEvent | undefined {
-  let last: NaiveEvent | undefined;
-  for (const e of events) {
-    if (e.type === "session.idle") last = e;
-    else if (e.type === "session.running") last = undefined;
-  }
-  return last;
-}
-
-/**
- * Cron: sessions still 'running' with no update for 2 minutes may have missed a webhook. Read their
- * events after last_seq; if the latest lifecycle event is session.idle, handle it like the webhook would.
- */
-export async function reconcileSessions(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<number> {
-  if (!env.NAIVE_API_KEY) return 0;
-  const sessions = (await sql`
-    select id, workspace_id, lead_id, purpose, status, last_seq from naive_sessions
-    where (status = 'running' and updated_at < now() - interval '2 minutes')
-       or (purpose = 'onboarding' and status = 'idle' and stop_reason = 'awaiting_answer')
-    order by updated_at limit 10`) as SessionRow[];
-  const client = naiveFrom(env, fetchFn);
-  let handled = 0;
-  for (const s of sessions) {
-    try {
-      const events: NaiveEvent[] = [];
-      let after = s.last_seq;
-      for (let page = 0; page < 5; page++) {
-        const res = await client.listEvents(s.id, after, 100);
-        events.push(...res.data);
-        if (res.data.length) after = Math.max(after, ...res.data.map((e) => e.seq));
-        if (!res.has_more || !res.data.length) break;
-      }
-      const idle = latestIdle(events);
-      if (idle) {
-        const data = idle.data as { stop_reason?: string; pending_actions?: PendingAction[] };
-        // Without pending_actions on the event, handleSessionIdle reads them from the session.
-        await handleSessionIdle(sql, env, { sessionId: s.id, stopReason: data.stop_reason, pendingActions: data.pending_actions }, fetchFn);
-        handled++;
-      } else if (!events.length) {
-        // Nothing new, but a session we think is running may be parked on a call nobody answered: its idle event is behind
-        // the cursor by now, so only asking the session itself shows that.
-        const remote = await client.getSession(s.id);
-        if (remote.pending_actions?.length) {
-          await handleSessionIdle(sql, env, { sessionId: s.id, stopReason: remote.stop_reason, pendingActions: remote.pending_actions }, fetchFn);
-          handled++;
-        }
-      }
-      await sql`update naive_sessions set last_seq = greatest(last_seq, ${after}),
-                  updated_at = case when status = 'running' then now() else updated_at end
-                where id = ${s.id}`;
-    } catch (err) {
-      console.error(`reconcile session ${s.id}:`, err instanceof Error ? err.message : err);
-    }
-  }
-  return handled;
+  return { session_id: runId, lead_id: draft.lead_id, draft_id: draft.id };
 }

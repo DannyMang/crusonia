@@ -22,8 +22,6 @@ const SECRET_HINT: Record<string, string> = {
   NOTION_API_TOKEN: "Create one at notion.so/profile/integrations, then share the Leads database with it",
   NOTION_LEADS_DATABASE_ID: "Written by bun run setup --crm --write (creates the Crusonia leads database)",
   APIFY_TOKEN: "console.apify.com › Settings › API & Integrations › Personal API tokens",
-  NAIVE_API_KEY: "Naive dashboard › Settings › API keys",
-  NAIVE_AGENT_ID: "Create the agent in the Naive dashboard and use its id (agt_…)",
 };
 
 /** The secrets each provider reads (src/services/status.ts), used when the API does not list them. */
@@ -32,26 +30,13 @@ const SECRETS: Record<string, string[]> = {
   hubspot: ["HUBSPOT_ACCESS_TOKEN"],
   notion: ["NOTION_API_TOKEN", "NOTION_LEADS_DATABASE_ID"],
   apify: ["APIFY_TOKEN"],
-  naive: ["NAIVE_API_KEY"],
 };
-
-/** iMessage approvals run only for the owner workspace with the bridge on; everyone else sees "Coming soon". */
-const imessageOn = (s: Status | undefined) => Boolean(s?.imessage?.active);
 
 const providerState = (p: ProviderStatus | undefined, known: boolean): State => (!known || !p ? "unknown" : p.configured ? "connected" : "needs_key");
 
 /** The instance's own accounts: HubSpot and Notion sync only the owner workspace, and only the owner can add a key or open the consoles. */
 const crmState = (p: ProviderStatus | undefined, known: boolean, owner: boolean): State => (owner ? providerState(p, known) : "soon");
 const seenState = (state: State, owner: boolean): State => (!owner && state === "needs_key" ? "soon" : state);
-
-/** Naive also needs the agent id that runs research sessions (NAIVE_AGENT_ID), reported separately. */
-function naiveInfo(s: Status | undefined, known: boolean): { state: State; missing: string[] } {
-  const p = s?.providers.naive;
-  const state = providerState(p, known);
-  if (state === "needs_key") return { state, missing: secretsFor("naive", p) };
-  if (state === "connected" && s?.naive_agent_configured === false) return { state: "needs_key", missing: ["NAIVE_AGENT_ID"] };
-  return { state, missing: [] };
-}
 
 export default function Integrations() {
   const status = useStatus();
@@ -68,13 +53,12 @@ export default function Integrations() {
         crmState(s.providers.hubspot, true, owner),
         crmState(s.providers.notion, true, owner),
         seenState(providerState(s.providers.apify, true), owner),
-        seenState(naiveInfo(s, true).state, owner),
         clerkEnabled ? "connected" : "local",
       ]
     : [];
-  const connected = states.filter((x) => x === "connected").length + (imessageOn(s) ? 1 : 0);
+  const connected = states.filter((x) => x === "connected").length;
   const needs = states.filter((x) => x === "needs_key").length;
-  const soon = states.filter((x) => x === "soon").length + (imessageOn(s) ? 0 : 1);
+  const soon = states.filter((x) => x === "soon").length;
 
   return (
     <>
@@ -443,54 +427,20 @@ function PlatformRow({
   );
 }
 
-function PlatformCard({ status, known, owner }: CardProps) {
-  const info = naiveInfo(status, known);
-  const naiveState = seenState(info.state, owner);
-  const naiveMissing = info.missing;
+function PlatformCard({ owner }: CardProps) {
   return (
     <Card className="flex flex-col px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 pb-2">
         <h2 className="text-[15px]/4.5 font-medium text-ink">Platform</h2>
-        <div className="text-[13px]/4 font-medium text-faint">Runs the agent, signs you in, and {imessageOn(status) ? "" : "(soon) "}asks for approvals by text</div>
+        <div className="text-[13px]/4 font-medium text-faint">Signs you in</div>
       </div>
       <PlatformRow
-        tile="naive"
-        name="Naive"
-        state={naiveState}
-        description="Agent runtime. Runs research, scoring and drafting jobs."
-        extra={
-          naiveState === "needs_key" && naiveMissing.length ? (
-            <div className="flex flex-col gap-1 text-xs/4 font-medium text-faint">
-              {naiveMissing.map((k) => (
-                <div key={k} className="flex items-center gap-2">
-                  <span>
-                    Missing <code className="font-medium text-ink">{k}</code>: <code className="font-medium text-ink">wrangler secret put {k}</code>
-                  </span>
-                  <CopyButton text={`wrangler secret put ${k}`} label={`Copy the command for ${k}`} iconOnly className="size-5" />
-                </div>
-              ))}
-              {SECRET_HINT[naiveMissing[0]!] ? <span className="text-[11px]/3.5">{SECRET_HINT[naiveMissing[0]!]}</span> : null}
-            </div>
-          ) : undefined
-        }
-      />
-      <PlatformRow
+        last
         tile="clerk"
         name="Clerk"
         state={clerkEnabled ? "connected" : "local"}
         description={clerkEnabled ? "Sign-in for your team and the dashboard." : "Sign-in for your team. This local build skips sign-in."}
         action={clerkEnabled && owner ? <Manage href="https://dashboard.clerk.com" what="the Clerk dashboard" /> : undefined}
-      />
-      <PlatformRow
-        last
-        tile="photon"
-        name="Photon iMessage"
-        state={imessageOn(status) ? "connected" : "soon"}
-        description={
-          imessageOn(status) && status?.imessage?.owner_phone_hint
-            ? `Approve or edit drafts by replying to a text. Linked to ${status.imessage.owner_phone_hint}.`
-            : "Approve or edit drafts by replying to a text."
-        }
       />
     </Card>
   );

@@ -19,8 +19,8 @@ import { canSendEmail } from "./workspaces.ts";
 type DraftRow = Draft & { workspace_id: string; sending_at: Date | null; delivered_at: Date | null };
 
 /** `ws`: the approver's workspace (an approval of another workspace is "not found"). `via` is recorded as the
- * approval's `decided_via` ('api' by default, 'imessage' from the bridge). */
-export type SendDeps = { sql: Sql; ws: string; env: Env; fetch?: FetchFn; actor: string; now?: Date; via?: "api" | "imessage" };
+ * approval's `decided_via` ('api'). */
+export type SendDeps = { sql: Sql; ws: string; env: Env; fetch?: FetchFn; actor: string; now?: Date; via?: "api" };
 
 export type SendResult =
   | { status: "sent"; draft_id: string; message_id: string; thread_id: string }

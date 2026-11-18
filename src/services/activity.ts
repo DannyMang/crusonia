@@ -71,7 +71,7 @@ export function feedItem(r: FeedRow): FeedItem | null {
     case "workflow_skipped":
       return row(`Next run is waiting · ${SKIP_TEXT[d.reason as string] ?? String(d.reason ?? "")}`, "system");
     case "approval_approved":
-      return row(`You approved the email to ${name}${d.via === "imessage" ? " by iMessage" : ""}`, "you");
+      return row(`You approved the email to ${name}`, "you");
     case "approval_rejected":
       return row(`You rejected the email to ${name}`, "you");
     case "email_sent":
@@ -179,7 +179,7 @@ export async function autonomyCounts(sql: Sql, ws: string, days = 7): Promise<{ 
         or (kind = 'company_summary_updated' and coalesce(data->>'author', '') not like 'user:%')
       ))::int as agent_actions,
       (count(*) filter (where
-        kind in ('approval_approved', 'approval_rejected', 'naive_question_answered', 'naive_tool_decided', 'task_sent', 'task_skipped',
+        kind in ('approval_approved', 'approval_rejected', 'task_sent', 'task_skipped',
                  'lead_excluded', 'lead_unexcluded')
         or (kind = 'draft_created' and data->>'via' = 'api' and coalesce(data->>'actor', '') !~ '^(agent|autopilot)')
         or (kind = 'note_added' and coalesce(data->>'author', '') like 'user:%')
@@ -197,24 +197,23 @@ const RUNNING_TEXT: Record<string, string> = {
   onboarding: "Writing the Company summary",
 };
 
-/** The sessions open right now, in plain words. One out of budget isn't open: it won't go on, and nothing waits on the owner. */
+/** The runs open right now, in plain words. `queued`: no agent has picked it up yet. */
 export async function runningNow(sql: Sql, ws: string) {
   const rows = await sql`
     select s.id, s.purpose, s.status, s.stop_reason, s.lead_id, coalesce(l.company, l.name, l.domain, l.email) as who
-    from naive_sessions s left join leads l on l.id = s.lead_id
-    where s.workspace_id = ${ws} and s.status in ('running', 'idle') and coalesce(s.stop_reason, '') <> 'budget_paused'
+    from agent_runs s left join leads l on l.id = s.lead_id
+    where s.workspace_id = ${ws} and s.status in ('queued', 'running')
     order by s.created_at desc limit 20`;
   return rows.map((r) => ({
     session_id: r.id as string,
     lead_id: (r.lead_id as string | null) ?? null,
-    waiting_on_you: r.status === "idle",
-    text:
-      r.status === "idle"
-        ? `Waiting for you${r.who ? ` on ${r.who}` : ""}`
-        : r.purpose === "research"
-          ? `Researching ${r.who ?? "a lead"}`
-          : r.purpose === "redraft"
-            ? `Rewriting the message to ${r.who ?? "a lead"}`
-            : (RUNNING_TEXT[r.purpose as string] ?? "Working"),
+    queued: r.status === "queued",
+    text: `${r.status === "queued" ? "Waiting for an agent: " : ""}${
+      r.purpose === "research"
+        ? `Researching ${r.who ?? "a lead"}`
+        : r.purpose === "redraft"
+          ? `Rewriting the message to ${r.who ?? "a lead"}`
+          : (RUNNING_TEXT[r.purpose as string] ?? "Working")
+    }`,
   }));
 }

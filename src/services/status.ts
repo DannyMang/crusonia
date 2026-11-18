@@ -30,13 +30,11 @@ export async function getStatus(env: Env, ws?: string): Promise<Status> {
     database: provider(env, "Neon Postgres: leads, drafts, approvals, events", ["DATABASE_URL"]),
     apify: provider(env, "web crawling (read_website) and Google search (search_web)", ["APIFY_TOKEN"]),
     agentmail: provider(env, "sending approved emails to opted-in leads and receiving replies", ["AGENTMAIL_API_KEY", "AGENTMAIL_INBOX_ID"]),
-    naive: provider(env, "managed agent sessions (research and drafting)", ["NAIVE_API_KEY"]),
     hubspot: provider(env, "CRM sync: import contacts/companies, push leads, notes and lead status (writes only with HUBSPOT_SYNC_ENABLED=true)", [
       "HUBSPOT_ACCESS_TOKEN",
     ]),
     notion: provider(env, "CRM sync: a Crusonia leads database (writes only with NOTION_SYNC_ENABLED=true)", ["NOTION_API_TOKEN", "NOTION_LEADS_DATABASE_ID"]),
     stripe: provider(env, "billing: credit packs and monthly plans (Checkout, Customer Portal, webhook)", ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"]),
-    imessage: provider(env, "owner approvals by iMessage through the Photon bridge (only with IMESSAGE_ENABLED=true)", ["BRIDGE_SECRET"]),
   };
 
   const database: Status["database"] = { configured: providers.database.configured, reachable: null };

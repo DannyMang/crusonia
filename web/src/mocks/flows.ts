@@ -47,7 +47,7 @@ const sweepSteps = (v: number): FlowStep[] => [
   s("a1", "approval", "Wait for Daniel", "Approval · 48h", ["m1", "e1", "n1"]),
   s("m1", "send", "Send draft", "AgentMail", [], "approved"),
   s("e1", "end", "Stop", "End", [], "rejected"),
-  s("n1", "notify", "Text Daniel", "Photon iMessage", [], "timed out"),
+  s("n1", "notify", "Notify Daniel", "Notification", [], "timed out"),
 ];
 
 const SWEEP_Q = {
@@ -258,7 +258,7 @@ function traceFor(id: string): RunTrace | null {
       workflow_id: "research",
       name: "Lead research",
       purpose: "research",
-      status: run.status === "waiting" ? "idle" : run.status === "budget_paused" ? "paused" : "done",
+      status: run.status === "budget_paused" ? "paused" : "done",
       stop_reason: null,
       lead_id: null,
       input: {},
@@ -274,9 +274,8 @@ function traceFor(id: string): RunTrace | null {
     next_after_seq: null,
     audit: [],
     approvals: [],
-    spend: { naive_usd: run.cost_usd, credits_debited: Math.round((run.cost_usd ?? 0) * 200), credits: Math.round((run.cost_usd ?? 0) * 200), apify_runs: [{ usage_usd: 0.31 }] },
+    spend: { agent_usd: run.cost_usd, credits_debited: Math.round((run.cost_usd ?? 0) * 200), credits: Math.round((run.cost_usd ?? 0) * 200), apify_runs: [{ usage_usd: 0.31 }] },
     retention_days: 180,
-    sync: { ok: true, complete: true, skipped: "trace is complete" },
   };
 }
 
@@ -386,7 +385,7 @@ export const flowHandlers = [
   http.post("/api/workflow-definitions/:id/run", async ({ params, request }) => {
     const def = findDef(params.id);
     if (!def) return notFound(params.id);
-    if (scenario() === "unconfigured") return fail(503, "not_configured", "NAIVE_AGENT_ID is not set");
+    if (scenario() === "unconfigured") return fail(503, "not_configured", "The agent is not set up yet");
     const b = await body<{ version?: number; test_leads?: number }>(request);
     const id = `ses_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();

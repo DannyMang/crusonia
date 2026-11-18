@@ -58,7 +58,7 @@ describe("canonicalRedirect", () => {
   });
 
   test("a POST to www keeps its method", () => {
-    expect(to("https://www.crusonia.dev/webhooks/naive", "POST")).toEqual({ location: "https://crusonia.dev/webhooks/naive", status: 308 });
+    expect(to("https://www.crusonia.dev/webhooks/stripe", "POST")).toEqual({ location: "https://crusonia.dev/webhooks/stripe", status: 308 });
   });
 
   test("the old hostname redirects pages with their path", () => {
@@ -69,7 +69,7 @@ describe("canonicalRedirect", () => {
   });
 
   test("the old hostname keeps serving machines", () => {
-    for (const path of ["/health", "/mcp", "/mcp?role=operator", "/webhooks/naive", "/webhooks/photon/poll", "/api/me"]) {
+    for (const path of ["/health", "/mcp", "/mcp?role=operator", "/webhooks/agentmail", "/webhooks/stripe", "/api/me"]) {
       expect(to(`https://${OLD_HOST}${path}`, "POST")).toBeNull();
       expect(to(`https://${OLD_HOST}${path}`)).toBeNull();
     }
@@ -117,7 +117,7 @@ describe("the Worker", () => {
   });
 
   test("an unsigned webhook on the old hostname reaches the handler instead of redirecting", async () => {
-    const res = await call(`https://${OLD_HOST}/webhooks/naive`, { ...prod, NAIVE_WEBHOOK_SECRET: "whsec_test" }, { method: "POST", body: "{}" });
+    const res = await call(`https://${OLD_HOST}/webhooks/stripe`, { ...prod, STRIPE_WEBHOOK_SECRET: "whsec_test" }, { method: "POST", body: "{}" });
     expect(res.status).toBe(401);
   });
 
@@ -162,7 +162,7 @@ describe("no production URL in the code", () => {
     });
 
   test("the old hostname appears only in wrangler.jsonc", () => {
-    const found = ["src", "web/src", "bridge", "scripts", "playbooks"]
+    const found = ["src", "web/src", "scripts", "playbooks"]
       .flatMap(files)
       .filter((file) => !/\.(lockb|png|jpg|webp|mp4|webm|woff2?)$/.test(file) && readFileSync(join(ROOT, file), "utf8").includes(OLD_HOST));
     expect(found).toEqual([]);

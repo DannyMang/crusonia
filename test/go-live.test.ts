@@ -216,7 +216,7 @@ describe("Terms and Privacy", () => {
 
   test("Privacy names what the product really does", async () => {
     const text = await read("web/src/pages/legal/Privacy.tsx");
-    for (const word of ["Cloudflare", "Neon", "Clerk", "Naive", "Apify", "AgentMail", "Stripe", "HubSpot and Notion", "Photon", "180 days", "public web pages", "Agent traces", "audit trail"]) {
+    for (const word of ["Cloudflare", "Neon", "Clerk", "Apify", "AgentMail", "Stripe", "HubSpot and Notion", "180 days", "public web pages", "Agent traces", "audit trail"]) {
       expect(text).toContain(word);
     }
   });
@@ -339,7 +339,7 @@ describe("per-IP limits", () => {
   });
 
   test("paid starts: per IP past the limit, and the owner's own token is exempt", async () => {
-    const e = env({ RL_PAID: limiter(0).binding, NAIVE_API_KEY: "nv" });
+    const e = env({ RL_PAID: limiter(0).binding });
     const path = "/api/leads/find";
     const init = { method: "POST", headers: { ...owner, Authorization: "Bearer owner-token" }, body: JSON.stringify({ count: 1 }), ip: "9.9.9.9" };
     expect((await call(path, init, e)).status).not.toBe(429);

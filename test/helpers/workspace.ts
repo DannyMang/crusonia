@@ -26,13 +26,13 @@ export async function deleteTestWorkspaces(sql: Sql, ids: string[]): Promise<voi
   await sql.transaction([
     sql`select set_config('crusonia.allow_ledger_delete', 'on', true)`,
     sql`delete from crm_sync_queue where workspace_id = any(${ws}::text[])`,
-    sql`delete from naive_session_events where workspace_id = any(${ws}::text[])`,
+    sql`delete from agent_run_events where workspace_id = any(${ws}::text[])`,
     sql`delete from approvals where workspace_id = any(${ws}::text[])`,
     sql`delete from messages where workspace_id = any(${ws}::text[])`,
     sql`delete from drafts where workspace_id = any(${ws}::text[])`,
     sql`delete from evidence where workspace_id = any(${ws}::text[])`,
     sql`delete from lookalikes where workspace_id = any(${ws}::text[])`,
-    sql`delete from naive_sessions where workspace_id = any(${ws}::text[])`,
+    sql`delete from agent_runs where workspace_id = any(${ws}::text[])`,
     sql`delete from events where workspace_id = any(${ws}::text[])`,
     sql`delete from suppressions where workspace_id = any(${ws}::text[])`,
     // A sign-up's mark on its mailbox's free sample (src/services/signup-check.ts).

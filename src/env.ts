@@ -12,7 +12,6 @@ export interface Env {
 
   // secrets: needed now
   DATABASE_URL?: string;
-  NAIVE_API_KEY?: string;
   AGENTMAIL_API_KEY?: string;
   APIFY_TOKEN?: string;
   HUBSPOT_ACCESS_TOKEN?: string;
@@ -39,14 +38,14 @@ export interface Env {
   // Clerk user ids of the instance's operators (comma list; OWNER_CLERK_USER_ID is always one): read-only access to
   // every workspace's agent runs and traces under /api/admin, each read recorded in that workspace's audit trail.
   PLATFORM_ADMIN_USER_IDS?: string;
-  // Guardrails per workspace (src/services/limits.ts): Naive spend cap per rolling 24 hours in USD (default 5;
+  // Guardrails per workspace (src/services/limits.ts): agent spend cap per rolling 24 hours in USD (default 5;
   // workspaces.daily_cap_micro_usd overrides it per workspace), and for every workspace but the owner's: paid runs
   // started per hour (default 20), runs active at once (default 5), Apify-backed web reads per hour (default 60).
   WORKSPACE_DAILY_CAP_USD?: string;
   PAID_STARTS_PER_HOUR?: string;
   MAX_ACTIVE_SESSIONS?: string;
   WEB_CALLS_PER_HOUR?: string;
-  // The instance as a whole (src/services/instance.ts): Naive + Apify spend of every workspace but the owner's per rolling
+  // The instance as a whole (src/services/instance.ts): agent + Apify spend of every workspace but the owner's per rolling
   // 24 hours in USD (default 25). At the cap, new paid starts answer 429 instance_busy.
   INSTANCE_DAILY_CAP_USD?: string;
   // The settings key of the instance's kill switch (default instance_control). Only tests set it: they share a database
@@ -68,8 +67,6 @@ export interface Env {
   // Autopilot (src/services/autopilot.ts). Which workspaces may run by themselves: a comma list of workspace ids, or "*"
   // for all. Unset: none, so a deploy never starts spending until it is switched on.
   AUTOPILOT_WORKSPACES?: string;
-  // The Operator agent (bun run setup --agent; playbooks/operator.md). Without it schedules still run, the Operator doesn't.
-  NAIVE_OPERATOR_AGENT_ID?: string;
   // How often the Operator runs by the clock (hours, default 6), the least time between its cycles when something
   // changed (minutes, default 20), and its most cycles per workspace per day (default 8).
   AUTOPILOT_OPERATOR_EVERY_HOURS?: string;
@@ -99,24 +96,28 @@ export interface Env {
   BILLING_TEST_MODE_OK?: string;
 
   // secrets: written by scripts/setup.ts
-  NAIVE_WEBHOOK_SECRET?: string;
-  NAIVE_VAULT_ID?: string;
-  NAIVE_AGENT_ID?: string;
   AGENTMAIL_INBOX_ID?: string;
   AGENTMAIL_WEBHOOK_SECRET?: string;
 
   // config (optional; defaults in code)
-  // Tools the Naive agent may run without asking the owner: comma list, `*` suffix wildcards.
-  AUTO_CONFIRM_TOOLS?: string;
+  // Limits on one agent run (src/services/agent-runs.ts), fixed when the run is queued and checked on every tool call
+  // that names it. Researcher runs (onboarding, find_leads, research, redraft): minutes after it is claimed (default
+  // 15), tool calls (default 60), model spend in USD for the built-in runner (default 1). An Operator cycle: 10
+  // minutes, 25 tool calls, $0.25. A queued run no agent claims within RUN_QUEUE_TTL_MINUTES (default 60) is closed.
+  RUN_MAX_MINUTES?: string;
+  RUN_MAX_TOOL_CALLS?: string;
+  RUN_MAX_COST_USD?: string;
+  OPERATOR_MAX_MINUTES?: string;
+  OPERATOR_MAX_TOOL_CALLS?: string;
+  OPERATOR_MAX_COST_USD?: string;
+  RUN_QUEUE_TTL_MINUTES?: string;
   // Hard cap in USD on every Apify Actor run Crusonia starts (maxTotalChargeUsd), default 0.25 (src/services/apify.ts).
   APIFY_MAX_CHARGE_USD?: string;
   // Days to keep each agent session's full event trace (src/services/traces.ts), default 180.
   TRACE_RETENTION_DAYS?: string;
-  // Approval lifetimes (src/services/approval-ttl.ts). Hours before a send approval (email draft) expires,
-  // default 168 (7 days); minutes before an agent tool or question approval expires, default 60.
+  // Hours before a send approval (email draft) expires, default 168 (7 days) (src/services/approval-ttl.ts).
   SEND_APPROVAL_TTL_HOURS?: string;
-  TOOL_APPROVAL_TTL_MINUTES?: string;
-  // Weekly Naive spend budget in USD, shown next to the week's spend on the dashboard (display only).
+  // Weekly agent spend budget in USD, shown next to the week's spend on the dashboard (display only).
   WEEKLY_BUDGET_USD?: string;
 
   // CRM sync (src/services/crm-sync.ts). Both switches default to off: nothing is written to HubSpot or Notion
@@ -138,23 +139,6 @@ export interface Env {
   NOTION_LEADS_DATABASE_ID?: string;
   // Leads synced per target per cron run (default 5). Keep it small on the Workers Free plan (50 subrequests).
   CRM_SYNC_BATCH_SIZE?: string;
-
-  // iMessage approvals through Photon (src/services/imessage.ts, bridge/). The Photon credentials
-  // (SPECTRUM_PROJECT_ID / SPECTRUM_PROJECT_SECRET) live only on the bridge, never on the Worker.
-  // The bridge only calls the Worker (it accepts no inbound traffic), so the Worker needs no bridge URL.
-  // "true" turns on new notices (default off): new approvals and expiry reminders are texted. Off does not cancel what
-  // was already texted: a tapback on a delivered notice is still applied. To stop that too, stop the bridge.
-  IMESSAGE_ENABLED?: string;
-  // Shared HMAC secret signing the bridge's calls to /webhooks/photon and /webhooks/photon/poll. `openssl rand -hex 32`.
-  BRIDGE_SECRET?: string;
-  // "true" also texts approvals that belong to integration-test fixtures (leads with an it_* source, reserved example
-  // domains, ses_it_* sessions). Off by default so test suites on a shared database never text the owner.
-  IMESSAGE_INCLUDE_TEST_DATA?: string;
-  // Send cap: notices texted per 10 minutes before the rest collapse into one "+N more" text (default 6).
-  IMESSAGE_NOTICE_CAP?: string;
-  // Owner's phone in E.164. Optional on the Worker: when set, /webhooks/photon also refuses any other sender
-  // (the bridge already filters; this is defense in depth).
-  OWNER_PHONE?: string;
 }
 
 type SecretKey = { [K in keyof Env]-?: undefined extends Env[K] ? (Env[K] extends string | undefined ? K : never) : never }[keyof Env];

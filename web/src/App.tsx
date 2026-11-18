@@ -184,7 +184,7 @@ export function App() {
                   <Route path="outreach/tasks" element={page(L.Outreach)} />
                   <Route path="outreach/tasks/:id" element={page(L.Outreach)} />
                   <Route path="outreach/:code" element={page(L.Outreach)} />
-                  {/* Older links, iMessage texts and emails point at /app/approvals(/:code). */}
+                  {/* Older links and emails point at /app/approvals(/:code). */}
                   <Route path="approvals" element={page(L.ApprovalsRedirect)} />
                   <Route path="approvals/:code" element={page(L.ApprovalsRedirect)} />
                   <Route path="workflows" element={page(L.Workflows)} />

@@ -1,5 +1,5 @@
-// /api/workflows: start agent work and inspect it. Research runs one Naive session per lead (NAIVE_AGENT_ID);
-// the agent works through our MCP tools and can never send email. Workflows are naive_sessions grouped by
+// /api/workflows: start agent work and inspect it. Research queues one agent run per lead;
+// the agent works through our MCP tools and can never send email. Workflows are agent_runs grouped by
 // purpose; a run is one session (src/services/runs.ts).
 import { Hono } from "hono";
 import { z } from "zod";
@@ -22,8 +22,8 @@ workflows.get("/", async (c) => {
   return c.json({ data: await listWorkflows(sqlFor(c.env), wsOf(c), { recentRuns: q.runs }) });
 });
 
-// Steps come from cached Naive events (refreshed from Naive's free events API) plus our audit events.
-workflows.get("/runs/:session_id", async (c) => c.json(await getRunDetail(sqlFor(c.env), c.env, wsOf(c), c.req.param("session_id"))));
+// Steps come from the run's trace plus our audit events.
+workflows.get("/runs/:session_id", async (c) => c.json(await getRunDetail(sqlFor(c.env), wsOf(c), c.req.param("session_id"))));
 
 // The qualification workflow research follows: research questions, evidence requirements, completion criteria. PUT
 // saves a new version; research sessions started afterwards get it.
@@ -34,7 +34,7 @@ workflows.put("/qualification", async (c) => {
   return c.json({ workflow: await saveQualificationWorkflow(sqlFor(c.env), wsOf(c), body, actorOf(c.get("principal"))) });
 });
 
-// The full trace ("View full trace"): every stored event, paginated by Naive seq, plus audit events, approvals and spend.
+// The full trace ("View full trace"): every stored event, paginated by seq, plus audit events, approvals and spend.
 const TraceQuery = z.object({
   after_seq: z.coerce.number().int().min(0).default(0),
   limit: z.coerce.number().int().min(1).max(1000).default(200),
@@ -44,7 +44,7 @@ const TraceQuery = z.object({
 // research session, and `run_sessions` lists all of them (one per lead).
 async function traceTarget(sql: Sql, ws: string, id: string): Promise<{ sessionId: string; sessions?: string[] }> {
   if (!id.startsWith("wfr_")) return { sessionId: id };
-  const rows = await sql`select id from naive_sessions where workspace_id = ${ws} and workflow_run_id = ${id} order by created_at`;
+  const rows = await sql`select id from agent_runs where workspace_id = ${ws} and workflow_run_id = ${id} order by created_at`;
   if (!rows.length) throw new ApiError(404, "not_found", `Workflow run ${id} has no research sessions yet`);
   return { sessionId: rows[0]!.id as string, sessions: rows.map((r) => r.id as string) };
 }
@@ -61,7 +61,7 @@ workflows.get("/runs/:session_id/trace", async (c) => {
 // The whole trace as one JSON file.
 workflows.get("/runs/:session_id/trace/export", async (c) => {
   const id = (await traceTarget(sqlFor(c.env), wsOf(c), c.req.param("session_id"))).sessionId;
-  const trace = await exportTrace(sqlFor(c.env), c.env, { principal: c.get("principal"), workspace: wsOf(c) }, id);
+  const trace = await exportTrace(sqlFor(c.env), { principal: c.get("principal"), workspace: wsOf(c) }, id);
   const file = `crusonia-trace-${id.replace(/[^a-zA-Z0-9_-]/g, "")}.json`;
   return new Response(JSON.stringify(trace, null, 2), {
     headers: { "Content-Type": "application/json; charset=utf-8", "Content-Disposition": `attachment; filename="${file}"`, "Cache-Control": "no-store" },

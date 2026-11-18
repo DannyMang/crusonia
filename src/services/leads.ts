@@ -1,7 +1,6 @@
 // Leads: agent-found people/companies (no consent), listing, detail, evidence and scoring.
 // Every write also appends an `events` row in the same statement or transaction.
-// Batched writes keep agent round trips down (each MCP call in a Naive session that read people's data waits for a
-// confirmation): add_leads takes inline evidence and a score per lead, save_research stores a lead's evidence,
+// Batched writes keep agent round trips down (a run has a limited number of tool calls): add_leads takes inline evidence and a score per lead, save_research stores a lead's evidence,
 // score, rationale and next step in one call.
 import { z } from "zod";
 import type { Approval, Draft, Lead, Sql } from "../db.ts";

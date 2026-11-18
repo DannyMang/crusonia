@@ -1,5 +1,5 @@
-// Dashboard · Workflow run (Paper artboard "Dashboard · Workflow run"): one agent session, step by step, with
-// its cost, lead and approvals. Route /app/workflows/runs/:id (id = Naive session id). Polls while the run is
+// Dashboard · Workflow run (Paper artboard "Dashboard · Workflow run"): one agent run, step by step, with
+// its cost, lead and approvals. Route /app/workflows/runs/:id (id = run id). Polls while the run is
 // active. The design's budget meter, workflow version card and Cancel run have no backing data or API, so they
 // are left out.
 import { useQueryClient } from "@tanstack/react-query";
@@ -51,14 +51,14 @@ export default function WorkflowRun() {
     );
   }
 
-  const { run, steps, lead, approvals, sync } = q.data!;
+  const { run, steps, lead, approvals } = q.data!;
   const live = isActive(run.status);
   const pending = approvals
     .filter((a) => a.status === "pending" && new Date(a.expires_at).getTime() > now)
     .sort((a, b) => a.expires_at.localeCompare(b.expires_at));
   const waitingOn = pending[0];
   const title = lead ? leadTitle(lead) : runTitle(run);
-  const tools = steps.filter((s) => s.type === "tool" || s.type === "approval").length;
+  const tools = steps.filter((s) => s.type === "tool").length;
   const stepCost = steps.reduce<number | null>((sum, s) => (s.cost_credits === undefined ? sum : (sum ?? 0) + s.cost_credits), null);
   const cost = run.cost_credits ?? stepCost;
   const timing = timingOf(run, steps, now);
@@ -107,9 +107,6 @@ export default function WorkflowRun() {
             Cost <span className="tabular-nums text-ink">{creditsLabel(cost)}</span>
           </span>
           <span className={meta}>
-            Agent <span className="text-ink">Naive</span>
-          </span>
-          <span className={meta}>
             Purpose <span className="text-ink">{run.purpose.replace(/_/g, " ")}</span>
           </span>
         </div>
@@ -123,14 +120,6 @@ export default function WorkflowRun() {
           lead={lead}
           live={live}
           now={now}
-          notice={
-            sync && !sync.ok && sync.error ? (
-              <div role="status" title={sync.error} className="flex items-center gap-2 border-t border-t-[#200D0D14] bg-[#FEF3C766] px-4 py-2 text-xs/4 font-medium text-[#92400E]">
-                <span className="size-1.5 shrink-0 rounded-full bg-[#D97706]" />
-                Could not refresh from Naive just now; showing the steps stored so far.
-              </div>
-            ) : null
-          }
           footer={footerNote(run, steps, waitingOn, lead)}
         />
         <aside className="flex w-full shrink-0 flex-col overflow-clip rounded-xl border border-[#200D0D1A] xl:w-75">
@@ -150,7 +139,7 @@ function runTitle(run: Run): string {
   return run.name;
 }
 
-/** "Working 48s, then waiting 6m" from the steps; "Running 2m" / "Took 3m" otherwise. */
+/** "Waiting 40s" before an agent picks it up, "Working 48s, then waiting 6m" while paused; "Running 2m" / "Took 3m" otherwise. */
 function timingOf(run: Run, steps: RunStep[], now: number): ReactNode {
   const start = new Date(run.started_at).getTime();
   const timed = steps.filter((s) => s.started_at).map((s) => new Date(s.started_at!).getTime() + (s.duration_ms ?? 0));
@@ -162,7 +151,14 @@ function timingOf(run: Run, steps: RunStep[], now: number): ReactNode {
       </>
     );
   }
-  if ((run.status === "idle" || run.status === "paused") && workEnd) {
+  if (run.status === "queued") {
+    return (
+      <>
+        Waiting <span className="tabular-nums text-ink">{duration(now - start)}</span>
+      </>
+    );
+  }
+  if (run.status === "paused" && workEnd) {
     return (
       <>
         Working <span className="tabular-nums text-ink">{duration(workEnd - start)}</span>, then waiting{" "}
@@ -181,7 +177,7 @@ function timingOf(run: Run, steps: RunStep[], now: number): ReactNode {
 function footerNote(run: Run, steps: RunStep[], a: RunApproval | undefined, lead: RunLead | null): ReactNode {
   const at = steps.at(-1)?.seq;
   const by = (iso: string) => <span className="tabular-nums text-ink">{clockSeconds(iso)}</span>;
-  if (a?.kind === "send") {
+  if (a) {
     return (
       <>
         {a.draft ? `Draft v${a.draft.version}` : "The draft"} waits for your approval as <span className="text-ink">{a.code}</span>
@@ -189,20 +185,12 @@ function footerNote(run: Run, steps: RunStep[], a: RunApproval | undefined, lead
       </>
     );
   }
-  if (a) {
-    return (
-      <>
-        Paused{at ? ` at step ${at}` : ""}. Resumes when <span className="text-ink">{a.code}</span> is answered; if nobody answers by {by(a.expires_at)},{" "}
-        {a.kind === "tool" ? "the tool call is denied" : "the question expires"}.
-      </>
-    );
-  }
-  if (run.status === "error") return <span className="text-[#B42318]">Stopped{at ? ` at step ${at}` : ""}: {stopLabel(run.stop_reason) ?? "an error"}.</span>;
+  if (run.status === "queued") return "Waiting for an agent to pick this up.";
+  if (run.status === "error") return <span className="text-[#B42318]">Stopped{at ? ` at step ${at}` : ""}: {stopLabel(run.stop_reason) ?? "Stopped with an error"}.</span>;
   if (run.status === "paused") {
-    const why = run.stop_reason === "budget_paused" ? "because it reached its budget" : "while sends are paused";
     return (
       <>
-        Paused{at ? ` at step ${at}` : ""} {why}. No new steps until it resumes.
+        Paused{at ? ` at step ${at}` : ""} while sends are paused. No new steps until it resumes.
       </>
     );
   }
@@ -246,11 +234,9 @@ function RunChip({ run, waiting }: { run: Run; waiting: boolean }) {
       </span>
     );
   }
-  if (run.status === "idle" || (waiting && run.status === "done")) {
-    const label = waiting ? "Waiting for approval" : run.stop_reason === "awaiting_answer" ? "Waiting for your answer" : "Waiting on you";
-    return <span className={cx(base, soft)}>{label}</span>;
-  }
-  if (run.status === "paused") return <span className={cx(base, "bg-pill text-[#200D0DB3]")}>{run.stop_reason === "budget_paused" ? "Paused at budget" : "Paused"}</span>;
+  if (run.status === "queued") return <span className={cx(base, soft)}>Waiting for an agent</span>;
+  if (waiting && run.status === "done") return <span className={cx(base, soft)}>Waiting for approval</span>;
+  if (run.status === "paused") return <span className={cx(base, "bg-pill text-[#200D0DB3]")}>Paused</span>;
   if (run.status === "error") return <span className={cx(base, "bg-[#FDECEB] text-[#B42318]")}>Stopped</span>;
   return <span className={cx(base, "border border-[#200D0D26] text-muted")}>Finished</span>;
 }
@@ -348,7 +334,6 @@ function ApprovalSection({ approvals, lead, now }: { approvals: RunApproval[]; l
       <SectionTitle>{sorted.length === 1 ? "Approval" : "Approvals"}</SectionTitle>
       {sorted.map((a) => {
         const open = a.status === "pending" && new Date(a.expires_at).getTime() > now;
-        const tool = typeof a.payload?.name === "string" ? a.payload.name : null;
         return (
           <div key={a.code} className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
@@ -369,11 +354,7 @@ function ApprovalSection({ approvals, lead, now }: { approvals: RunApproval[]; l
               </span>
             </div>
             <p className="text-xs/4.25 font-medium text-muted">
-              {a.kind === "send"
-                ? `${open ? "Waiting in your approvals queue. " : ""}Bound to ${a.draft ? `v${a.draft.version}` : "one draft version"}${lead?.email ? ` for ${lead.email}` : ""} only.`
-                : a.kind === "tool"
-                  ? `The agent ${open ? "wants" : "wanted"} to run ${tool ?? "a tool"}.`
-                  : `The agent ${open ? "is asking" : "asked"} you a question.`}
+              {`${open ? "Waiting in your approvals queue. " : ""}Bound to ${a.draft ? `v${a.draft.version}` : "one draft version"}${lead?.email ? ` for ${lead.email}` : ""} only.`}
             </p>
           </div>
         );

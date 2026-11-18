@@ -70,7 +70,7 @@ app.get("/health", (c) =>
   }),
 );
 
-// MCP endpoint for agents (Claude Code, Cursor, Codex, Naive). Bearer auth: an API key (POST /api/keys) or MCP_TOKEN.
+// MCP endpoint for agents (Claude Code, Cursor, Codex, Grok). Bearer auth: an API key (POST /api/keys) or MCP_TOKEN.
 app.route("/mcp", mcp);
 
 // REST API for the owner (Clerk session, API key or MCP_TOKEN) and signed provider webhooks.
@@ -99,7 +99,7 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  // Cron "* * * * *" (wrangler.jsonc): expire approvals, reconcile Naive sessions and unconfirmed sends.
+  // Cron "* * * * *" (wrangler.jsonc): expire approvals, close agent runs past their limits, reconcile unconfirmed sends.
   async scheduled(_controller, env, ctx) {
     const quiet = (v: unknown): boolean =>
       v === 0 || typeof v === "string" || (typeof v === "object" && v !== null && !("error" in v) && Object.values(v).every(quiet));

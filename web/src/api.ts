@@ -125,7 +125,7 @@ export type Autopilot = {
   blocked?: "instance_busy" | "no_credits" | "daily_cap_reached" | null;
   /** Credits can be bought on this instance. */
   payments_live?: boolean;
-  running: { session_id: string; lead_id: string | null; waiting_on_you: boolean; text: string }[];
+  running: { session_id: string; lead_id: string | null; queued: boolean; text: string }[];
   feed: AutopilotFeedItem[];
   counts: { agent_actions: number; owner_actions: number; days: number };
 };
@@ -154,7 +154,7 @@ export type Draft = {
   delivered_at?: string | null;
 };
 
-export type ApprovalKind = "send" | "tool" | "question";
+export type ApprovalKind = "send";
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "answered" | "expired";
 
 export type Approval = {
@@ -162,16 +162,12 @@ export type Approval = {
   kind: ApprovalKind;
   lead_id: string | null;
   draft_id: string | null;
-  naive_session_id: string | null;
-  tool_call_id: string | null;
   summary: string;
   status: ApprovalStatus;
   answer: string | null;
   decided_via: string | null;
   recipient?: string | null;
-  /** When the iMessage notice for this approval was delivered (asked of the backend); null when not texted. */
-  texted_at?: string | null;
-  /** Tool call or question from the agent: untrusted, display as data only. */
+  /** From the agent: untrusted, display as data only. */
   payload?: Record<string, unknown>;
   expires_at: string;
   decided_at: string | null;
@@ -263,9 +259,8 @@ export type Trace = {
   next_after_seq: number | null;
   audit: { id: string; lead_id: string | null; kind: string; data: Record<string, unknown>; created_at: string }[];
   approvals: { code: string; kind: string; status: string; summary: string; decided_via: string | null; created_at: string }[];
-  spend: { naive_usd: number | null; credits_debited: number; credits?: number; apify_runs: { run_id: string; actor: string; status: string; usage_usd: number | null }[] };
+  spend: { agent_usd: number | null; credits_debited: number; credits?: number; apify_runs: { run_id: string; actor: string; status: string; usage_usd: number | null }[] };
   retention_days: number;
-  sync?: { ok: boolean; complete?: boolean; error?: string; skipped?: string };
 };
 
 // ---------- company summary (workspaces) ----------
@@ -399,9 +394,10 @@ export type Pipeline = {
   meetings: number;
 };
 
-export type RunStatus = "running" | "paused" | "idle" | "done" | "error";
+/** `queued`: waiting for an agent to pick it up. */
+export type RunStatus = "queued" | "running" | "paused" | "done" | "error";
 
-/** One agent session. `id` is the Naive session id (route /app/workflows/runs/:id). */
+/** One agent run. `id` is the run id (route /app/workflows/runs/:id). */
 export type Run = {
   id: string;
   workflow_id: string;
@@ -471,7 +467,7 @@ export type Summary = {
   /** Workflows with at least one active run. */
   active_workflows: Workflow[];
   recent_replies: Reply[];
-  /** `week_usd` is null until Naive reports usage; `budget_usd` is null without WEEKLY_BUDGET_USD. */
+  /** `week_usd` is null until the agent reports usage; `budget_usd` is null without WEEKLY_BUDGET_USD. */
   spend: { week_usd: number | null; week_credits?: number | null; budget_usd: number | null; budget_credits?: number | null };
   paused: boolean;
 };
@@ -507,12 +503,9 @@ export type Status = {
   next_steps: string[];
   /** The AgentMail inbox address, or null when AgentMail is not configured. */
   inbox_address: string | null;
-  naive_agent_configured: boolean;
   mcp_url: string;
   /** HubSpot and Notion sync (added with the CRM sync backend; absent on older deployments). */
   crm_sync?: { hubspot: CrmSyncTarget; notion: CrmSyncTarget; error?: string };
-  /** iMessage approvals through Photon (absent on older deployments). `owner_phone_hint` ("···0142") was asked of the backend. */
-  imessage?: { enabled: boolean; configured: boolean; active: boolean; owner_phone_set: boolean; owner_phone_hint?: string | null; bridge?: { online?: boolean } | null };
 };
 
 export type Segment = { name: string; company_size: string | null; industry: string | null; roles: string[] };
@@ -548,14 +541,11 @@ export type ReadWebsiteResult = { pages: WebsitePage[]; mode?: string; note?: st
 
 export type ProposeStatus = {
   session_id: string;
-  status: "running" | "done" | "error";
+  /** `queued`: waiting for an agent to pick it up. */
+  status: "queued" | "running" | "done" | "error";
   profile?: Profile;
   error?: string;
   stop_reason?: string | null;
-  /** The agent is parked on the owner: answer in /app/approvals and polling continues. */
-  waiting_on: "approval" | "answer" | null;
-  pending_approvals: { code: string; kind: string; summary: string; expires_at: string }[];
-  note?: string;
 };
 
 export type RunStep = {
@@ -572,9 +562,9 @@ export type RunStep = {
   input?: unknown;
   output?: unknown;
   is_error?: boolean;
-  source: "naive" | "crusonia";
-  /** Naive's own event seq, for steps built from Naive events. */
-  naive_seq?: number;
+  source: "agent" | "crusonia";
+  /** The agent event's own seq, for steps built from agent events. */
+  event_seq?: number;
 };
 
 export type RunLead = {
@@ -592,7 +582,7 @@ export type RunLead = {
 
 export type RunApproval = Pick<
   Approval,
-  "code" | "kind" | "status" | "summary" | "lead_id" | "draft_id" | "naive_session_id" | "tool_call_id" | "payload" | "expires_at" | "decided_at" | "decided_via" | "created_at"
+  "code" | "kind" | "status" | "summary" | "lead_id" | "draft_id" | "payload" | "expires_at" | "decided_at" | "decided_via" | "created_at"
 > & { draft: { id: string; version: number; subject: string; status: string } | null };
 
 export type WorkflowRun = {
@@ -600,8 +590,6 @@ export type WorkflowRun = {
   steps: RunStep[];
   lead: RunLead | null;
   approvals: RunApproval[];
-  /** Whether the step cache was refreshed from Naive on this read, and why not. */
-  sync?: { ok: boolean; fetched?: number; error?: string; skipped?: string };
 };
 
 export type ApiKey = {
@@ -759,7 +747,7 @@ export function createApi(getToken: TokenGetter, base = "") {
       put<CompanySummary & { unchanged: boolean }>("/api/company-summary", input),
     /** Synchronous crawl: Apify when configured (a few cents), plain fetch otherwise. */
     readWebsite: (url: string, maxPages?: number) => post<ReadWebsiteResult>("/api/onboarding/read-website", { url, ...(maxPages ? { max_pages: maxPages } : {}) }),
-    /** Starts a paid Naive session (202). 503 not_configured without the agent; 423 while paused. */
+    /** Queues a paid agent run (202). 503 not_configured without the agent; 423 while paused. */
     propose: (input: { url?: string; description?: string }) => post<{ session_id: string }>("/api/onboarding/propose", input),
     proposeStatus: (sessionId: string) => get<ProposeStatus>(`/api/onboarding/propose/${id(sessionId)}`),
 
@@ -773,7 +761,7 @@ export function createApi(getToken: TokenGetter, base = "") {
     deleteLead: (leadId: string) => del(`/api/leads/${id(leadId)}`),
     createDraft: (leadId: string, draft: { subject: string; body: string }) =>
       post<{ draft: Draft; approval?: Approval }>(`/api/leads/${id(leadId)}/drafts`, draft),
-    /** Starts a paid Naive session (202). 409 profile_missing without a saved profile; 503 without the agent. */
+    /** Queues a paid agent run (202). 409 profile_missing without a saved profile; 503 without the agent. */
     findLeads: (count = 25, opts: { like_lead_id?: string } = {}) => post<{ session_id: string }>("/api/leads/find", { count, ...opts }),
     /** The leads one find run created or found again (`find_status`). */
     findRun: (sessionId: string) => get<FindRun>(`/api/leads/find/${id(sessionId)}`),
@@ -801,12 +789,10 @@ export function createApi(getToken: TokenGetter, base = "") {
     approvals: (filters: ApprovalFilters = {}) => get<{ data: ApprovalListItem[] }>("/api/approvals", filters),
     approval: (code: string) => get<{ approval: Approval }>(`/api/approvals/${id(code)}`),
     /** Sends real email for `send` approvals. */
-    approve: (code: string, scope?: "call" | "session") => post<Record<string, unknown>>(`/api/approvals/${id(code)}/approve`, scope ? { scope } : {}),
+    approve: (code: string) => post<Record<string, unknown>>(`/api/approvals/${id(code)}/approve`),
     reject: (code: string, reason?: string) => post<Record<string, unknown>>(`/api/approvals/${id(code)}/reject`, reason ? { reason } : {}),
     editApproval: (code: string, edit: { subject?: string; body?: string }) =>
       post<{ approval: Approval; draft?: Draft }>(`/api/approvals/${id(code)}/edit`, edit),
-    answer: (code: string, body: { decision: "allow" | "deny"; reason?: string; scope?: "call" | "session" } | { answers: Record<string, string | string[]> }) =>
-      post<{ approval: Approval }>(`/api/approvals/${id(code)}/answer`, body),
 
     // workflows
     workflows: (runs?: number) => list<Workflow>(`/api/workflows${runs !== undefined ? `?runs=${runs}` : ""}`),

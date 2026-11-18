@@ -1,8 +1,8 @@
 // The Company summary: what Crusonia knows about the business, as one markdown document per workspace (like a
 // GTM.md). Only the current text is stored (company_summaries): a save overwrites it, and there is no history.
 // `version` counts saves and exists for the stale-write check (409 version_conflict). Agents edit it directly (whole
-// document, or one section by its heading). `updated_by`: 'user:<clerk id>', 'agent:<naive session id>' (or
-// 'agent:api_key:<id>' / 'agent:mcp_token' outside Naive) or 'onboarding'.
+// document, or one section by its heading). `updated_by`: 'user:<clerk id>', 'agent:<run id>' (or
+// 'agent:api_key:<id>' / 'agent:mcp_token' outside a run) or 'onboarding'.
 //
 // The text is stored as written, capped at MAX_SUMMARY_CHARS, with control characters removed. It is untrusted
 // display data: the web app renders it as sanitized markdown, and agents get it as data, never as instructions.
@@ -304,7 +304,7 @@ export async function updateCompanySummary(
   }
 }
 
-/** The summary as it goes into a Naive session's first message: data, clipped to keep the prompt small. */
+/** The summary as it goes into a run's first message: data, clipped to keep the prompt small. */
 export function summaryForMessage(s: SummaryView, maxChars = 12_000): string[] {
   if (!s.markdown) return ["There is no Company summary yet."];
   const clipped = s.markdown.length > maxChars;

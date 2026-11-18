@@ -3,34 +3,27 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Env } from "../src/env.ts";
 import { createMcpServer } from "../src/mcp/server.ts";
-import {
-  describeMinutes,
-  sendApprovalTtlMinutes,
-  toolApprovalTtlMinutes,
-} from "../src/services/approval-ttl.ts";
+import { describeMinutes, sendApprovalTtlMinutes } from "../src/services/approval-ttl.ts";
 
 describe("approval lifetimes", () => {
-  test("defaults: send approvals 7 days, tool and question approvals 1 hour", () => {
+  test("default: send approvals 7 days", () => {
     expect(sendApprovalTtlMinutes({})).toBe(7 * 24 * 60);
-    expect(toolApprovalTtlMinutes({})).toBe(60);
   });
 
-  test("SEND_APPROVAL_TTL_HOURS and TOOL_APPROVAL_TTL_MINUTES override them", () => {
+  test("SEND_APPROVAL_TTL_HOURS overrides it", () => {
     expect(sendApprovalTtlMinutes({ SEND_APPROVAL_TTL_HOURS: "48" })).toBe(48 * 60);
     expect(sendApprovalTtlMinutes({ SEND_APPROVAL_TTL_HOURS: "0.5" })).toBe(30);
-    expect(toolApprovalTtlMinutes({ TOOL_APPROVAL_TTL_MINUTES: "15" })).toBe(15);
   });
 
-  test("empty, zero, negative or non-numeric values fall back to the defaults", () => {
+  test("empty, zero, negative or non-numeric values fall back to the default", () => {
     for (const bad of ["", " ", "0", "-5", "abc", "Infinity"]) {
       expect(sendApprovalTtlMinutes({ SEND_APPROVAL_TTL_HOURS: bad })).toBe(10080);
-      expect(toolApprovalTtlMinutes({ TOOL_APPROVAL_TTL_MINUTES: bad })).toBe(60);
     }
   });
 
   test("always at least one whole minute (Postgres make_interval takes integer minutes)", () => {
-    expect(toolApprovalTtlMinutes({ TOOL_APPROVAL_TTL_MINUTES: "0.2" })).toBe(1);
-    expect(toolApprovalTtlMinutes({ TOOL_APPROVAL_TTL_MINUTES: "2.6" })).toBe(3);
+    expect(sendApprovalTtlMinutes({ SEND_APPROVAL_TTL_HOURS: "0.001" })).toBe(1);
+    expect(sendApprovalTtlMinutes({ SEND_APPROVAL_TTL_HOURS: "0.044" })).toBe(3);
   });
 
   test("describeMinutes picks the largest whole unit", () => {
