@@ -1,6 +1,6 @@
 // /api/workflows, /api/workflows/runs/:id and /api/replies mocks ("Dashboard · Workflows", "Workflow run").
 // Shapes follow the backend: a workflow is one purpose (research, find_leads, onboarding) with its recent runs;
-// a run is one Naive session and its steps are Naive events merged with Crusonia's own audit events.
+// a run is one agent run and its steps are the agent's events merged with Crusonia's own audit events.
 import { http } from "msw";
 import type { Reply, Run, RunApproval, RunLead, RunStatus, RunStep, Workflow, WorkflowRun } from "../api.ts";
 import { approvalsData } from "./approvals.ts";
@@ -15,16 +15,16 @@ const NAMES: Record<string, string> = { research: "Lead research", find_leads: "
 
 const runSeeds: RunSeed[] = [
   ["ses_lk7", "research", "running", null, "lead_lumen", 3 * MIN + 20_000, 20_000, 1, 0.12],
-  ["ses_ob4", "research", "idle", "awaiting_answer", "lead_orbit", 40 * MIN, 9 * MIN, 1, 0.22],
-  ["ses_in3", "research", "idle", "awaiting_approval", "lead_juniper", 22 * MIN, 12 * MIN, 1, 0.09],
-  ["ses_8f3k21", "research", "done", "end_turn", "lead_fieldnote", 6 * MIN + 48_000, 6 * MIN, 1, 0.31],
-  ["ses_hb2", "research", "done", "end_turn", "lead_harbor", 31 * MIN, 21 * MIN, 1, 0.27],
-  ["ses_qs3", "research", "done", "end_turn", "lead_quill", 27 * MIN, 17 * MIN, 1, 0.24],
-  ["ses_tz5", "research", "done", "end_turn", "lead_tess", 29 * MIN, 1 * MIN, 1, 0.29],
-  ["ses_er9", "research", "error", "max_iterations", "lead_parcel", 2 * DAY + 3 * HOUR, 2 * DAY + 2 * HOUR, 1, 0.84],
-  ["ses_fl3", "find_leads", "paused", "budget_paused", null, 5 * HOUR, 4 * HOUR + 40 * MIN, 9, 1.5, { count: 25 }],
-  ["ses_fl1", "find_leads", "done", "end_turn", null, 2 * DAY, 2 * DAY - 14 * MIN, 23, 1.12, { count: 25 }],
-  ["ses_on1", "onboarding", "done", "end_turn", null, 3 * DAY, 3 * DAY - 3 * MIN, 0, 0.08, { url: "https://acme.com" }],
+  ["ses_ob4", "research", "queued", null, "lead_orbit", 40_000, 40_000, 0, null],
+  ["ses_in3", "research", "error", "out_of_time", "lead_juniper", 22 * MIN, 12 * MIN, 1, 0.09],
+  ["ses_8f3k21", "research", "done", "finished", "lead_fieldnote", 6 * MIN + 48_000, 6 * MIN, 1, 0.31],
+  ["ses_hb2", "research", "done", "finished", "lead_harbor", 31 * MIN, 21 * MIN, 1, 0.27],
+  ["ses_qs3", "research", "done", "finished", "lead_quill", 27 * MIN, 17 * MIN, 1, 0.24],
+  ["ses_tz5", "research", "done", "finished", "lead_tess", 29 * MIN, 1 * MIN, 1, 0.29],
+  ["ses_er9", "research", "error", "out_of_tool_calls", "lead_parcel", 2 * DAY + 3 * HOUR, 2 * DAY + 2 * HOUR, 1, 0.84],
+  ["ses_fl3", "find_leads", "paused", null, null, 5 * HOUR, 4 * HOUR + 40 * MIN, 9, 1.5, { count: 25 }],
+  ["ses_fl1", "find_leads", "done", "finished", null, 2 * DAY, 2 * DAY - 14 * MIN, 23, 1.12, { count: 25 }],
+  ["ses_on1", "onboarding", "done", "finished", null, 3 * DAY, 3 * DAY - 3 * MIN, 0, 0.08, { url: "https://acme.com" }],
 ];
 
 const toRun = ([id, purpose, status, stop, leadId, startedAgo, lastAgo, leads, cost, input]: RunSeed): Run => ({
@@ -50,9 +50,9 @@ const sampleRuns: Run[] = runSeeds.map(toRun);
 function toWorkflow(purpose: string, extra: { run_count: number; leads: number; cost: number }): Workflow {
   const runs = sampleRuns.filter((r) => r.purpose === purpose);
   const running = runs.filter((r) => r.status === "running").length;
-  const idle = runs.filter((r) => r.status === "idle").length;
+  const queued = runs.filter((r) => r.status === "queued").length;
   const paused = runs.filter((r) => r.status === "paused").length;
-  const status: RunStatus = paused ? "paused" : running ? "running" : idle ? "idle" : runs[0]?.status === "error" ? "error" : "done";
+  const status: RunStatus = paused ? "paused" : running ? "running" : queued ? "queued" : runs[0]?.status === "error" ? "error" : "done";
   return {
     id: purpose,
     name: NAMES[purpose] ?? purpose,
@@ -65,7 +65,7 @@ function toWorkflow(purpose: string, extra: { run_count: number; leads: number; 
     cost_usd: extra.cost,
     cost_credits: extra.cost === null || extra.cost === undefined ? null : Math.ceil(extra.cost * 200),
     run_count: extra.run_count,
-    active_runs: running + idle + paused,
+    active_runs: running + queued + paused,
     runs,
   };
 }
@@ -92,8 +92,8 @@ function steps(startedAgo: number, rows: [type: string, tool: string | undefined
     ...(cost !== undefined ? { cost_usd: cost, cost_credits: cost * 200 } : {}),
     ...(input !== undefined ? { input } : {}),
     ...(output !== undefined ? { output } : {}),
-    source: type === "crusonia" ? "crusonia" : "naive",
-    ...(type === "crusonia" ? {} : { naive_seq: i * 3 + 1 }),
+    source: type === "crusonia" ? "crusonia" : "agent",
+    ...(type === "crusonia" ? {} : { event_seq: i * 3 + 1 }),
     ...extra,
   }));
 }
@@ -133,28 +133,20 @@ const STEPS: Record<string, () => RunStep[]> = {
       ["model", undefined, `${MODEL}: 7,220 tokens`, 300, 2600, 0.03],
       ["tool", "search_web", "search_web: Juniper Freight BDR Denver", 3_100, 2300, undefined, { query: "Juniper Freight BDR Denver" }, { results: 6 }],
       ["model", undefined, `${MODEL}: 9,050 tokens`, 5_600, 3300, 0.05],
-      ["approval", "read_website", "Needs approval: read_website (https://juniperfreight.com)", 9_100, undefined, undefined, { url: "https://juniperfreight.com", max_pages: 40, include: ["/careers", "/blog", "/about"] }],
-      ["status", undefined, "Waiting for the owner to approve a tool call", 9_300],
-      ["crusonia", undefined, "Approval T5K2 requested for read_website", 10_000],
+      ["tool", "read_website", "read_website: https://juniperfreight.com", 9_100, 14_000, undefined, { url: "https://juniperfreight.com", max_pages: 40, include: ["/careers", "/blog", "/about"] }, { pages: 40 }],
+      ["status", undefined, "Stopped: out of time", 10 * MIN, undefined, undefined, undefined, undefined, { is_error: true }],
     ]),
   ses_ob4: () =>
-    steps(40 * MIN, [
-      ["crusonia", undefined, "Research started", 0],
-      ["tool", "get_lead", "get_lead: lead_orbit", 2_000, 180, undefined, { lead_id: "lead_orbit" }, { company: "Orbit Ledger", domain: "orbitledger.com" }],
-      ["tool", "read_website", "read_website: https://orbitledger.com", 2_400, 6100, undefined, { url: "https://orbitledger.com" }, { pages: 11 }],
-      ["model", undefined, `${MODEL}: 15,330 tokens`, 8_700, 6200, 0.12],
-      ["message", undefined, "Agent: Orbit Ledger lists two people who could own outbound. Asking the owner who should get the first email.", 15_000, undefined, undefined, undefined, "Orbit Ledger lists two people who could own outbound. Asking the owner who should get the first email."],
-      ["status", undefined, "Waiting for the owner to answer a question", 15_400],
-      ["crusonia", undefined, "Approval Q2C7 requested", 16_000],
+    steps(40_000, [
+      ["crusonia", undefined, "Research queued", 0],
     ]),
   ses_er9: () =>
     steps(2 * DAY + 3 * HOUR, [
       ["crusonia", undefined, "Research started", 0],
       ["tool", "read_website", "read_website: https://parcelandpine.com (failed)", 1_000, 30_000, undefined, { url: "https://parcelandpine.com" }, { error: "timeout after 30s" }, { is_error: true }],
-      ["warning", undefined, "Retrying a failed turn (attempt 2)", 31_500],
       ["tool", "read_website", "read_website: https://parcelandpine.com (failed)", 32_000, 30_000, undefined, { url: "https://parcelandpine.com" }, { error: "timeout after 30s" }, { is_error: true }],
       ["model", undefined, `${MODEL}: 22,180 tokens`, 63_000, 8900, 0.34],
-      ["status", undefined, "Stopped: too many iterations", 74_000, undefined, undefined, undefined, undefined, { is_error: true }],
+      ["status", undefined, "Stopped: out of tool calls", 74_000, undefined, undefined, undefined, undefined, { is_error: true }],
     ]),
   ses_fl3: () =>
     steps(5 * HOUR, [
@@ -163,8 +155,6 @@ const STEPS: Record<string, () => RunStep[]> = {
       ["tool", "search_web", "search_web: Series A devtools hiring first SDR", 2_000, 2600, undefined, { query: "Series A devtools hiring first SDR" }, { results: 40 }],
       ["tool", "add_leads", "add_leads: 9 leads", 9_000, 900, undefined, { leads: 9 }, { counts: { added: 9, updated: 0 } }],
       ["model", undefined, `${MODEL}: 41,020 tokens`, 11_000, 12_000, 1.5],
-      ["error", undefined, "Budget: run budget of $1.50 reached", 24_000, undefined, undefined, undefined, undefined, { is_error: true }],
-      ["status", undefined, "Paused: budget reached", 24_100],
     ]),
 };
 
@@ -174,10 +164,10 @@ function runLead(id: string | null): RunLead | null {
   return { id: l.id, email: l.email, name: l.name, title: l.title, company: l.company, domain: l.domain, stage: l.stage, score: l.score, qualified: l.qualified, has_consent: l.has_consent };
 }
 
-/** Approvals for the session, plus send approvals for its lead (they carry no session id). */
+/** Send approvals for the run's lead (they carry no run id). */
 function runApprovals(run: Run): RunApproval[] {
   return approvalsData()
-    .filter((a) => a.naive_session_id === run.id || (run.lead_id && a.lead_id === run.lead_id && a.kind === "send" && a.created_at >= run.started_at))
+    .filter((a) => run.lead_id && a.lead_id === run.lead_id && a.created_at >= run.started_at)
     .map(({ draft, lead: _l, recipient: _r, answer: _a, ...a }) => ({
       ...a,
       draft: draft ? { id: draft.id, version: draft.version, subject: draft.subject, status: draft.status } : null,
@@ -190,7 +180,6 @@ function runDetail(run: Run): WorkflowRun {
     steps: STEPS[run.id]?.() ?? [],
     lead: runLead(run.lead_id),
     approvals: runApprovals(run),
-    sync: run.id === "ses_er9" ? { ok: false, error: "Naive returned 502 Bad Gateway; showing stored events" } : { ok: true, skipped: "cache is current" },
   };
 }
 
@@ -232,7 +221,7 @@ export const workflowHandlers = [
     const run = isEmpty() ? undefined : sampleRuns.find((r) => r.id === params.id);
     return run ? ok(runDetail(run)) : fail(404, "not_found", `No workflow run with session id ${String(params.id)}`);
   }),
-  http.post("/api/workflows/research", () => fail(503, "not_configured", "NAIVE_AGENT_ID is not set")),
+  http.post("/api/workflows/research", () => fail(503, "not_configured", "The agent is not set up yet")),
   http.get("/api/replies", ({ request }) => {
     const label = new URL(request.url).searchParams.get("label");
     return ok({ data: repliesData().filter((r) => !label || r.label === label), next_cursor: null });

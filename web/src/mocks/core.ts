@@ -53,7 +53,6 @@ function status(): Status {
       database: p(true, "Neon Postgres: leads, drafts, approvals, events", ["DATABASE_URL"]),
       apify: p(!unconfigured, "web crawling (read_website) and Google search (search_web)", ["APIFY_TOKEN"]),
       agentmail: p(true, "sending approved emails to opted-in leads and receiving replies", ["AGENTMAIL_API_KEY", "AGENTMAIL_INBOX_ID"]),
-      naive: p(!unconfigured, "managed agent sessions (research and drafting)", ["NAIVE_API_KEY"]),
       hubspot: p(true, "CRM sync", ["HUBSPOT_ACCESS_TOKEN"]),
       notion: p(!unconfigured, "CRM sync (Notion database)", ["NOTION_API_TOKEN"]),
     },
@@ -68,7 +67,6 @@ function status(): Status {
     },
     next_steps: [],
     inbox_address: "crusonia@agentmail.to",
-    naive_agent_configured: !unconfigured,
     mcp_url: MCP_URL,
     crm_sync: {
       hubspot: { enabled: !unconfigured, configured: true, active: !unconfigured, queue_depth: isEmpty() ? 0 : 3, failed: 0, last_sync_at: isEmpty() ? null : new Date(Date.now() - 4 * 60_000).toISOString(), last_error: null },
@@ -89,7 +87,7 @@ const autopilot = () => ({
   paused,
   blocked: scenario() === "launch" ? "no_credits" : null,
   payments_live: scenario() !== "launch",
-  running: autopilotOn ? [{ session_id: "ses_mock", lead_id: null, waiting_on_you: false, text: "Researching Nessie" }] : [],
+  running: autopilotOn ? [{ session_id: "ses_mock", lead_id: null, queued: false, text: "Researching Nessie" }] : [],
   feed: isEmpty()
     ? []
     : [

@@ -8,7 +8,7 @@ import { actorOf, authorOf, parseJson, sqlFor, wsOf, type AppEnv } from "../lib/
 import { getCompanySummary, MAX_SUMMARY_CHARS, SUMMARY_TEMPLATE, writeCompanySummary, type SummaryView } from "../services/company-summary.ts";
 import { requireWebCall } from "../services/limits.ts";
 import { getProfile, profileUpdateSchema, saveProfile } from "../services/profile.ts";
-import { getOnboardingProposal, naiveAgent, startOnboardingProposal } from "../services/runs.ts";
+import { getOnboardingProposal, startOnboardingProposal } from "../services/runs.ts";
 import { readWebsite } from "../services/web.ts";
 
 // ---------- /api/company-summary ----------
@@ -89,11 +89,10 @@ const ProposeBody = z
   })
   .refine((b) => Boolean(b.url || b.description), { message: "Pass url, description, or both" });
 
-// Starts a Naive session (async): the agent reads the site / description and writes the Company summary.
+// Queues an agent run (async): the agent reads the site / description and writes the Company summary.
 // Poll GET /api/onboarding/propose/:session_id.
 onboarding.post("/propose", async (c) => {
   const body = await parseJson(c, ProposeBody);
-  naiveAgent(c.env); // 503 not_configured before touching the database
   const principal = c.get("principal");
   await requireCredits(c.env, principal, wsOf(c)); // 402 insufficient_credits when the workspace's balance is <= 0
   const result = await startOnboardingProposal(sqlFor(c.env), c.env, wsOf(c), body, actorOf(principal));
@@ -101,6 +100,5 @@ onboarding.post("/propose", async (c) => {
 });
 
 onboarding.get("/propose/:session_id", async (c) => {
-  naiveAgent(c.env);
-  return c.json(await getOnboardingProposal(sqlFor(c.env), c.env, wsOf(c), c.req.param("session_id")));
+  return c.json(await getOnboardingProposal(sqlFor(c.env), wsOf(c), c.req.param("session_id")));
 });

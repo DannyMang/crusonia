@@ -3,7 +3,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { SummaryView } from "../src/services/company-summary.ts";
-import type { NaiveEvent } from "../src/providers/naive.ts";
 import { normalizeProfile, profileInputSchema, profileUpdateSchema } from "../src/services/profile.ts";
 import { previewText } from "../src/services/replies.ts";
 import {
@@ -12,10 +11,8 @@ import {
   findLeadsMessage,
   leadsFromAddLeads,
   microToUsd,
-  needsSync,
   onboardingMessage,
   runStatus,
-  storableEvent,
   type SessionRow,
   type StoredEvent,
   type WorkflowAggregate,
@@ -53,40 +50,41 @@ describe("summary pipeline", () => {
   });
 });
 
-describe("run steps from Naive events", () => {
+describe("run steps from the trace", () => {
   const t = (s: number) => new Date(Date.UTC(2026, 10, 8, 12, 0, s)).toISOString();
   const events: StoredEvent[] = [
     { seq: 1, type: "message.completed", data: { role: "user", content: "Research lead lead_1 for Crusonia." }, created_at: t(0) },
-    { seq: 3, type: "span.model_request.end", data: { model: "router", resolved_model: "m-large", token_usage: { input: 1000, output: 200 }, provider_ms: 900, consumed_micro_usd: 12000 }, created_at: t(2) },
-    { seq: 4, type: "tool.started", data: { tool_call_id: "tc_1", name: "crusonia.search_web", args: { query: "logistics VP Sales" } }, created_at: t(3) },
-    { seq: 5, type: "tool.completed", data: { tool_call_id: "tc_1", name: "crusonia.search_web", output: "{\"results\":[]}", is_error: false }, created_at: t(5) },
-    { seq: 6, type: "tool.confirm", data: { tool_call_id: "tc_2", name: "gmail.send", args: { to: "x@y.z" } }, created_at: t(6) },
-    { seq: 7, type: "tool.confirm.resolved", data: { tool_call_id: "tc_2", decision: "deny" }, created_at: t(8) },
-    { seq: 8, type: "session.usage", data: { consumed_micro_usd: 50000 }, created_at: t(9) },
-    { seq: 9, type: "session.idle", data: { stop_reason: "end_turn" }, created_at: t(10) },
+    { seq: 2, type: "model.request", data: { model: "m-large", token_usage: { input: 1000, output: 200 }, duration_ms: 900, cost_micro_usd: 12000 }, created_at: t(2) },
+    { seq: 3, type: "tool.started", data: { tool_call_id: "tc_1", name: "search_web", args: { query: "logistics VP Sales" } }, created_at: t(3) },
+    { seq: 4, type: "tool.completed", data: { tool_call_id: "tc_1", name: "search_web", output: "{\"results\":[]}", is_error: false }, created_at: t(5) },
+    { seq: 5, type: "run.finished", data: { stop_reason: "finished" }, created_at: t(10) },
   ];
 
-  test("a tool call is one step with duration, input and output; model steps carry cost; usage is not a step", () => {
+  test("a tool call is one step with duration, input and output; model steps carry cost; the end is a status step", () => {
     const steps = buildSteps(events);
-    expect(steps.map((s) => [s.seq, s.type, s.naive_seq])).toEqual([
-      [1, "message", 1], [2, "model", 3], [3, "tool", 4], [4, "tool", 6], [5, "status", 9],
-    ]);
+    expect(steps.map((s) => [s.seq, s.type, s.event_seq])).toEqual([[1, "message", 1], [2, "model", 2], [3, "tool", 3], [4, "status", 5]]);
     expect(steps[0]!.summary).toBe("Instruction: Research lead lead_1 for Crusonia.");
     expect(steps[1]).toMatchObject({ summary: "m-large: 1,200 tokens", duration_ms: 900, cost_usd: 0.012 });
     expect(steps[2]).toMatchObject({ tool: "search_web", summary: "search_web: logistics VP Sales", duration_ms: 2000, input: { query: "logistics VP Sales" }, output: "{\"results\":[]}", is_error: false });
-    expect(steps[3]).toMatchObject({ summary: "send: x@y.z (denied)", is_error: true, approval: { decision: "deny" } });
-    expect(steps[4]!.summary).toBe("Finished");
+    expect(steps[3]).toMatchObject({ summary: "Finished", is_error: false });
+  });
+
+  test("a run closed by a limit says which one, as an error", () => {
+    const end = (stop_reason: string) => buildSteps([{ seq: 1, type: "run.finished", data: { stop_reason }, created_at: t(0) }])[0]!;
+    expect(end("out_of_time")).toMatchObject({ type: "status", summary: "Stopped: out of time", is_error: true });
+    expect(end("out_of_tool_calls")).toMatchObject({ summary: "Stopped: out of tool calls", is_error: true });
+    expect(end("out_of_budget")).toMatchObject({ summary: "Stopped: out of budget", is_error: true });
+    expect(end("unclaimed")).toMatchObject({ summary: "No agent picked this up in time", is_error: true });
   });
 
   test("our audit events are merged in by time and numbered with the rest", () => {
     const steps = buildSteps(events, [
-      { id: 10, kind: "research_started", data: { session_id: "ses_1" }, created_at: t(-1) },
-      { id: 11, kind: "naive_tool_auto_allowed", data: { tool: "crusonia.search_web" }, created_at: t(4) },
+      { id: 10, kind: "research_started", data: { session_id: "run_1" }, created_at: t(-1) },
+      { id: 11, kind: "run_finished", data: { session_id: "run_1" }, created_at: t(10) },
     ]);
-    // The auto-allow bookkeeping folds into its tool step instead of being a line of its own.
-    expect(steps.map((s) => `${s.seq}:${s.source}:${s.type}`)).toEqual([
-      "1:crusonia:crusonia", "2:naive:message", "3:naive:model", "4:naive:tool", "5:naive:tool", "6:naive:status",
-    ]);
+    // Our own run_finished row repeats the trace's last step, so it is folded away.
+    expect(steps.map((s) => `${s.seq}:${s.source}:${s.type}`)).toEqual(["1:crusonia:crusonia", "2:agent:message", "3:agent:model", "4:agent:tool", "5:agent:status"]);
+    expect(steps[0]!.summary).toBe("Research queued");
   });
 
   test("a failed tool is marked; out-of-order seqs are sorted", () => {
@@ -98,20 +96,8 @@ describe("run steps from Naive events", () => {
     expect(steps[0]).toMatchObject({ summary: "read_website: https://acme.com (failed)", is_error: true });
   });
 
-  test("the stored trace keeps every event but streaming deltas, and truncates huge fields", () => {
-    const big = "x".repeat(100_000);
-    expect(storableEvent({ seq: 1, type: "message.delta", data: { content: "hi" } })).toBeNull();
-    expect(storableEvent({ seq: 2, type: "span.harness_load.start", data: {} })).not.toBeNull();
-    expect(storableEvent({ seq: 3, type: "session.running", data: {} })).not.toBeNull();
-    expect(storableEvent({ seq: 4, type: "span.model_request.end", data: {}, created_at: t(0) })).not.toBeNull();
-    const stored = storableEvent({ seq: 5, type: "tool.completed", data: { name: "read_website", output: big }, created_at: t(0) })!;
-    expect((stored.data.output as string).length).toBeLessThan(64_100);
-    expect((stored.data.output as string).length).toBeGreaterThan(60_000);
-    expect(stored.data.output as string).toEndWith("[truncated]");
-  });
-
   test("add_leads results count toward leads_processed (created + merged), errors and other tools do not", () => {
-    const ev = (name: string, output: unknown, is_error = false): NaiveEvent => ({ seq: 1, type: "tool.completed", data: { name, output, is_error } });
+    const ev = (name: string, output: unknown, is_error = false): StoredEvent => ({ seq: 1, type: "tool.completed", data: { name, output, is_error }, created_at: t(0) });
     expect(leadsFromAddLeads(ev("add_leads", JSON.stringify({ counts: { created: 1, merged: 2, known: 7, skipped: 1 } })))).toBe(3);
     const out = JSON.stringify({ results: [], counts: { added: 3, updated: 2, skipped: 4 } }, null, 2);
     expect(leadsFromAddLeads(ev("crusonia.add_leads", out))).toBe(5);
@@ -121,48 +107,39 @@ describe("run steps from Naive events", () => {
     expect(leadsFromAddLeads(ev("crusonia.add_leads", "not json"))).toBe(0);
   });
 
-  test("the cache is re-read while a run is active, and once after it finishes", () => {
-    const now = Date.parse(t(30));
-    expect(needsSync({ status: "running", events_synced_at: null, updated_at: t(0) }, now)).toBe(true);
-    expect(needsSync({ status: "running", events_synced_at: t(29), updated_at: t(0) }, now)).toBe(false);
-    expect(needsSync({ status: "running", events_synced_at: t(20), updated_at: t(0) }, now)).toBe(true);
-    expect(needsSync({ status: "done", events_synced_at: t(5), updated_at: t(10) }, now)).toBe(true);
-    expect(needsSync({ status: "done", events_synced_at: t(11), updated_at: t(10) }, now)).toBe(false);
-  });
 });
 
 describe("workflow and run status", () => {
-  test("paused = global pause or budget_paused while active; finished runs keep done/error", () => {
+  test("paused = the global pause while the run is open; finished runs keep done/error", () => {
+    expect(runStatus({ status: "queued", stop_reason: null }, false)).toBe("queued");
     expect(runStatus({ status: "running", stop_reason: null }, false)).toBe("running");
-    expect(runStatus({ status: "idle", stop_reason: "awaiting_approval" }, false)).toBe("idle");
-    expect(runStatus({ status: "idle", stop_reason: "budget_paused" }, false)).toBe("paused");
+    expect(runStatus({ status: "queued", stop_reason: null }, true)).toBe("paused");
     expect(runStatus({ status: "running", stop_reason: null }, true)).toBe("paused");
-    expect(runStatus({ status: "done", stop_reason: "end_turn" }, true)).toBe("done");
-    expect(runStatus({ status: "error", stop_reason: "max_iterations" }, false)).toBe("error");
+    expect(runStatus({ status: "done", stop_reason: "finished" }, true)).toBe("done");
+    expect(runStatus({ status: "error", stop_reason: "out_of_time" }, false)).toBe("error");
   });
 
   const agg = (over: Partial<WorkflowAggregate> = {}): WorkflowAggregate => ({
-    purpose: "research", run_count: 3, running: 0, idle: 0, budget_paused: 0,
+    purpose: "research", run_count: 3, running: 0, queued: 0,
     first_started_at: "2026-11-01T00:00:00Z", started_at: "2026-11-08T00:00:00Z", last_event_at: "2026-11-08T01:00:00Z",
     leads_processed: 3, cost_micro: "2500000", latest_status: "done", ...over,
   });
   const run = (over: Partial<SessionRow> = {}): SessionRow => ({
-    id: "ses_1", workspace_id: "ws_owner", lead_id: "lead_1", purpose: "research", status: "done", stop_reason: "end_turn", input: {},
-    consumed_micro_usd: "1000000", leads_processed: 0, events_seq: 0, events_synced_at: null, last_event_at: null,
+    id: "ses_1", workspace_id: "ws_owner", lead_id: "lead_1", purpose: "research", status: "done", stop_reason: "finished", input: {},
+    consumed_micro_usd: "1000000", leads_processed: 0, events_seq: 0, last_event_at: null,
     created_at: "2026-11-08T00:00:00Z", updated_at: "2026-11-08T00:30:00Z", ...over,
   });
 
-  test("aggregate status: paused > running > idle > latest finished run", () => {
+  test("aggregate status: paused > running > queued > latest finished run", () => {
     expect(buildWorkflow(agg(), [], false).status).toBe("done");
     expect(buildWorkflow(agg({ latest_status: "error" }), [], false).status).toBe("error");
-    expect(buildWorkflow(agg({ idle: 1 }), [], false).status).toBe("idle");
-    expect(buildWorkflow(agg({ idle: 1, running: 1 }), [], false).status).toBe("running");
-    expect(buildWorkflow(agg({ running: 1, budget_paused: 1 }), [], false).status).toBe("paused");
+    expect(buildWorkflow(agg({ queued: 1 }), [], false).status).toBe("queued");
+    expect(buildWorkflow(agg({ queued: 1, running: 1 }), [], false).status).toBe("running");
     expect(buildWorkflow(agg(), [], true).status).toBe("paused");
   });
 
   test("workflow fields: name, cost in USD, active runs, runs with their own status", () => {
-    const w = buildWorkflow(agg({ running: 1, idle: 1 }), [run(), run({ id: "ses_2", status: "running", consumed_micro_usd: null })], false);
+    const w = buildWorkflow(agg({ running: 1, queued: 1 }), [run(), run({ id: "ses_2", status: "running", consumed_micro_usd: null })], false);
     expect(w).toMatchObject({ id: "research", name: "Lead research", purpose: "research", status: "running", leads_processed: 3, cost_usd: 2.5, active_runs: 2, run_count: 3 });
     expect(w.runs.map((r) => [r.id, r.status, r.cost_usd, r.leads_processed])).toEqual([["ses_1", "done", 1, 1], ["ses_2", "running", null, 1]]);
     expect(w.runs[0]!.last_event_at).toBe("2026-11-08T00:30:00.000Z"); // falls back to updated_at

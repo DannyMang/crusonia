@@ -507,7 +507,7 @@ function RunCard({ draft, validate }: { draft: ProfileDraft; validate: () => boo
         <div role="status" className="flex flex-col gap-3 rounded-[10px] border border-panel-line bg-white px-4 py-3.5">
           <div className="flex flex-col gap-0.5 text-[13px]/5">
             <div className="font-semibold text-ink">Your profile is saved</div>
-            <div className="font-medium text-muted">Finding leads needs the Naive agent; coming online. Your agents start from this profile as soon as it is live.</div>
+            <div className="font-medium text-muted">Finding leads needs the agent; coming online. Your agents start from this profile as soon as it is live.</div>
           </div>
           <Link to="/app" className={cx(bigButton, "h-10 text-sm/4.5")}>
             Go to dashboard

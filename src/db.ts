@@ -92,8 +92,6 @@ export type Approval = {
   kind: "send" | "tool" | "question";
   lead_id: string | null;
   draft_id: string | null;
-  naive_session_id: string | null;
-  tool_call_id: string | null;
   summary: string;
   status: string;
   answer: string | null;

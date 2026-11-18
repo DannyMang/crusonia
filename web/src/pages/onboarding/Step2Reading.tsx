@@ -1,13 +1,12 @@
 // Onboarding · 2 Reading your site (Paper artboard 2KLD-0). The user pressed Continue on step 1, so this is
 // where the paid calls start: POST /api/onboarding/read-website (Apify crawl) and POST /api/onboarding/propose
-// (Naive session), each at most once per run (see components/onboarding/store.ts). The proposal is polled
+// (agent run), each at most once per run (see components/onboarding/store.ts). The proposal is polled
 // with GET /api/onboarding/propose/:session_id until it is done; a reload resumes the same session.
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
 import { ApiError, type Profile } from "../../api.ts";
 import { useApi, useSession } from "../../auth.tsx";
-import { ChevronRight } from "../../components/icons.tsx";
 import { QueryError } from "../../components/ui.tsx";
 import {
   ensureStarted,
@@ -158,11 +157,9 @@ export default function Step2Reading() {
                     />
                   ) : pollError ? (
                     <QueryError error={pollError} what="the agent's progress" onRetry={() => void status.refetch()} />
-                  ) : running && data?.waiting_on ? (
-                    <WaitingOnYou kind={data.waiting_on} approvals={data.pending_approvals ?? []} />
                   ) : null
                 }
-                note={running ? data?.note : undefined}
+                queued={running && data?.status === "queued"}
               />
             )}
           </div>
@@ -291,14 +288,15 @@ function FoundPanel({
   running,
   done,
   problem,
-  note,
+  queued,
 }: {
   profile: Profile | null;
   site?: string;
   running: boolean;
   done: boolean;
   problem: ReactNode;
-  note?: string;
+  /** No agent has picked the run up yet. */
+  queued?: boolean;
 }) {
   const signals = (profile?.signals ?? []).filter((x) => x.name?.trim());
   return (
@@ -308,7 +306,7 @@ function FoundPanel({
         {running ? (
           <div className="flex items-center gap-1.5" role="status">
             <span className="size-1.5 shrink-0 rounded-full bg-green [animation:crusonia-pulse_1.6s_ease-in-out_infinite]" />
-            <span className="text-xs/4 font-medium text-green-dark">Updating</span>
+            <span className="text-xs/4 font-medium text-green-dark">{queued ? "Waiting for an agent" : "Updating"}</span>
           </div>
         ) : done ? (
           <div className="flex items-center gap-1.5">
@@ -318,7 +316,6 @@ function FoundPanel({
         ) : null}
       </div>
       {problem}
-      {note ? <p className="-mt-2 text-[13px]/5 font-medium text-muted">{note}</p> : null}
       <Found label="What you sell" value={profile?.sells} running={running} sources={sourcesFor(profile, (f) => f === "sells")} site={site} />
       <div className="h-px shrink-0 bg-panel-line" />
       <Found label="Who buys" value={profile?.icp_description} running={running} sources={sourcesFor(profile, (f) => f === "icp_description" || f.startsWith("segments"))} site={site} />
@@ -377,36 +374,6 @@ function Missing() {
   return <p className="text-[13px]/5 font-medium text-muted">Nothing found. You can add it on the next step.</p>;
 }
 
-/** The agent paused on the owner (a tool approval or a question): answering it lets the run continue. */
-function WaitingOnYou({ kind, approvals }: { kind: "approval" | "answer"; approvals: { code: string; kind: string; summary: string }[] }) {
-  return (
-    <div role="status" className="flex flex-col gap-2.5 rounded-[10px] border border-[#200D0D1A] bg-white px-4 py-3.5">
-      <div className="flex flex-col gap-0.5 text-[13px]/5">
-        <div className="font-semibold text-ink">{kind === "answer" ? "The agent has a question for you" : "The agent is waiting for your OK"}</div>
-        <div className="font-medium text-muted">It continues as soon as you answer. This page keeps checking.</div>
-      </div>
-      {approvals.length ? (
-        <ul className="flex flex-col gap-1.5">
-          {approvals.map((a) => (
-            <li key={a.code}>
-              <Link to={`/app/outreach/${encodeURIComponent(a.code)}`} className="flex items-center gap-2 text-[13px]/4.5 font-medium text-ink hover:underline">
-                <span className="shrink-0 font-semibold">{a.code}</span>
-                <span className="min-w-0 truncate text-muted">{a.summary}</span>
-                <ChevronRight className="ml-auto text-green" />
-              </Link>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <Link to="/app/outreach" className="flex items-center gap-1 self-start text-[13px]/4.5 font-medium text-ink hover:underline">
-          Open approvals
-          <ChevronRight className="text-green" />
-        </Link>
-      )}
-    </div>
-  );
-}
-
 /** The way out for an account that can't go on here: sign out, then sign up with another address. */
 function SignOutLink() {
   const { signOut } = useSession();
@@ -443,7 +410,7 @@ function ComingOnline({ onFill }: { onFill: () => void }) {
     <section role="status" className="flex flex-col gap-4 rounded-xl border border-panel-line bg-panel p-6">
       <div className="flex items-center gap-2">
         <span className="size-1.5 shrink-0 rounded-full bg-green" />
-        <h2 className="text-[15px]/4.5 font-medium text-ink">Finding leads needs the Naive agent; coming online</h2>
+        <h2 className="text-[15px]/4.5 font-medium text-ink">Finding leads needs the agent; coming online</h2>
       </div>
       <p className="text-[13px]/5 font-medium text-muted">
         The agent that reads your site and proposes who to sell to is still being set up. Nothing is lost: fill in your profile yourself now, or

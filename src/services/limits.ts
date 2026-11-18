@@ -1,5 +1,5 @@
-// Per-workspace guardrails, on top of Naive's own agent budget and the credit check:
-//   - a daily Naive spend cap for every workspace: spend of the sessions started in the last 24 hours, against
+// Per-workspace guardrails, on top of each run's own limits (./agent-runs.ts) and the credit check:
+//   - a daily agent spend cap for every workspace: spend of the sessions started in the last 24 hours, against
 //     workspaces.daily_cap_micro_usd or WORKSPACE_DAILY_CAP_USD (default $5);
 //   - rate limits on paid starts for every workspace but the owner's: PAID_STARTS_PER_HOUR (default 20) and
 //     MAX_ACTIVE_SESSIONS (default 5) sessions running at once;
@@ -33,15 +33,14 @@ export const limitsConfig = (env: Env) => ({
 
 export type SpendStatus = { spent_micro_usd: number; cap_micro_usd: number; started_last_hour: number; active_sessions: number };
 
-/** The workspace's Naive spend over the last 24 hours and its cap, plus the counts the rate limits use. */
+/** The workspace's agent spend over the last 24 hours and its cap, plus the counts the rate limits use. */
 export async function spendStatus(sql: Sql, env: Env, ws: string): Promise<SpendStatus> {
   const [row] = await sql`
     select
       (select coalesce(sum(coalesce(consumed_micro_usd, 0)), 0)::text from agent_runs
          where workspace_id = ${ws} and created_at > now() - interval '1 day') as spent,
       (select count(*)::int from agent_runs where workspace_id = ${ws} and created_at > now() - interval '1 hour') as started,
-      -- A session out of budget stays 'idle' forever, but it isn't running: it must not use up the limit.
-      (select count(*)::int from agent_runs where workspace_id = ${ws} and status in ('running', 'idle') and coalesce(stop_reason, '') <> 'budget_paused') as active,
+      (select count(*)::int from agent_runs where workspace_id = ${ws} and status in ('queued', 'running')) as active,
       (select daily_cap_micro_usd::text from workspaces where id = ${ws}) as cap`;
   return {
     spent_micro_usd: Number(row?.spent ?? 0),
@@ -52,7 +51,7 @@ export async function spendStatus(sql: Sql, env: Env, ws: string): Promise<Spend
 }
 
 /**
- * How many of `wanted` new Naive sessions the workspace may start now (0..wanted) and, when fewer, why.
+ * How many of `wanted` new agent runs the workspace may start now (0..wanted) and, when fewer, why.
  * The instance's brakes come first; the daily cap applies to every workspace, the rate limits to every workspace but
  * the owner's.
  */

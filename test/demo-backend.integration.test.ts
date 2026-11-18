@@ -1,4 +1,4 @@
-// The demo backend against a real Postgres (a Neon dev branch, never production), Naive and AgentMail mocked at fetch.
+// The demo backend against a real Postgres (a Neon dev branch, never production), AgentMail mocked at fetch.
 // Skipped unless TEST_DATABASE_URL is set:
 //   TEST_DATABASE_URL=<dev branch url> bun test test/demo-backend.integration.test.ts
 // Covers the CSV import preview/commit (mapping, duplicates, invalid rows, consent, cohort), versioned workflow
@@ -37,8 +37,6 @@ let session = "";
 const env: Env = {
   PUBLIC_URL: "https://example.test",
   DATABASE_URL: url,
-  NAIVE_API_KEY: "nv_test",
-  NAIVE_AGENT_ID: "agt_test",
   AGENTMAIL_API_KEY: "am_test",
   AGENTMAIL_INBOX_ID: "crusonia@agentmail.to",
 };
@@ -106,7 +104,7 @@ const MAPPING = {
   source: "Campaign",
 };
 
-suite("demo backend (database, mocked Naive and AgentMail)", () => {
+suite("demo backend (database, mocked AgentMail)", () => {
   let workflowId = "";
   let adaId = "";
   let companyId = "";
@@ -122,9 +120,6 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     session = await clerk.token(`user_it_demo_${run}`);
     WS_B = await createTestWorkspace(sql, `demob_${run}`);
     keyB = await testKey(sql, WS_B);
-    // A workspace other than the owner's runs on its own copy of the template agent; pretend it exists.
-    await sql`update workspaces set naive_agent_id = 'agt_ws_copy', naive_credential_id = 'vcr_x', naive_synced_at = now() + interval '1 hour'
-              where id = ${WS}`;
   });
 
   afterAll(async () => {
@@ -245,9 +240,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
   });
 
   test("a run pins version 1: variant, cohort and run on leads, sessions and drafts; the brief and the evidence gate follow it", async () => {
-    let n = 0;
-    const nv = provider((c) => (c.url.endsWith("/v1/sessions") ? Response.json({ id: `ses_itdemo_${run}_${++n}`, status: "running" }) : undefined));
-    const out = await runWorkflow(sql, env, WS, workflowId, { version: 1, cohort }, "test", { fetch: nv.fn });
+    const out = await runWorkflow(sql, env, WS, workflowId, { version: 1, cohort }, "test");
     runId = out.run.id;
     expect(out.started).toHaveLength(2);
     expect(out.run).toMatchObject({ version: 1, cohort });
@@ -262,7 +255,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     expect(sessions[0]).toMatchObject({ workflow_def_version: 1, cohort });
 
     // The first message carries version 1 (one requirement, not v2's two) and the lead's variant angle.
-    const message = nv.calls.find((c) => c.body?.metadata?.lead_id === adaId)!.body.message as string;
+    const message = (await sql`select message from agent_runs where workflow_run_id = ${runId} and lead_id = ${adaId}`)[0]!.message as string;
     expect(message).toContain("[e1] (required) A dated hiring signal with a source URL");
     expect(message).not.toContain("Their current outbound tool");
     expect(message).toContain(ada.variant === "A" ? "Lead with the hiring signal" : "Lead with what a tool stack costs");

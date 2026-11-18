@@ -37,7 +37,7 @@ export type McpEnv = { Bindings: Env; Variables: { bearer: BearerIdentity; works
 /**
  * Requires `Authorization: Bearer <MCP_TOKEN or API key>`. Answers 401 with `WWW-Authenticate: Bearer`
  * otherwise, and 503 if the server can check neither (no MCP_TOKEN and no database): fails closed.
- * A `?ws=` query parameter (the per-workspace URL of a Naive agent) and the X-Crusonia-Workspace header must name the
+ * A `?ws=` query parameter and the X-Crusonia-Workspace header must name the
  * token's own workspace: the token decides, and asking for another one is refused rather than ignored.
  */
 export function bearerAuth(lookup?: ApiKeyLookup): MiddlewareHandler<McpEnv> {

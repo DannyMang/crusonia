@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import worker from "../src/index.ts";
 import type { Env } from "../src/env.ts";
-import { signNaive, signSvix } from "../src/lib/signatures.ts";
+import { signSvix } from "../src/lib/signatures.ts";
 
 const env = (over: Partial<Env> = {}): Env => ({ PUBLIC_URL: "https://example.test", MCP_TOKEN: "owner-token", ...over });
 const call = (path: string, init: RequestInit = {}, e: Env = env()) =>
@@ -63,17 +63,6 @@ describe("routes without a database", () => {
     expect(good.status).toBe(503);
   });
 
-  test("Naive webhook: stale timestamps are rejected even with a correct signature", async () => {
-    const secret = "whsec_naive";
-    const ts = String(Math.floor(Date.now() / 1000) - 600);
-    const body = JSON.stringify({ id: "evt_1", type: "session.idle", data: { session_id: "ses_1", stop_reason: "end_turn" } });
-    const res = await call(
-      "/webhooks/naive",
-      { method: "POST", body, headers: { "Vetta-Signature": await signNaive(secret, ts, body), "Vetta-Timestamp": ts } },
-      env({ NAIVE_WEBHOOK_SECRET: secret }),
-    );
-    expect(res.status).toBe(401);
-  });
 });
 
 describe("web app routes without a database", () => {
@@ -101,27 +90,11 @@ describe("web app routes without a database", () => {
     const res = await call("/api/status", { headers: auth });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({ inbox_address: null, naive_agent_configured: false, mcp_url: "https://example.test/mcp" });
+    expect(body).toMatchObject({ inbox_address: null, mcp_url: "https://example.test/mcp" });
+    expect(body).not.toHaveProperty("naive_agent_configured");
     expect(Object.keys(body.providers as object)).toContain("agentmail");
     const configured = await call("/api/status", { headers: auth }, env({ AGENTMAIL_API_KEY: "am", AGENTMAIL_INBOX_ID: "crusonia@agentmail.to" }));
     expect(((await configured.json()) as { inbox_address: string }).inbox_address).toBe("crusonia@agentmail.to");
-  });
-
-  test("Naive-backed endpoints answer 503 not_configured naming NAIVE_AGENT_ID", async () => {
-    const naiveKeyOnly = env({ NAIVE_API_KEY: "nv" });
-    for (const [path, init] of [
-      ["/api/onboarding/propose", json({ url: "acme.com" })],
-      ["/api/onboarding/propose/ses_123", { headers: auth }],
-      ["/api/leads/find", json({ count: 10 })],
-    ] as const) {
-      const res = await call(path, init, naiveKeyOnly);
-      expect(res.status).toBe(503);
-      const error = await code(res);
-      expect(error.code).toBe("not_configured");
-      expect(error.message).toContain("NAIVE_AGENT_ID is not set");
-    }
-    const bare = await call("/api/leads/find", json({}));
-    expect((await code(bare)).message).toContain("NAIVE_API_KEY and NAIVE_AGENT_ID are not set");
   });
 
   test("request bodies are validated first", async () => {

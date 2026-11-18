@@ -1,4 +1,4 @@
-// Agent loop v2 against a real Postgres (a Neon dev branch, never production), Naive and Apify mocked at fetch.
+// Agent loop v2 against a real Postgres (a Neon dev branch, never production), Apify mocked at fetch.
 // Skipped unless TEST_DATABASE_URL is set:
 //   TEST_DATABASE_URL=<dev branch url> bun test test/agent-loop.integration.test.ts
 // Covers batch writes (add_leads inline research, save_research), company dedupe and exclusion memory, channel rules
@@ -20,7 +20,8 @@ import { getFindRun, getRunDetail, startFindLeads } from "../src/services/runs.t
 import { searchLeads } from "../src/services/crm.ts";
 import { listTasks, markTaskSent, skipTask } from "../src/services/tasks.ts";
 import { exportTrace, getTrace, pruneTraces } from "../src/services/traces.ts";
-import { handleSessionIdle, startResearch } from "../src/services/workflows.ts";
+import { recordToolCall } from "../src/services/agent-runs.ts";
+import { startResearch } from "../src/services/workflows.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -29,7 +30,7 @@ const suite = url ? describe : describe.skip;
 const run = crypto.randomUUID().slice(0, 8);
 const domain = (name: string) => `${name}-${run}-itloop.dev`;
 const sid = (name: string) => `ses_loop_${run}_${name}`;
-const env: Env = { PUBLIC_URL: "https://example.test", NAIVE_API_KEY: "nv_test", NAIVE_AGENT_ID: "agt_test", APIFY_TOKEN: "apify_test", MAX_ACTIVE_SESSIONS: "100" };
+const env: Env = { PUBLIC_URL: "https://example.test", APIFY_TOKEN: "apify_test", MAX_ACTIVE_SESSIONS: "100" };
 let sql: Sql;
 /** This suite's own workspace (deleted afterwards); it pays for its sessions and Apify runs. */
 let WS: string;
@@ -62,14 +63,11 @@ async function failure(p: Promise<unknown>): Promise<string> {
   return `${e!.status ?? ""}${e!.status ? " " : ""}${e!.code}`;
 }
 
-suite("agent loop v2 (database, mocked Naive and Apify)", () => {
+suite("agent loop v2 (database, mocked Apify)", () => {
   beforeAll(async () => {
     sql = getSql(url);
     WS = await createTestWorkspace(sql, `loop_${run}`);
     env.SEND_WORKSPACE_IDS = WS; // not the owner workspace: sending must be enabled for it
-    // A workspace other than the owner's runs on its own copy of the template agent; pretend it exists.
-    await sql`update workspaces set naive_agent_id = 'agt_ws_copy', naive_credential_id = 'vcr_x', naive_synced_at = now() + interval '1 hour'
-              where id = ${WS}`;
   });
 
   afterAll(async () => {
@@ -300,32 +298,6 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
     expect(await settleSessionUsage(sql, sid("meter"))).toBe(20);
   });
 
-  test("auto-confirm: parallel, idempotent; a call another handler claimed counts as allowed, so the session stays running", async () => {
-    const sessionId = sid("idle");
-    await sql`insert into agent_runs (id, workspace_id, purpose, status) values (${sessionId}, ${WS}, 'find_leads', 'running')`;
-    const pendingActions = [1, 2, 3].map((n) => ({ kind: "tool" as const, tool_call_id: `c${n}`, name: "crusonia.search_web", args: { query: `q${n}` } }));
-    const nv = provider((c) => (c.url.endsWith("/tool_confirmations") ? Response.json({}) : undefined));
-    const first = await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
-    expect(first.auto_allowed).toHaveLength(3);
-    expect(nv.calls.map((c) => c.body.tool_call_id).sort()).toEqual(["c1", "c2", "c3"]);
-
-    // A second handler (the poll, or a duplicate webhook) sees the same parked calls before Naive resumes.
-    const second = await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
-    expect(second.auto_allowed).toHaveLength(3);
-    expect(nv.calls).toHaveLength(3);
-    expect((await sql`select status from agent_runs where id = ${sessionId}`)[0]!.status).toBe("running");
-    expect((await sql`select count(*)::int as n from events where kind = 'naive_idle' and data->>'session_id' = ${sessionId}`)[0]!.n).toBe(1);
-    expect((await sql`select count(*)::int as n from events where kind = 'naive_tool_auto_allowed' and data->>'session_id' = ${sessionId}`)[0]!.n).toBe(3);
-
-    // A failed confirmation is released so a retry can confirm it.
-    const flaky = provider((c) => (c.body?.tool_call_id === "c5" ? new Response("{}", { status: 400 }) : Response.json({})));
-    const actions = [4, 5].map((n) => ({ kind: "tool" as const, tool_call_id: `c${n}`, name: "crusonia.get_lead", args: {} }));
-    await expect(handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions: actions }, flaky.fn)).rejects.toThrow();
-    expect((await sql`select event_id from webhook_events where event_id like ${`autoconfirm:${sessionId}:%`} order by 1`).map((r) => r.event_id)).toEqual(
-      ["c1", "c2", "c3", "c4"].map((c) => `autoconfirm:${sessionId}:${c}`),
-    );
-  });
-
   test("notes: authors edit and delete their own; owner notes across leads are what agents steer by", async () => {
     const { results } = await addLeads(sql, WS, [found("notes")]);
     const id = results[0]!.id!;
@@ -356,12 +328,12 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
 
       const { results } = await addLeads(sql, WS, [found("review")]);
       const id = results[0]!.id!;
-      // Research sessions get the workflow in their first message.
-      const nv = provider((c) => (c.url.endsWith("/v1/sessions") ? Response.json({ id: sid("review"), status: "running" }) : undefined));
-      await startResearch(sql, env, WS, { lead_ids: [id] }, "test", nv.fn);
-      expect(nv.calls[0]!.body.message).toContain("[hiring] (required) A sales hire in the last 90 days");
-      expect((await sql`select input from agent_runs where id = ${sid("review")}`)[0]!.input).toMatchObject({ workflow_version: v2.version });
-      await sql`update agent_runs set status = 'done' where id = ${sid("review")}`;
+      // Research runs get the workflow in their first message.
+      const reviewRun = (await startResearch(sql, env, WS, { lead_ids: [id] }, "test")).started[0]!.session_id;
+      const queued = (await sql`select input, message from agent_runs where id = ${reviewRun}`)[0]!;
+      expect(queued.message).toContain("[hiring] (required) A sales hire in the last 90 days");
+      expect(queued.input).toMatchObject({ workflow_version: v2.version });
+      await sql`update agent_runs set status = 'done' where id = ${reviewRun}`;
 
       // A score without the required evidence is not stored: the lead pauses with a question.
       const paused = await saveResearch(sql, WS, {
@@ -380,7 +352,7 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
       expect(await failure(createDraft(sql, WS, { lead_id: id, channel: "intro", body: "They use Clay.", citations: [{ text: "use Clay", source_url: `https://${domain("review")}/stack` }] }, { ttlMinutes: 60 }))).toBe("invalid");
 
       // The run view explains it.
-      const runView = await getRunDetail(sql, { PUBLIC_URL: "https://example.test" }, WS, sid("review"));
+      const runView = await getRunDetail(sql, WS, reviewRun);
       expect(runView.lead).toMatchObject({ stage: "needs_review" });
       expect(runView.steps.some((st) => st.summary.startsWith("Needs review: Missing required evidence"))).toBe(true);
 
@@ -420,33 +392,21 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
       await writeCompanySummary(sql, WS, { markdown: "# IT\n\n## What we sell\nx\n\n## Who buys\ny", author: "user:test" });
       const { results } = await addLeads(sql, WS, [found("like")]);
       const likeId = results[0]!.id!;
-      const nv = provider((c) => (c.method === "POST" && c.url.endsWith("/v1/sessions") ? Response.json({ id: sid("find"), status: "running" }) : undefined));
-      expect(await failure(startFindLeads(sql, env, WS, 5, "test", nv.fn, { likeLeadId: "lead_missing" }))).toBe("404 not_found");
-      const { session_id } = await startFindLeads(sql, env, WS, 5, "test", nv.fn, { likeLeadId: likeId });
-      expect(session_id).toBe(sid("find"));
-      expect(nv.calls[0]!.body.message).toContain(`companies like lead ${likeId}`);
-      expect((await sql`select input from agent_runs where id = ${session_id}`)[0]!.input).toMatchObject({ count: 5, like_lead_id: likeId });
+      expect(await failure(startFindLeads(sql, env, WS, 5, "test", { likeLeadId: "lead_missing" }))).toBe("404 not_found");
+      const { session_id } = await startFindLeads(sql, env, WS, 5, "test", { likeLeadId: likeId });
+      const queued = (await sql`select input, message from agent_runs where id = ${session_id}`)[0]!;
+      expect(queued.message).toContain(`companies like lead ${likeId}`);
+      expect(queued.input).toMatchObject({ count: 5, like_lead_id: likeId });
 
       // The run's add_leads call, as the trace stores it.
       const added = await addLeads(sql, WS, [found("found1"), found("like")]);
-      const output = JSON.stringify(added, null, 2);
-      const events = provider((c) =>
-        c.url.includes(`/sessions/${session_id}/events`)
-          ? Response.json({
-              data: Number(new URL(c.url).searchParams.get("after_seq")) > 0 ? [] : [
-                { seq: 1, type: "tool.completed", data: { tool_call_id: "a1", name: "crusonia.add_leads", output, is_error: false }, created_at: new Date().toISOString() },
-              ],
-              has_more: false,
-              next_cursor: null,
-            })
-          : undefined,
-      );
-      const res = await getFindRun(sql, env, WS, session_id, events.fn);
+      await recordToolCall(sql, WS, session_id, { name: "add_leads", args: { leads: [] }, output: JSON.stringify(added, null, 2), isError: false, startedAt: new Date() });
+      const res = await getFindRun(sql, WS, session_id);
       expect(res.run).toMatchObject({ id: session_id, purpose: "find_leads" });
       expect(Object.fromEntries(res.leads.map((l) => [l.domain, l.find_status]))).toEqual({ [domain("found1")]: "created", [domain("like")]: "known" });
-      await expect(getFindRun(sql, env, WS, sid("nope"))).rejects.toMatchObject({ status: 404 });
+      await expect(getFindRun(sql, WS, sid("nope"))).rejects.toMatchObject({ status: 404 });
       // Another workspace cannot read the run.
-      await expect(getFindRun(sql, env, "ws_owner", session_id, events.fn)).rejects.toMatchObject({ status: 404 });
+      await expect(getFindRun(sql, "ws_owner", session_id)).rejects.toMatchObject({ status: 404 });
     }
   });
 
@@ -454,41 +414,34 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
     const sessionId = sid("trace");
     await sql`insert into agent_runs (id, workspace_id, purpose, status, consumed_micro_usd, created_at, updated_at)
               values (${sessionId}, ${WS}, 'find_leads', 'done', 250000, now() - interval '1 hour', now() - interval '1 hour')`;
+    // Seven tool calls, as Crusonia records them (a started and a completed event each); one output is huge.
     const big = "y".repeat(80_000);
-    const all = Array.from({ length: 7 }, (_, i) => ({
-      seq: i + 1,
-      type: i === 3 ? "span.harness_load.start" : i === 2 ? "message.delta" : "tool.completed",
-      data: { tool_call_id: `t${i}`, name: "crusonia.read_website", output: i === 1 ? big : "ok", is_error: false },
-      created_at: new Date(Date.now() - 3_600_000 + i * 1000).toISOString(),
-    }));
-    const nv = provider((c) => {
-      if (!c.url.includes(`/sessions/${sessionId}/events`)) return undefined;
-      const after = Number(new URL(c.url).searchParams.get("after_seq"));
-      const page = all.filter((e) => e.seq > after).slice(0, 3);
-      return Response.json({ data: page, has_more: page.length === 3 && page.at(-1)!.seq < 7, next_cursor: null });
-    });
-    const first = await getTrace(sql, env, viewer(), sessionId, { limit: 2 }, nv.fn);
-    expect(first.sync).toMatchObject({ ok: true, complete: true });
-    expect(first.events.map((e) => (e as { seq: number }).seq)).toEqual([1, 2]);
+    for (let i = 0; i < 7; i++) {
+      await recordToolCall(sql, WS, sessionId, { name: "read_website", args: { url: `https://x${i}.test` }, output: i === 1 ? big : "ok", isError: false, startedAt: new Date(Date.now() - 1000) });
+    }
+    const first = await getTrace(sql, env, viewer(), sessionId, { limit: 4 });
+    expect(first).not.toHaveProperty("sync");
+    expect(first.events.map((e) => (e as { seq: number }).seq)).toEqual([1, 2, 3, 4]);
     expect(first.has_more).toBe(true);
-    expect(((first.events[1] as unknown as { data: { output: string } }).data.output).length).toBeLessThan(64_100);
-    const rest = await getTrace(sql, env, viewer(), sessionId, { afterSeq: first.next_after_seq!, limit: 100 }, nv.fn);
-    // Everything but the streaming delta is kept, spans included.
-    expect(rest.events.map((e) => (e as { seq: number }).seq)).toEqual([4, 5, 6, 7]);
-    expect(rest.spend.naive_usd).toBe(0.25);
-    const exported = await exportTrace(sql, env, viewer(), sessionId, nv.fn);
+    // The second call's output (seq 4) was cut when it was stored.
+    const stored = (first.events[3] as unknown as { type: string; data: { output: string } });
+    expect(stored.type).toBe("tool.completed");
+    expect(stored.data.output.length).toBeLessThan(64_100);
+    expect(stored.data.output).toEndWith("[truncated]");
+    const rest = await getTrace(sql, env, viewer(), sessionId, { afterSeq: first.next_after_seq!, limit: 100 });
+    expect(rest.events.map((e) => (e as { seq: number }).seq)).toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    expect(rest.spend.agent_usd).toBe(0.25);
+    const exported = await exportTrace(sql, viewer(), sessionId);
     expect(exported).toMatchObject({ format: "crusonia.trace.v1", truncated: false });
-    expect(exported.events).toHaveLength(6);
-    // The clean timeline still reads from the same events.
-    expect((await getRunDetail(sql, env, WS, sessionId, nv.fn)).steps.length).toBeGreaterThan(0);
-    // Another workspace cannot read the trace; a platform admin can, read-only.
+    expect(exported.events).toHaveLength(14);
+    // The clean timeline reads from the same events: one step per call.
+    expect((await getRunDetail(sql, WS, sessionId)).steps.filter((s) => s.type === "tool")).toHaveLength(7);
+    // Another workspace cannot read the trace; a platform admin can.
     await expect(getTrace(sql, env, { principal: { kind: "owner_token" }, workspace: "ws_owner" }, sessionId)).rejects.toThrow("No workflow run");
-    expect((await getTrace(sql, env, { principal: { kind: "owner_token" }, workspace: "ws_owner", admin: true }, sessionId)).sync).toMatchObject({
-      skipped: expect.stringContaining("read-only"),
-    });
+    expect((await getTrace(sql, env, { principal: { kind: "owner_token" }, workspace: "ws_owner", admin: true }, sessionId)).run.id).toBe(sessionId);
 
     await sql`update agent_runs set created_at = now() - interval '400 days' where id = ${sessionId}`;
-    expect(await pruneTraces(sql, { ...env, TRACE_RETENTION_DAYS: "365" })).toBeGreaterThanOrEqual(6);
+    expect(await pruneTraces(sql, { ...env, TRACE_RETENTION_DAYS: "365" })).toBeGreaterThanOrEqual(14);
     expect((await sql`select count(*)::int as n from agent_run_events where session_id = ${sessionId}`)[0]!.n).toBe(0);
   });
 });

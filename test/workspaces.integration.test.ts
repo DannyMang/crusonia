@@ -1,10 +1,10 @@
-// Workspaces against a real Postgres (a Neon dev branch, never production), with Naive faked at fetch.
+// Workspaces against a real Postgres (a Neon dev branch, never production).
 // Skipped unless TEST_DATABASE_URL is set:
 //   TEST_DATABASE_URL=<dev branch url> bun test test/workspaces.integration.test.ts
 // Covers: the migration's backfill and per-workspace uniqueness, workspace creation on first sign-in, isolation of
 // every /api route and MCP tool between two workspaces, the Company summary (overwrites, sections, the migration, the
 // /api/profile alias), credits and limits for workspaces other than the owner's, the billing merge, platform-admin
-// reads, and the per-workspace Naive agent. Everything runs in throwaway workspaces that are deleted afterwards.
+// reads. Everything runs in throwaway workspaces that are deleted afterwards.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Client } from "@neondatabase/serverless";
 import { addLedgerRow, getBalance } from "../src/billing/accounts.ts";
@@ -18,7 +18,6 @@ import { createDraft } from "../src/services/drafts.ts";
 import { handleAgentMailEvent } from "../src/services/inbound.ts";
 import { addLeads } from "../src/services/leads.ts";
 import { paidStartAllowance } from "../src/services/limits.ts";
-import { naiveAgentFor, resetTemplateVersionCache, workspaceMcpUrl } from "../src/services/naive-agents.ts";
 import { addSuppression } from "../src/services/settings.ts";
 import { createTestWorkspace, deleteTestWorkspaces, testKey } from "./helpers/workspace.ts";
 
@@ -59,9 +58,6 @@ const env = (over: Partial<Env> = {}): Env => ({
   PUBLIC_URL: "https://example.test",
   DATABASE_URL: url,
   MCP_TOKEN: `it-owner-${run}`,
-  NAIVE_API_KEY: "nv_test",
-  NAIVE_AGENT_ID: "agt_template",
-  NAIVE_VAULT_ID: "vlt_test",
   CLERK_JWT_KEY: pem,
   CLERK_SECRET_KEY: "sk_test_fake",
   ...over,
@@ -113,7 +109,7 @@ async function tool(token: string, name: string, args: Record<string, unknown> =
   return rpc.result.isError ? { error: text } : { data: JSON.parse(text) };
 }
 
-suite("workspaces (database, faked Naive)", () => {
+suite("workspaces (database)", () => {
   beforeAll(async () => {
     globalThis.fetch = fetchWithClerk as typeof fetch;
     sql = getSql(url);
@@ -390,7 +386,7 @@ suite("workspaces (database, faked Naive)", () => {
       expect((await call(keyA, "GET", `/api/onboarding/propose/${b.session}`)).status).toBe(404);
       const research = await call(keyA, "POST", "/api/workflows/research", { lead_ids: [b.lead] });
       expect(research.body).toEqual({ started: [], skipped: [{ lead_id: b.lead, reason: "not_found" }], failed: [] });
-      expect((await call(keyB, "GET", `/api/workflows/runs/${b.session}`, undefined, env({ NAIVE_API_KEY: undefined }))).status).toBe(200);
+      expect((await call(keyB, "GET", `/api/workflows/runs/${b.session}`)).status).toBe(200);
     });
 
     test("suppressions and the pause switch", async () => {
@@ -434,7 +430,7 @@ suite("workspaces (database, faked Naive)", () => {
       expect((await call(keyA, "GET", "/api/replies")).body.data.map((r: any) => r.lead_id)).not.toContain(b.lead);
       expect((await call(keyB, "GET", "/api/replies")).body.data.map((r: any) => r.lead_id)).toContain(b.lead);
       const status = await call(keyA, "GET", "/api/status");
-      expect(status.body).toMatchObject({ workspace_id: A, agent_mcp_url: `https://example.test/mcp?ws=${A}`, crm_sync: { available: false } });
+      expect(status.body).toMatchObject({ workspace_id: A, mcp_url: "https://example.test/mcp", crm_sync: { available: false } });
     });
 
     test("CRM sync is the owner workspace's only", async () => {
@@ -499,27 +495,27 @@ suite("workspaces (database, faked Naive)", () => {
     expect(new Set(imported.map((r) => r.cohort))).toEqual(new Set([csv.body.cohort]));
     // Leads an agent run finds are that run's cohort; the run records its workflow version.
     await sql`insert into agent_runs (id, workspace_id, purpose, status, input, workflow_version)
-              values (${`ses_ws_${run}_find`}, ${ws}, 'find_leads', 'done', ${JSON.stringify({ run_id: `run_${run}_find` })}::jsonb, 'research@3, agent v7')`;
+              values (${`run_${run}_find`}, ${ws}, 'find_leads', 'running', ${JSON.stringify({ run_id: `run_${run}_find` })}::jsonb, 'research@3, agent v7')`;
     const found = (await tool(key, "add_leads", { run_id: `run_${run}_find`, leads: [{ email: `c3-${run}@it.example.com`, source: "it", source_url: "https://example.com/x" }] })).data;
     const leadId = found.results[0].id as string;
-    expect((await sql`select cohort from leads where id = ${leadId}`)[0]!.cohort).toBe(`run:ses_ws_${run}_find`);
+    expect((await sql`select cohort from leads where id = ${leadId}`)[0]!.cohort).toBe(`run:run_${run}_find`);
     // Re-adding it later (another batch) changes neither its cohort nor its variant; the variant is the same in any workspace.
     const before = (await sql`select variant from leads where id = ${leadId}`)[0]!.variant;
     await tool(key, "add_leads", { leads: [{ email: `c3-${run}@it.example.com`, title: "CEO", source: "it", source_url: "https://example.com/y" }] });
-    expect((await sql`select cohort, variant, title from leads where id = ${leadId}`)[0]).toEqual({ cohort: `run:ses_ws_${run}_find`, variant: before, title: "CEO" });
+    expect((await sql`select cohort, variant, title from leads where id = ${leadId}`)[0]).toEqual({ cohort: `run:run_${run}_find`, variant: before, title: "CEO" });
     await tool(keyA, "add_leads", { leads: [{ email: `c3-${run}@it.example.com`, source: "it", source_url: "https://example.com/z" }] });
     expect((await sql`select variant from leads where workspace_id = ${A} and email = ${`c3-${run}@it.example.com`}`)[0]!.variant).toBe(before);
     // A draft written in a run records the run and its workflow version; one written by a person records none.
     // Consent is a person's decision (an API key gets 403 human_required, src/api/guards.ts): grant it as the owner would.
     await patchLead(sql, ws, leadId, { consent: { text: "opted in" } }, "test");
     await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, input, workflow_version)
-              values (${`ses_ws_${run}_res`}, ${ws}, ${leadId}, 'research', 'running', ${JSON.stringify({ run_id: `run_${run}_res` })}::jsonb, 'research@3, agent v8')`;
+              values (${`run_${run}_res`}, ${ws}, ${leadId}, 'research', 'running', ${JSON.stringify({ run_id: `run_${run}_res` })}::jsonb, 'research@3, agent v8')`;
     const draft = (await tool(key, "create_draft", { run_id: `run_${run}_res`, lead_id: leadId, subject: "Hi", body: "Body" })).data.draft;
-    expect(draft).toMatchObject({ session_id: `ses_ws_${run}_res`, workflow_version: "research@3, agent v8", variant: before });
+    expect(draft).toMatchObject({ session_id: `run_${run}_res`, workflow_version: "research@3, agent v8", variant: before });
     const manual = (await call(key, "POST", `/api/leads/${leadId}/drafts`, { subject: "Hi 2", body: "Body" })).body.draft;
     expect(manual).toMatchObject({ session_id: null, workflow_version: null });
-    const runs = (await call(key, "GET", "/api/workflows?runs=10", undefined, env({ NAIVE_API_KEY: undefined }))).body.data;
-    expect(runs.flatMap((w: any) => w.runs).find((r: any) => r.id === `ses_ws_${run}_find`)).toMatchObject({ workflow_version: "research@3, agent v7" });
+    const runs = (await call(key, "GET", "/api/workflows?runs=10")).body.data;
+    expect(runs.flatMap((w: any) => w.runs).find((r: any) => r.id === `run_${run}_find`)).toMatchObject({ workflow_version: "research@3, agent v7" });
   });
 
   // ---------- the Company summary ----------
@@ -601,9 +597,9 @@ suite("workspaces (database, faked Naive)", () => {
       created.push(ws);
       const key = await testKey(sql, ws, "agent");
       await sql`insert into agent_runs (id, workspace_id, purpose, status, input) values
-        (${`ses_ws_${run}_r1`}, ${ws}, 'research', 'running', ${JSON.stringify({ run_id: `run_${run}_1` })}::jsonb),
-        (${`ses_ws_${run}_o1`}, ${ws}, 'onboarding', 'running', ${JSON.stringify({ run_id: `run_${run}_2` })}::jsonb)`;
-      expect((await tool(key, "update_company_summary", { markdown: "# X", run_id: `run_${run}_1` })).data.updated_by).toBe(`agent:ses_ws_${run}_r1`);
+        (${`run_${run}_1`}, ${ws}, 'research', 'running', ${JSON.stringify({ run_id: `run_${run}_1` })}::jsonb),
+        (${`run_${run}_2`}, ${ws}, 'onboarding', 'running', ${JSON.stringify({ run_id: `run_${run}_2` })}::jsonb)`;
+      expect((await tool(key, "update_company_summary", { markdown: "# X", run_id: `run_${run}_1` })).data.updated_by).toBe(`agent:run_${run}_1`);
       expect((await tool(key, "update_company_summary", { markdown: "# Y", run_id: `run_${run}_2` })).data.updated_by).toBe("onboarding");
       // A run id of another workspace means nothing here.
       expect((await tool(key, "update_company_summary", { markdown: "# Z", run_id: "run_unknown" })).data.updated_by).toMatch(/^agent:api_key:/);
@@ -650,7 +646,7 @@ suite("workspaces (database, faked Naive)", () => {
       // Through a route: research skips what the limits do not allow, and says why.
       const key = await testKey(sql, ws);
       await addLedgerRow(sql, { workspaceId: ws, amount: 100, reason: "adjustment", source: `adjustment:ws-it-${run}-busy` });
-      await sql`update workspaces set naive_agent_id = 'agt_ws_copy', naive_credential_id = 'vcr_x', naive_synced_at = now() + interval '1 hour', daily_cap_micro_usd = 1 where id = ${ws}`;
+      await sql`update workspaces set daily_cap_micro_usd = 1 where id = ${ws}`;
       const lead = (await call(key, "POST", "/api/leads", { email: `busy-${run}@it.example.com` })).body.lead.id;
       expect((await call(key, "POST", "/api/workflows/research", { lead_ids: [lead] }, e)).body).toEqual({
         started: [],
@@ -721,7 +717,8 @@ suite("workspaces (database, faked Naive)", () => {
       expect(runs.body.data.map((r: any) => r.id)).toContain(b.session);
       const trace = await call(admin, "GET", `/api/admin/runs/${b.session}/trace`, undefined, e);
       expect(trace.status).toBe(200);
-      expect(trace.body).toMatchObject({ workspace_id: B, run: { id: b.session }, sync: { skipped: expect.stringContaining("read-only") } });
+      expect(trace.body).toMatchObject({ workspace_id: B, run: { id: b.session } });
+      expect(trace.body).not.toHaveProperty("sync");
       expect(trace.body.events).toEqual([expect.objectContaining({ seq: 1, type: "message.completed" })]);
       const audit = await sql`select kind, data from events where workspace_id = ${B} and kind = 'admin_viewed' order by id`;
       expect(audit.map((r) => r.data)).toEqual([
@@ -735,92 +732,5 @@ suite("workspaces (database, faked Naive)", () => {
       const ownerAdmin = await call(admin, "GET", `/api/admin/runs?workspace=${B}`, undefined, env({ OWNER_CLERK_USER_ID: adminUser }));
       expect(ownerAdmin.status).toBe(200);
     });
-  });
-
-  // ---------- the per-workspace Naive agent ----------
-
-  test("a workspace's first paid run creates its own agent: the template's config, its own MCP URL, a bound credential with a workspace key", async () => {
-    const ws = await createTestWorkspace(sql, `agent_${run}`);
-    created.push(ws);
-    const calls: { method: string; url: string; body: any; key: string | null }[] = [];
-    let version = 7;
-    const template = () => ({
-      id: "agt_template",
-      name: "Crusonia Research",
-      description: "Researches leads",
-      model: "vetta/auto",
-      window: "immediate",
-      system: "# Crusonia research agent",
-      tools: { default_config: { permission: "ask" }, configs: { "crusonia.get_lead": { enabled: true, permission: "allow" } } },
-      mcp_servers: [
-        { name: "crusonia", url: "https://example.test/mcp" },
-        { name: "apify", url: "https://mcp.apify.com?tools=actors" },
-      ],
-      handoffs: false,
-      budget: { cap_micro_usd: 5_000_000, max_task_micro_usd: 1_000_000, period: "day" },
-      metadata: { app: "crusonia", playbook_version: "3" },
-      current_version: version,
-    });
-    const fetchFn: FetchFn = async (u, init = {}) => {
-      const body = init.body ? JSON.parse(init.body as string) : undefined;
-      const key = (init.headers as Record<string, string> | undefined)?.["Idempotency-Key"] ?? null;
-      calls.push({ method: init.method ?? "GET", url: u, body, key });
-      if (u.endsWith("/v1/agents/agt_template")) return new Response(JSON.stringify(template()));
-      if (u.endsWith("/v1/agents") && init.method === "POST") return new Response(JSON.stringify({ id: `agt_ws_${run}`, ...body }));
-      if (u.endsWith(`/v1/agents/agt_ws_${run}`) && init.method === "PATCH") return new Response(JSON.stringify({ id: `agt_ws_${run}` }));
-      if (u.endsWith("/v1/vaults/vlt_test/credentials")) return new Response(JSON.stringify({ id: `vcr_${run}`, mcp_server_url: body.mcp_server_url, agent_id: body.agent_id }));
-      return new Response("{}", { status: 404 });
-    };
-    const e = env();
-    const first = await naiveAgentFor(sql, e, ws, fetchFn);
-    expect(first.agentId).toBe(`agt_ws_${run}`);
-    expect(first.workflowVersion).toBe("playbook@3, agent v7");
-    const create = calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/agents"))!;
-    const wsUrl = workspaceMcpUrl(e, ws);
-    expect(wsUrl).toBe(`https://example.test/mcp?ws=${ws}`);
-    expect(create.body).toMatchObject({
-      system: "# Crusonia research agent",
-      model: "vetta/auto",
-      budget: { cap_micro_usd: 5_000_000, max_task_micro_usd: 1_000_000, period: "day" },
-      handoffs: false,
-      mcp_servers: [
-        { type: "url", name: "crusonia", url: wsUrl },
-        { type: "url", name: "apify", url: "https://mcp.apify.com?tools=actors" },
-      ],
-      metadata: { workspace_id: ws, template_agent: "agt_template", template_version: "7" },
-    });
-    expect(create.key).toBe(`crusonia-agent-${ws}`);
-    const cred = calls.find((c) => c.url.endsWith("/credentials"))!;
-    expect(cred.body).toMatchObject({ kind: "static_bearer", mcp_server_url: wsUrl, agent_id: `agt_ws_${run}` });
-    // The credential holds an 'agent' key of this workspace only: it works on its URL, and nowhere else.
-    const agentKey = cred.body.value as string;
-    expect(await verifyApiKey(sql, agentKey)).toMatchObject({ workspace_id: ws, kind: "agent" });
-    expect((await tool(agentKey, "get_status", {}, `/mcp?ws=${ws}`)).data.database.reachable).toBe(true);
-    expect((await tool(agentKey, "get_status", {}, `/mcp?ws=${B}`)).status).toBe(403);
-    // An agent key is a researcher: it can't even ask without its run id, and a run id from another workspace is unknown.
-    expect((await tool(agentKey, "get_lead", { lead_id: b.lead }, `/mcp?ws=${ws}`)).error).toContain("Pass run_id");
-    expect((await tool(agentKey, "get_lead", { lead_id: b.lead, run_id: "run_of_b" }, `/mcp?ws=${ws}`)).error).toContain("No run");
-    // The agent key is managed by Crusonia: not listed, not revocable through /api/keys.
-    const userKey = await testKey(sql, ws);
-    expect((await call(userKey, "GET", "/api/keys")).body.data.map((k: any) => k.name)).toEqual(["test key"]);
-    const row = (await sql`select naive_agent_id, naive_credential_id, naive_mcp_url, naive_template_version from workspaces where id = ${ws}`)[0];
-    expect(row).toEqual({ naive_agent_id: `agt_ws_${run}`, naive_credential_id: `vcr_${run}`, naive_mcp_url: wsUrl, naive_template_version: 7 });
-
-    // Next runs reuse it without calling Naive; after a template change (new playbook) it is re-synced with a PATCH.
-    const n = calls.length;
-    expect((await naiveAgentFor(sql, e, ws, fetchFn)).agentId).toBe(`agt_ws_${run}`);
-    expect(calls).toHaveLength(n);
-    version = 8;
-    await sql`update workspaces set naive_synced_at = now() - interval '1 hour' where id = ${ws}`;
-    await naiveAgentFor(sql, e, ws, fetchFn);
-    const patch = calls.slice(n).find((c) => c.method === "PATCH")!;
-    expect(patch.url).toEndWith(`/v1/agents/agt_ws_${run}`);
-    expect(patch.body.mcp_servers[0]).toEqual({ type: "url", name: "crusonia", url: wsUrl });
-    expect((await sql`select naive_template_version from workspaces where id = ${ws}`)[0]!.naive_template_version).toBe(8);
-    expect(calls.filter((c) => c.url.endsWith("/credentials"))).toHaveLength(1);
-
-    // The owner workspace runs on the template agent itself (its version read from Naive, cached briefly).
-    resetTemplateVersionCache();
-    expect(await naiveAgentFor(sql, e, "ws_owner", fetchFn)).toMatchObject({ agentId: "agt_template", workflowVersion: "playbook@3, agent v8" });
   });
 });

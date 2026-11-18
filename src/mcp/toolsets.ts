@@ -1,7 +1,7 @@
-// Who may call which MCP tool. Pure, so tests and scripts/lib/naive-agent.ts can import it.
+// Who may call which MCP tool. Pure, so tests can import it.
 //
-// A Naive session reads untrusted text, so what one session can read and where it can send data must not meet:
-//   researcher  reads the web (search_web, read_website, Apify's page reader) and sees only its target lead. It has
+// An agent run reads untrusted text, so what one session can read and where it can send data must not meet:
+//   researcher  reads the web (search_web, read_website) and sees only its target lead. It has
 //               no tool that lists the pipeline, and every lead tool needs the run id of a session on that lead.
 //   operator    reads the whole pipeline and starts or manages work, with no web tool and no outbound fetch at all.
 //               What it hands to a researcher is structured (lead ids, a count), never free text. It reads text that
@@ -11,7 +11,7 @@
 //   full        a person's own agent (Claude Code, Cursor) on a user API key or MCP_TOKEN: every tool.
 //
 // The role comes from the credential (an 'agent' key is a researcher, an 'operator' key an operator) or, for the owner
-// token, which is the same for both Naive agents, from the URL the agent's vault credential is bound to (?role=).
+// token and user keys, from the URL they connect to (?role=), which can only narrow what they see.
 // No role can send email, decide an approval, change consent, touch billing, API keys or suppressions: those tools
 // don't exist in any set (test/autopilot-tools.test.ts checks the names and inputs).
 export const MCP_ROLES = ["full", "researcher", "operator"] as const;

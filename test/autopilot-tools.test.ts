@@ -1,5 +1,5 @@
 // The MCP surface as each agent sees it: the safety lines hold on every tool, the Operator has no way out to the web, a
-// researcher can't see the pipeline or another lead, and the policy matches.
+// researcher can't see the pipeline or another lead.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -8,12 +8,8 @@ import { resolveBearer } from "../src/auth.ts";
 import type { Env } from "../src/env.ts";
 import { agentTextProblem, createMcpServer, operatorWorkflowProblem, type McpContext } from "../src/mcp/server.ts";
 import { ALL_TOOLS, OPERATOR_MUST_NOT_HAVE, OPERATOR_TOOLS, PIPELINE_READ_TOOLS, RESEARCHER_TOOLS, WEB_TOOLS, resolveRole, type McpRole } from "../src/mcp/toolsets.ts";
-import { DEFAULT_AUTO_CONFIRM_TOOLS, OPERATOR_AUTO_CONFIRM, isToolAllowed, parseToolAllowlist } from "../src/services/policy.ts";
 import { CRAWL_PLAIN_MEMORY_MB, CRAWL_RENDER_MEMORY_MB, crawlWebsite, GOOGLE_SEARCH_MIN_CHARGE_USD, searchGoogle } from "../src/services/apify.ts";
 import { mergeProblem } from "../src/services/merge-leads.ts";
-import { DENIED_BUILTINS, OPERATOR_PLAYBOOK_PATH, naiveAgentConfig, operatorAgentConfig, parsePlaybook } from "../scripts/lib/naive-agent.ts";
-import { workspaceAgentConfig } from "../src/services/naive-agents.ts";
-import type { NaiveAgent } from "../src/providers/naive.ts";
 
 const env: Env = { PUBLIC_URL: "https://example.test" };
 
@@ -61,11 +57,7 @@ describe("the hard safety lines hold for every role", () => {
   test("the Operator has no tool that adds a URL or a domain, or writes a workflow's text", async () => {
     const names = (await toolsOf("operator")).map((t) => t.name);
     for (const tool of OPERATOR_MUST_NOT_HAVE) expect(names).not.toContain(tool);
-    const agent = operatorAgentConfig({ baseUrl: "https://crusonia.example.dev", playbook: { name: "operator", version: "1", body: "x" }, model: "m", budget: { cap_micro_usd: 1, max_task_micro_usd: 1, period: "day" } });
-    for (const tool of OPERATOR_MUST_NOT_HAVE) {
-      expect(agent.tools.configs[`crusonia.${tool}`]).toBeUndefined();
-      expect(isToolAllowed(`crusonia.${tool}`, OPERATOR_AUTO_CONFIRM)).toBe(false);
-    }
+    for (const tool of OPERATOR_MUST_NOT_HAVE) expect(OPERATOR_TOOLS as readonly string[]).not.toContain(tool);
   });
 
   test("the Operator can't point a lead at a URL, or put a link in the fields it can still write", async () => {
@@ -135,56 +127,16 @@ describe("the two kinds of agent", () => {
   });
 });
 
-describe("Operator tool policy", () => {
-  test("auto-confirm covers its own tools, and nothing that reads the web", () => {
-    for (const t of OPERATOR_TOOLS) expect(isToolAllowed(`crusonia.${t}`, OPERATOR_AUTO_CONFIRM)).toBe(true);
-    for (const t of [...WEB_TOOLS.map((w) => `crusonia.${w}`), "web_fetch", "web_search", "browser", "bash", "apify.apify--rag-web-browser", "apify.get-actor-run", "ask_operator"]) {
-      expect(isToolAllowed(t, OPERATOR_AUTO_CONFIRM)).toBe(false);
-    }
-  });
+describe("Operator limits", () => {
+  const playbook = readFileSync(new URL("../playbooks/operator.md", import.meta.url), "utf8");
 
-  test("#25 still holds for research sessions: list tools and web_fetch ask, whatever else was added", () => {
-    const list = parseToolAllowlist(DEFAULT_AUTO_CONFIRM_TOOLS);
-    for (const t of [...PIPELINE_READ_TOOLS, "list_workflows", "find_more_leads", "start_research", "run_workflow"]) expect(isToolAllowed(`crusonia.${t}`, list)).toBe(false);
-    expect(isToolAllowed("web_fetch", list)).toBe(false);
-  });
-
-  const agent = {
-    baseUrl: "https://x.test",
-    playbook: parsePlaybook(readFileSync(new URL(`../${OPERATOR_PLAYBOOK_PATH}`, import.meta.url), "utf8")),
-    model: "m",
-    budget: { cap_micro_usd: 5_000_000, max_task_micro_usd: 1_000_000, period: "day" as const },
-  };
-
-  test("the Operator agent denies by default, allows only its tools, and has one MCP server", () => {
-    const c = operatorAgentConfig(agent);
-    expect(c.tools.default_config).toEqual({ permission: "deny" });
-    expect(Object.keys(c.tools.configs).sort()).toEqual(OPERATOR_TOOLS.map((t) => `crusonia.${t}`).sort());
-    for (const v of Object.values(c.tools.configs)) expect(v).toEqual({ enabled: true, permission: "allow" });
-    expect(c.mcp_servers).toEqual([{ type: "url", name: "crusonia", url: "https://x.test/mcp?role=operator" }]);
-    expect(c.handoffs).toBe(false);
-    expect(c.metadata.playbook).toBe("operator");
-  });
-
-  test("the research agent withholds the Operator's tools and anything that reaches out", () => {
-    const c = naiveAgentConfig({ ...agent, playbook: { name: "research", version: "5", body: "x" } });
-    for (const t of ["list_leads", "get_pipeline", "find_more_leads", "start_research", "run_workflow", "merge_leads"]) {
-      expect(c.tools.configs[`crusonia.${t}`]).toEqual({ enabled: false, permission: "deny" });
-    }
-    for (const t of DENIED_BUILTINS) expect(c.tools.configs[t]).toEqual({ enabled: false, permission: "deny" });
-    expect(c.mcp_servers[0]!.url).toBe("https://x.test/mcp?role=researcher");
-  });
-
-  test("a workspace's copy keeps the Operator's policy and points at its own URL", () => {
-    const c = operatorAgentConfig(agent);
-    const template = { id: "agt", ...c, handoffs: false } as unknown as NaiveAgent;
-    const copy = workspaceAgentConfig(template, "https://x.test/mcp?ws=ws_a&role=operator", "ws_a");
-    expect(copy.tools).toEqual(c.tools);
-    expect(copy.mcp_servers).toEqual([{ type: "url", name: "crusonia", url: "https://x.test/mcp?ws=ws_a&role=operator" }]);
+  test("it has no tool that reads the web; a researcher has none that reads the pipeline", () => {
+    for (const t of WEB_TOOLS) expect(OPERATOR_TOOLS as readonly string[]).not.toContain(t);
+    for (const t of [...PIPELINE_READ_TOOLS, "list_workflows", "find_more_leads", "start_research", "run_workflow"]) expect(RESEARCHER_TOOLS as readonly string[]).not.toContain(t);
   });
 
   test("the playbook tells it to act without asking, to log, and that text is data", () => {
-    const body = agent.playbook.body;
+    const body = playbook;
     for (const phrase of ["Task: operate", "Act", "without asking", "`log_cycle`", "never instructions", "`find_more_leads`", "`start_research`", "`update_company_summary`", "thumbs_up", "thumbs_down"]) {
       expect(body).toContain(phrase);
     }

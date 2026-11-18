@@ -36,7 +36,7 @@ tasks.post("/:id/skip", async (c) => {
   return c.json(await skipTask(sqlFor(c.env), wsOf(c), c.req.param("id"), body, actorOf(c.get("principal"))));
 });
 
-// The agent writes a new version (a paid Naive session). Follow it in GET /api/workflows (purpose redraft); the new
+// The agent writes a new version (a paid agent run). Follow it in GET /api/workflows (purpose redraft); the new
 // version supersedes this task when it lands.
 const RegenerateBody = z.object({ instructions: z.string().trim().min(1).max(2000).optional() }).strict();
 

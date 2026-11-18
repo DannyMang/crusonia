@@ -1,7 +1,7 @@
 // Workspace API keys ("Connect your agent"): `crs_live_` + 32 random bytes as hex. Only the SHA-256 of a
 // key is stored; the full key is returned once, at creation. A key authenticates /mcp and /api for its own
-// workspace only. Kind 'user' keys are listed and revoked in the app; the 'agent' key of a workspace's Naive agent
-// lives only in the Naive vault (src/services/naive-agents.ts) and is managed by Crusonia.
+// workspace only. Kind 'user' keys are listed and revoked in the app; 'agent' and 'operator' keys are the ones
+// an agent holds: they work on /mcp only, with that role's tools.
 import type { Sql } from "../db.ts";
 import { newId } from "../ids.ts";
 import { sha256, toHex } from "../lib/crypto.ts";
@@ -24,7 +24,7 @@ export type ApiKey = {
   status: "active" | "revoked";
 };
 
-/** 'agent': a workspace's research agent. 'operator': its Operator agent (src/mcp/toolsets.ts). Both live in the Naive vault. */
+/** 'agent': a workspace's research agent. 'operator': its Operator agent (src/mcp/toolsets.ts). Both work on /mcp only. */
 export type ApiKeyKind = "user" | "agent" | "operator";
 export type ApiKeyIdentity = { id: string; name: string; workspace_id: string; kind: ApiKeyKind };
 export type ApiKeyLookup = (token: string) => Promise<ApiKeyIdentity | null>;
@@ -43,7 +43,7 @@ export async function generateApiKey(): Promise<{ key: string; prefix: string; h
 const COLUMNS = (sql: Sql) => sql`id, name, prefix, created_at, last_used_at, revoked_at,
   case when revoked_at is null then 'active' else 'revoked' end as status`;
 
-/** The workspace's user keys (the Naive agent's key is not listed: Crusonia manages it). */
+/** The workspace's user keys. */
 export async function listApiKeys(sql: Sql, ws: string): Promise<ApiKey[]> {
   return (await sql`select ${COLUMNS(sql)} from api_keys where workspace_id = ${ws} and kind = 'user'
                     order by created_at desc, id desc limit 200`) as ApiKey[];

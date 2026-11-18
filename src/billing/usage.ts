@@ -1,4 +1,4 @@
-// Metered usage: a finished Naive session debits its reported spend (agent_runs.consumed_micro_usd) times
+// Metered usage: a finished agent run debits its reported model spend (agent_runs.consumed_micro_usd) times
 // the markup in src/billing/plans.ts, from the workspace that started it (a session with billing_owner_id set is
 // billable; it holds the workspace id, or the legacy owner id for older sessions). Idempotent per session: the debit
 // is the difference between what the spend is worth now and what was already debited for the session, written
@@ -7,7 +7,6 @@
 import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import type { FetchFn } from "../providers/http.ts";
-import { NaiveClient } from "../providers/naive.ts";
 import { getActorRun, TERMINAL_RUN_STATUSES, type ApifyMeter, type ApifyRun } from "../services/apify.ts";
 import { creditsSql } from "./credits-sql.ts";
 import { USAGE_MARKUP_BPS } from "./plans.ts";
@@ -45,28 +44,8 @@ export async function settleSessionUsage(sql: Sql, sessionId: string): Promise<n
   return credits;
 }
 
-/**
- * Cron step: fill in the spend of finished billable sessions that never reported it (a free Naive read), then
- * settle every finished billable session that still owes credits (missed or failed debits, later spend).
- */
-export async function settleUsage(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<number> {
-  if (env.NAIVE_API_KEY) {
-    const missing = await sql`
-      select id from agent_runs
-      where billing_owner_id is not null and status in ('done', 'error') and consumed_micro_usd is null
-        and updated_at > now() - interval '1 day'
-      order by updated_at limit 5`;
-    const client = new NaiveClient(env.NAIVE_API_KEY, fetchFn);
-    for (const { id } of missing) {
-      try {
-        const remote = await client.getSession(id as string);
-        const consumed = typeof remote.consumed_micro_usd === "number" ? Math.round(remote.consumed_micro_usd) : 0;
-        await sql`update agent_runs set consumed_micro_usd = greatest(coalesce(consumed_micro_usd, 0), ${consumed}::bigint) where id = ${id}`;
-      } catch (err) {
-        console.error(`usage backfill ${id}:`, err instanceof Error ? err.message : err);
-      }
-    }
-  }
+/** Cron step: settle every finished billable run that still owes credits (missed or failed debits, later spend). */
+export async function settleUsage(sql: Sql): Promise<number> {
   const owing = await sql`
     select s.id from agent_runs s
     where s.billing_owner_id is not null and s.status in ('done', 'error') and s.consumed_micro_usd > 0
@@ -88,11 +67,11 @@ export async function settleUsage(sql: Sql, env: Env, fetchFn?: FetchFn): Promis
 // ---------- Apify ----------
 //
 // Every Actor run we start is recorded in apify_runs when it starts and when it ends (runActor's meter), then
-// debited: usageTotalUsd x the same markup as Naive spend, rounded up to whole credits. The ledger source
+// debited: usageTotalUsd x the same markup as agent spend, rounded up to whole credits. The ledger source
 // `apify:<run id>:<total credits>` and `apify_runs.debited_credits` (updated in the same statement, under a per-run
 // advisory lock) make it idempotent: settling twice writes nothing, and a usage figure that grew later (Apify
 // finalizes usage shortly after a run ends) writes only the difference. Apify rows never set credit_ledger.session_id,
-// which is what a Naive session's own debit is summed by.
+// which is what an agent run's own debit is summed by.
 
 const usd = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v * 1_000_000) : null);
 
@@ -156,7 +135,7 @@ export async function settleApifyRun(sql: Sql, runId: string): Promise<number> {
 
 /**
  * The meter handed to runActor: records the run (in `workspaceId`, which pays) when it starts and when it ends, and
- * debits it once it ended. `sessionId` may be a function, resolved once on the first run (MCP calls look the Naive
+ * debits it once it ended. `sessionId` may be a function, resolved once on the first run (MCP calls look the agent
  * session up lazily).
  */
 export function apifyMeter(

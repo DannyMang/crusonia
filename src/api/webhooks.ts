@@ -1,7 +1,7 @@
 // Provider webhooks. Not behind /api auth: each request is authenticated by its signature over the raw
 // body (checked before anything else, including the database), then deduped by the provider's event id.
 // Each event maps back to one workspace through the row it is about: AgentMail through the draft or thread
-// (src/services/inbound.ts), Naive through the session, Stripe through the customer (src/billing/webhook.ts).
+// (src/services/inbound.ts), Stripe through the customer (src/billing/webhook.ts).
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
@@ -9,11 +9,9 @@ import type { Env } from "../env.ts";
 import { sqlFor } from "../lib/context.ts";
 import { errorBody } from "../lib/errors.ts";
 import { handleStripeEvent, StripeEventSchema } from "../billing/webhook.ts";
-import { verifyNaive, verifyStripe, verifySvix } from "../lib/signatures.ts";
+import { verifyStripe, verifySvix } from "../lib/signatures.ts";
 import { AgentMailEventSchema, handleAgentMailEvent } from "../services/inbound.ts";
 import { claimWebhookEvent, releaseWebhookEvent } from "../services/webhook-events.ts";
-import { handleSessionIdle } from "../services/workflows.ts";
-import { OWNER_WORKSPACE_ID } from "../services/workspaces.ts";
 
 export const webhooks = new Hono<{ Bindings: Env }>();
 
@@ -59,50 +57,6 @@ webhooks.post("/agentmail", async (c) => {
     await releaseWebhookEvent(sql, event.event_id).catch(() => {});
     throw err;
   }
-});
-
-const NaiveDelivery = z.looseObject({
-  id: z.string().min(1),
-  type: z.string(),
-  created_at: z.string().optional(),
-  data: z.looseObject({ session_id: z.string().optional(), stop_reason: z.string().nullish() }).optional(),
-});
-
-// Naive (vetta.sh): session.idle, budget.exceeded, webhook.test. Answers fast; the work runs in waitUntil.
-// If that work fails, the session row stays 'running' and the minute cron reconciles it from the events API.
-webhooks.post("/naive", async (c) => {
-  const secret = c.env.NAIVE_WEBHOOK_SECRET;
-  if (!secret) return c.json(errorBody("not_configured", "NAIVE_WEBHOOK_SECRET is not set"), 503);
-  const raw = await c.req.text();
-  const verified = await verifyNaive({
-    secret,
-    signature: c.req.header("vetta-signature"),
-    timestamp: c.req.header("vetta-timestamp"),
-    body: raw,
-    now: nowSeconds(),
-  });
-  if (!verified.ok) return c.json(errorBody("invalid_signature", verified.reason), 401);
-  const delivery = parseBody(c, raw, NaiveDelivery);
-  if (delivery instanceof Response) return delivery;
-
-  const sql = sqlFor(c.env);
-  if (!(await claimWebhookEvent(sql, "naive", delivery.id))) return c.json({ ok: true, duplicate: true });
-
-  const sessionId = delivery.data?.session_id;
-  if (delivery.type === "session.idle" && sessionId) {
-    c.executionCtx.waitUntil(
-      handleSessionIdle(sql, c.env, { sessionId, stopReason: delivery.data?.stop_reason }).catch((err) =>
-        console.error(`naive idle ${sessionId}:`, err instanceof Error ? err.message : err),
-      ),
-    );
-  } else {
-    // The session's workspace (deliveries for sessions we don't know are audited in the owner workspace).
-    await sql`insert into events (workspace_id, lead_id, kind, data)
-              values (coalesce((select workspace_id from agent_runs where id = ${sessionId ?? null}), ${OWNER_WORKSPACE_ID}),
-                      (select lead_id from agent_runs where id = ${sessionId ?? null}), 'naive_webhook',
-                      ${JSON.stringify({ type: delivery.type, session_id: sessionId ?? null })}::jsonb)`;
-  }
-  return c.json({ ok: true });
 });
 
 // Stripe (Crusonia's own account): checkout, invoices, subscriptions, refunds -> billing accounts and the credit

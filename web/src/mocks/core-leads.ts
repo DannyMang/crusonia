@@ -233,7 +233,7 @@ function findRun(sessionId: string): FindRun {
       name: "Find leads",
       purpose: "find_leads",
       status: fresh ? "running" : "done",
-      stop_reason: fresh ? null : "end_turn",
+      stop_reason: fresh ? null : "finished",
       lead_id: null,
       input: { count: 5 },
       started_at: started,
@@ -374,7 +374,7 @@ function trace(sessionId: string): Trace {
     { seq: 5, type: "agent.tool_result", data: { name: "search_web", output: "2 results" }, created_at: at(15) },
     { seq: 6, type: "agent.tool_use", data: { name: "save_research", args: { lead_id: "lead_tess", evidence: 4, score: 81, qualified: null } }, created_at: at(44) },
     { seq: 7, type: "agent.message", data: { text: "Scored 81 with stage unclear (Series B), so I sent it for review instead of drafting." }, created_at: at(52) },
-    { seq: 8, type: "session.status_idle", data: { stop_reason: "end_turn" }, created_at: at(52) },
+    { seq: 8, type: "run.finished", data: { stop_reason: "finished" }, created_at: at(52) },
   ];
   return {
     run: {
@@ -383,7 +383,7 @@ function trace(sessionId: string): Trace {
       name: "Lead research",
       purpose: "research",
       status: "done",
-      stop_reason: "end_turn",
+      stop_reason: "finished",
       lead_id: "lead_tess",
       input: {},
       started_at: at(0),
@@ -398,9 +398,8 @@ function trace(sessionId: string): Trace {
     next_after_seq: null,
     audit: [{ id: "9001", lead_id: "lead_tess", kind: "lead_scored", data: { score: 81, session_id: sessionId }, created_at: at(44) }],
     approvals: [],
-    spend: { naive_usd: 0.31, credits_debited: 62, credits: 62, apify_runs: [{ run_id: "apr_1", actor: "apify/web-search", status: "SUCCEEDED", usage_usd: 0.005 }] },
+    spend: { agent_usd: 0.31, credits_debited: 62, credits: 62, apify_runs: [{ run_id: "apr_1", actor: "apify/web-search", status: "SUCCEEDED", usage_usd: 0.005 }] },
     retention_days: 180,
-    sync: { ok: true, complete: true },
   };
 }
 
@@ -443,7 +442,7 @@ function researchRun(id: string): WorkflowRun | undefined {
       name: "Lead research",
       purpose: "research",
       status: "done",
-      stop_reason: "end_turn",
+      stop_reason: "finished",
       lead_id: r.lead,
       input: {},
       started_at: at(0),
@@ -453,10 +452,9 @@ function researchRun(id: string): WorkflowRun | undefined {
       cost_usd: r.cost,
       cost_credits: r.cost === null || r.cost === undefined ? null : Math.ceil(r.cost * 200),
     },
-    steps: r.lines.map(([type, tool, summary], i): RunStep => ({ seq: i + 1, type, ...(tool ? { tool } : {}), summary, started_at: at(i * 14), source: type === "crusonia" ? "crusonia" : "naive" })),
+    steps: r.lines.map(([type, tool, summary], i): RunStep => ({ seq: i + 1, type, ...(tool ? { tool } : {}), summary, started_at: at(i * 14), source: type === "crusonia" ? "crusonia" : "agent" })),
     lead: lead ? { id: lead.id, email: null, name: lead.name, title: lead.title, company: lead.company, domain: lead.domain, stage: lead.stage, score: lead.score, qualified: lead.qualified, has_consent: false } : null,
     approvals: [],
-    sync: { ok: true, skipped: "cache is current" },
   };
 }
 
@@ -469,7 +467,7 @@ const allLeadIds = () => new Set([...findSampleLeads.map((l) => l.id), ...Object
 export const coreLeadHandlers = [
   // Find runs (shape asked of the backend). Registered before leads.ts so these win.
   http.post("/api/leads/find", async ({ request }) => {
-    if (scenario() !== "sample") return fail(503, "not_configured", "The Naive agent is not configured: NAIVE_AGENT_ID is not set");
+    if (scenario() !== "sample") return fail(503, "not_configured", "The agent is not set up yet");
     const b = await body<{ count?: number; like_lead_id?: string }>(request);
     const id = `ses_find_${Date.now()}`;
     findRuns.set(id, { started_at: new Date().toISOString(), like: b.like_lead_id });
@@ -526,7 +524,7 @@ export const coreLeadHandlers = [
   }),
 
   http.post("/api/workflows/research", async ({ request }) => {
-    if (scenario() !== "sample") return fail(503, "not_configured", "NAIVE_AGENT_ID is not set");
+    if (scenario() !== "sample") return fail(503, "not_configured", "The agent is not set up yet");
     const { lead_ids = [] } = await body<{ lead_ids?: string[] }>(request);
     for (const id of lead_ids) leadOverrides.set(id, { ...leadOverrides.get(id), stage: "researching" });
     return ok({ started: lead_ids.map((lead_id) => ({ lead_id, session_id: `ses_rr_${Date.now()}` })), skipped: [] }, 202);

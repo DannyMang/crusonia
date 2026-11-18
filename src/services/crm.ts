@@ -79,7 +79,7 @@ export async function searchLeads(sql: Sql, ws: string, f: LeadFilters) {
 
 // ---------- detail ----------
 
-/** The shared detail (lead, evidence, drafts, approvals) plus messages, Naive sessions and the timeline. */
+/** The shared detail (lead, evidence, drafts, approvals) plus messages, agent runs and the timeline. */
 export async function getLeadFull(sql: Sql, ws: string, id: string) {
   const detail = await getLeadDetail(sql, ws, id);
   const [lookalikes, messages, sessions, timeline] = await sql.transaction(

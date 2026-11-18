@@ -1,8 +1,8 @@
 // Routes a person must call themselves. API keys (`crs_live_...`) are handed to agents (Claude Code, Cursor, Codex,
-// Naive), and an agent with a shell can call /api directly, not only the MCP tools. So "no MCP tool sends or decides
+// Grok), and an agent with a shell can call /api directly, not only the MCP tools. So "no MCP tool sends or decides
 // an approval" holds only if the REST routes that do those things refuse API keys too. These routes accept a Clerk
 // session (the web app) or MCP_TOKEN (the owner's own token; local dev without Clerk), and answer 403 to an API key:
-//   - deciding approvals: approve (sends email), reject, edit, answer (allows tools, answers agent questions)
+//   - deciding approvals: approve (sends email), reject, edit
 //   - minting and revoking API keys (an agent must not create a key that outlives its own)
 //   - granting or changing consent on a lead (consent is what allows email at all)
 //   - removing an address from the do-not-contact list

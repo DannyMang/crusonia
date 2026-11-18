@@ -11,7 +11,7 @@ import { checkChannel, citationProblems, openUrl, taskTitle, type ChannelLead } 
 import { draftInputSchema } from "../src/services/drafts.ts";
 import { normalizeDomain, registrableDomain, whyNoDomain } from "../src/services/domains.ts";
 import { leadInputSchema, linkKind, renumberCitations, researchInputSchema } from "../src/services/leads.ts";
-import { buildSteps, findLeadsMessage, findStatusesFromEvents, type AuditEvent, type StoredEvent } from "../src/services/runs.ts";
+import { findLeadsMessage, findStatusesFromEvents, type StoredEvent } from "../src/services/runs.ts";
 import { missingEvidenceQuestion, missingRequirements, qualificationWorkflowSchema, workflowBrief } from "../src/services/qualification.ts";
 import { LANDING_LINES, siteCopy } from "../src/services/site-copy.ts";
 import { researchMessage } from "../src/services/workflows.ts";
@@ -165,64 +165,6 @@ describe("summary funnel", () => {
       replied: 1,
       meetings: 1,
     });
-  });
-});
-
-describe("run timeline folding (shaped like the first production run)", () => {
-  const t = (ms: number) => new Date(Date.UTC(2026, 10, 8, 3, 56, 0, ms)).toISOString();
-  const waiting = (name: string) => `${name} is waiting for approval`;
-  // get_profile is parked on a confirmation, auto-allowed by policy, then runs; read_website waits for the owner;
-  // a model request is stored with an earlier timestamp than the event before it.
-  const events: StoredEvent[] = [
-    { seq: 1, type: "message.accepted", data: {}, created_at: t(0) },
-    { seq: 2, type: "message.completed", data: { role: "user", content: "Research lead lead_1 for Crusonia." }, created_at: t(10) },
-    { seq: 4, type: "tool.started", data: { tool_call_id: "c1", name: "crusonia.get_profile", args: {} }, created_at: t(4000) },
-    { seq: 5, type: "tool.completed", data: { tool_call_id: "c1", name: "crusonia.get_profile", output: waiting("crusonia.get_profile"), is_error: true }, created_at: t(4000) },
-    { seq: 6, type: "span.model_request.end", data: { resolved_model: "openai/gpt-6.1-terra", token_usage: { input: 100 }, consumed_micro_usd: 48000 }, created_at: t(1000) },
-    { seq: 7, type: "tool.confirm", data: { tool_call_id: "c1", name: "crusonia.get_profile", args: {} }, created_at: t(4000) },
-    { seq: 8, type: "session.idle", data: { stop_reason: "awaiting_approval" }, created_at: t(5000) },
-    { seq: 9, type: "tool.confirm.resolved", data: { tool_call_id: "c1", decision: "allow" }, created_at: t(13000) },
-    { seq: 10, type: "session.running", data: {}, created_at: t(13000) },
-    { seq: 11, type: "tool.started", data: { tool_call_id: "c1", name: "crusonia.get_profile", args: {} }, created_at: t(17000) },
-    { seq: 12, type: "tool.completed", data: { tool_call_id: "c1", name: "crusonia.get_profile", output: '{"profile":{}}', is_error: false }, created_at: t(17200) },
-    { seq: 13, type: "tool.started", data: { tool_call_id: "c2", name: "crusonia.read_website", args: { url: "https://acme.com" } }, created_at: t(20000) },
-    { seq: 14, type: "tool.completed", data: { tool_call_id: "c2", name: "crusonia.read_website", output: [{ type: "text", text: waiting("crusonia.read_website") }], is_error: true }, created_at: t(20000) },
-    { seq: 15, type: "tool.confirm", data: { tool_call_id: "c2", name: "crusonia.read_website", args: { url: "https://acme.com" } }, created_at: t(20000) },
-    { seq: 16, type: "session.idle", data: { stop_reason: "awaiting_approval" }, created_at: t(21000) },
-  ];
-  const audit: AuditEvent[] = [
-    { id: 1, kind: "research_started", data: { session_id: "s" }, created_at: t(500) },
-    { id: 2, kind: "naive_tool_auto_allowed", data: { session_id: "s", tool: "crusonia.get_profile", tool_call_id: "c1" }, created_at: t(12900) },
-    { id: 3, kind: "naive_idle", data: { session_id: "s", stop_reason: "awaiting_approval", auto_allowed: 1 }, created_at: t(12950) },
-    { id: 4, kind: "approval_requested", data: { session_id: "s", code: "ABCD", tool: "crusonia.read_website" }, created_at: t(22000) },
-  ];
-
-  test("a confirmed call is one step: no fake failure, no auto-allow noise, no policy-only pause", () => {
-    const steps = buildSteps(events, audit, [{ code: "ABCD", kind: "tool", status: "pending", tool_call_id: "c2", decided_via: null }]);
-    expect(steps.map((s) => `${s.type}:${s.summary}`)).toEqual([
-      "message:Instruction: Research lead lead_1 for Crusonia.",
-      "crusonia:Research started",
-      "model:openai/gpt-6.1-terra: 100 tokens",
-      "tool:get_profile",
-      "approval:Needs approval: read_website (https://acme.com)",
-      "status:Waiting for the owner to approve a tool call",
-      "crusonia:Approval ABCD requested for crusonia.read_website",
-    ]);
-    const profile = steps.find((s) => s.tool === "get_profile")!;
-    expect(profile).toMatchObject({ is_error: false, duration_ms: 200, output: '{"profile":{}}', approval: { decision: "allow", via: "policy", waited_ms: 13000 } });
-    expect(steps.some((s) => s.summary.includes("(failed)"))).toBe(false);
-    expect(steps.map((s) => s.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    const times = steps.map((s) => Date.parse(s.started_at!));
-    expect([...times].sort((a, b) => a - b)).toEqual(times);
-  });
-
-  test("an owner decision stays visible on the step, and a denial reads as denied", () => {
-    const decided = [
-      ...events,
-      { seq: 17, type: "tool.confirm.resolved", data: { tool_call_id: "c2", decision: "deny" }, created_at: t(30000) },
-    ];
-    const steps = buildSteps(decided, audit, [{ code: "ABCD", kind: "tool", status: "rejected", tool_call_id: "c2", decided_via: "api" }]);
-    expect(steps.find((s) => s.tool === "read_website")).toMatchObject({ type: "tool", summary: "read_website: https://acme.com (denied)", is_error: true, approval: { via: "owner", code: "ABCD" } });
   });
 });
 
@@ -425,27 +367,5 @@ describe("lead finding", () => {
     expect(msg).toContain("companies like lead lead_abc");
     expect(msg).toContain("get_lead");
     expect(findLeadsMessage(10, summary, "run_plain")).not.toContain("companies like");
-  });
-});
-
-describe("buildSteps: a parked call that ran under another id", () => {
-  const ev = (seq: number, type: string, data: Record<string, unknown>) => ({ seq, type, data, created_at: `2026-11-08T15:23:${String(seq).padStart(2, "0")}Z` });
-  const events = [
-    ev(1, "tool.started", { name: "crusonia.create_draft", tool_call_id: "a", args: { lead_id: "lead_1" } }),
-    ev(2, "tool.completed", { name: "crusonia.create_draft", tool_call_id: "a", is_error: true, output: "crusonia.create_draft is waiting for approval" }),
-    ev(3, "session.idle", { stop_reason: "awaiting_approval" }),
-    ev(4, "tool.started", { name: "crusonia.create_draft", tool_call_id: "b", args: { lead_id: "lead_1" } }),
-    ev(5, "tool.completed", { name: "crusonia.create_draft", tool_call_id: "b", output: "{\"ok\":true}" }),
-  ];
-  test("shows one step, and no wait for the owner", () => {
-    const steps = buildSteps(events, [{ id: 1, kind: "naive_tool_auto_allowed", data: { tool_call_id: "b" }, created_at: "2026-11-08T15:23:03Z" }]);
-    expect(steps.filter((s) => s.tool === "create_draft")).toHaveLength(1);
-    expect(steps.some((s) => /Needs approval|Waiting for the owner/.test(s.summary))).toBe(false);
-  });
-  test("a call really waiting on the owner still says so", () => {
-    const parked = events.slice(0, 3);
-    const steps = buildSteps(parked, [], [{ code: "ABCD", kind: "tool", tool_call_id: "a", status: "pending", decided_via: null } as never]);
-    expect(steps.some((s) => s.summary.startsWith("Needs approval"))).toBe(true);
-    expect(steps.some((s) => s.summary === "Waiting for the owner to approve a tool call")).toBe(true);
   });
 });

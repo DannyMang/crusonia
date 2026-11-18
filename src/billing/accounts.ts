@@ -18,7 +18,7 @@ export const creditsEnforcedFor = (env: Env, ws: string) => !isOwnerWorkspace(ws
 
 /**
  * Whether people can pay here: a live Stripe key, or any key on an instance marked as a test instance. With a test key on
- * a public instance, card 4242 would buy credits that spend real Naive and Apify money. A key whose mode can't be read
+ * a public instance, card 4242 would buy credits that spend real model and Apify money. A key whose mode can't be read
  * doesn't count as live.
  */
 export const paymentsLive = (env: Env) =>

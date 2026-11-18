@@ -72,7 +72,7 @@ describe("plans", () => {
   });
 
   test("usage is debited at 2x provider cost, rounded up to whole credits", () => {
-    expect(creditsForUsage(300_000)).toBe(60); // $0.30 of Naive spend -> 60 credits ($0.60)
+    expect(creditsForUsage(300_000)).toBe(60); // $0.30 of agent spend -> 60 credits ($0.60)
     expect(creditsForUsage(1_000_000)).toBe(200); // the $1 per-session cap -> 200 credits
     expect(creditsForUsage(1)).toBe(1);
     expect(creditsForUsage(4_999)).toBe(1);
@@ -393,7 +393,7 @@ describe("enforcement (402 insufficient_credits)", () => {
   });
 
   test("routes: with enforcement on, MCP_TOKEN still gets past the gate (to the missing database)", async () => {
-    const on = env({ BILLING_ENFORCED: "true", NAIVE_API_KEY: "nv", NAIVE_AGENT_ID: "agt" });
+    const on = env({ BILLING_ENFORCED: "true" });
     const post = (path: string, body: unknown) =>
       call(path, { method: "POST", headers: { Authorization: "Bearer owner-token", "Content-Type": "application/json" }, body: JSON.stringify(body) }, on);
     for (const [path, body] of [

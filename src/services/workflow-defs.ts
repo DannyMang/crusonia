@@ -47,9 +47,9 @@ export type WorkflowStep = z.infer<typeof stepSchema>;
 /** A new definition's steps when none are given: what a run actually does. */
 export const DEFAULT_STEPS: WorkflowStep[] = [
   { id: "trigger", kind: "trigger", title: "CSV import", next: ["research"] },
-  { id: "research", kind: "research", title: "Research each lead", provider: "naive", next: ["qualified"] },
+  { id: "research", kind: "research", title: "Research each lead", provider: "agent", next: ["qualified"] },
   { id: "qualified", kind: "condition", title: "Qualified, with every required evidence item?", next: ["draft", "end"] },
-  { id: "draft", kind: "draft", title: "Draft the first message", provider: "naive", branch: "yes", next: ["approval"] },
+  { id: "draft", kind: "draft", title: "Draft the first message", provider: "agent", branch: "yes", next: ["approval"] },
   { id: "approval", kind: "approval", title: "Owner approves the exact draft", next: ["send"] },
   { id: "send", kind: "send", title: "Send with AgentMail", provider: "agentmail", next: ["sync_crm"] },
   { id: "sync_crm", kind: "sync_crm", title: "Update HubSpot after a reply", provider: "hubspot", next: ["end"] },
@@ -385,18 +385,18 @@ async function statsFor(sql: Sql, ids: string[]): Promise<Map<string, DefStats>>
     )
     select d.id as workflow_id,
       (select count(*)::int from agent_runs s join workflow_runs r on r.id = s.workflow_run_id
-        where r.workflow_id = d.id and s.status in ('running', 'idle')) as running,
+        where r.workflow_id = d.id and s.status in ('queued', 'running')) as running,
       (select count(*)::int from approvals a join drafts dr on dr.id = a.draft_id
         where dr.workflow_id = d.id and a.kind = 'send' and a.status = 'pending' and a.expires_at > now()) as waiting_drafts,
       (select count(*)::int from workflow_run_leads rl join leads l on l.id = rl.lead_id
         where rl.run_id = last.id and l.stage in ('new', 'no_consent', 'researching')
-          and not exists (select 1 from agent_runs s where s.lead_id = l.id and s.status in ('running', 'idle'))) as remaining,
+          and not exists (select 1 from agent_runs s where s.lead_id = l.id and s.status in ('queued', 'running'))) as remaining,
       (select coalesce(sum(x.micro), 0) from spend x where x.workflow_id = d.id and x.created_at > now() - interval '7 days') as spend_week_micro,
       (select coalesce(sum(x.micro), 0) from spend x where x.run_id = last.id) as spend_last_run_micro,
       (select coalesce(sum(${creditsSql(sql, "x.micro")}), 0) from spend x where x.workflow_id = d.id and x.created_at > now() - interval '7 days') as spend_week_credits,
       (select coalesce(sum(${creditsSql(sql, "x.micro")}), 0) from spend x where x.run_id = last.id) as spend_last_run_credits,
       last.id as last_run_id, last.started_at as last_run_started_at, last.test as last_run_test,
-      (select count(*)::int from agent_runs s where s.workflow_run_id = last.id and s.status in ('running', 'idle')) as last_run_running,
+      (select count(*)::int from agent_runs s where s.workflow_run_id = last.id and s.status in ('queued', 'running')) as last_run_running,
       (select count(*)::int from agent_runs s where s.workflow_run_id = last.id and s.status = 'error') as last_run_errors,
       (select count(*)::int from agent_runs s where s.workflow_run_id = last.id) as last_run_sessions,
       (select count(*)::int from workflow_run_leads rl where rl.run_id = last.id and rl.status in ('started', 'found', 'queued')) as last_run_found,
