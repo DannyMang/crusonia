@@ -179,7 +179,7 @@ export async function resolveTool(deps: Deps, approval: ApprovalRow, decision: T
     throw providerFailure(err);
   }
   await sql.transaction([
-    sql`update naive_sessions set status = 'running', updated_at = now() where workspace_id = ${ws} and id = ${approval.naive_session_id}`,
+    sql`update agent_runs set status = 'running', updated_at = now() where workspace_id = ${ws} and id = ${approval.naive_session_id}`,
     eventRow(sql, ws, approval.lead_id, "naive_tool_decided", {
       via,
       code: approval.code,
@@ -221,7 +221,7 @@ export async function answerQuestion(deps: Deps, approval: ApprovalRow, answers:
     throw providerFailure(err);
   }
   await sql.transaction([
-    sql`update naive_sessions set status = 'running', updated_at = now() where workspace_id = ${ws} and id = ${approval.naive_session_id}`,
+    sql`update agent_runs set status = 'running', updated_at = now() where workspace_id = ${ws} and id = ${approval.naive_session_id}`,
     eventRow(sql, ws, approval.lead_id, "naive_question_answered", { via, code: approval.code, session_id: approval.naive_session_id, actor }),
   ]);
   return { approval: claimed[0] as ApprovalRow };

@@ -430,11 +430,11 @@ suite("billing (database, faked Stripe and Naive)", () => {
   test("usage: a finished session is debited once at 2x its spend, topped up if it spends more, safe under concurrency", async () => {
     const o = owner("usage");
     const s = sid("usage");
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, consumed_micro_usd, billing_owner_id) values (${s}, ${o}, 'research', 'done', 300000, ${o})`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, consumed_micro_usd, billing_owner_id) values (${s}, ${o}, 'research', 'done', 300000, ${o})`;
     expect(await settleSessionUsage(sql, s)).toBe(60);
     expect(await settleSessionUsage(sql, s)).toBe(0);
     expect((await Promise.all(Array.from({ length: 5 }, () => settleSessionUsage(sql, s)))).reduce((a, b) => a + b, 0)).toBe(0);
-    await sql`update naive_sessions set consumed_micro_usd = 450000 where id = ${s}`;
+    await sql`update agent_runs set consumed_micro_usd = 450000 where id = ${s}`;
     expect((await Promise.all(Array.from({ length: 4 }, () => settleSessionUsage(sql, s)))).reduce((a, b) => a + b, 0)).toBe(30);
     expect((await ledger(o)).map((r) => [r.amount, r.source])).toEqual([
       [-60, `usage:${s}`],
@@ -442,7 +442,7 @@ suite("billing (database, faked Stripe and Naive)", () => {
     ]);
 
     // Not billed: no billing owner (started before billing), still running, or no spend.
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, consumed_micro_usd, billing_owner_id) values
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, consumed_micro_usd, billing_owner_id) values
       (${sid("legacy")}, ${o}, 'research', 'done', 300000, null),
       (${sid("running")}, ${o}, 'research', 'running', 300000, ${o}),
       (${sid("free")}, ${o}, 'research', 'done', 0, ${o})`;
@@ -452,7 +452,7 @@ suite("billing (database, faked Stripe and Naive)", () => {
   test("a session that finishes through handleSessionIdle is debited from its reported spend", async () => {
     const o = owner("idle");
     const s = sid("idle");
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, billing_owner_id) values (${s}, ${o}, 'onboarding', 'running', ${o})`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, billing_owner_id) values (${s}, ${o}, 'onboarding', 'running', ${o})`;
     const naive: FetchFn = async (u) =>
       u.endsWith(`/v1/sessions/${s}`)
         ? new Response(JSON.stringify({ id: s, status: "completed", stop_reason: "end_turn", pending_actions: [], consumed_micro_usd: 123_457 }))
@@ -465,7 +465,7 @@ suite("billing (database, faked Stripe and Naive)", () => {
   test("the cron fills in unreported spend and debits sessions that still owe", async () => {
     const o = owner("cron");
     const s = sid("cron");
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, billing_owner_id) values (${s}, ${o}, 'find_leads', 'done', ${o})`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, billing_owner_id) values (${s}, ${o}, 'find_leads', 'done', ${o})`;
     const naive: FetchFn = async (u) =>
       u.includes(`/v1/sessions/${s}`)
         ? new Response(JSON.stringify({ id: s, status: "completed", consumed_micro_usd: 50_000 }))

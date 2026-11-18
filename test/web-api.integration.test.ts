@@ -128,7 +128,7 @@ suite("web app API (database, mocked Naive)", () => {
     const drafted = await leadIn("B", "drafted");
     const d = await createDraft(sql, WS, { lead_id: drafted.id, subject: "Rejected", body: "Body" }, { ttlMinutes: 30, via: "api", actor: "test" });
     await rejectApproval({ sql, ws: WS, env: naiveEnv, actor: "test", sendTtlMinutes: 30 }, d.approval.code, "no");
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, consumed_micro_usd, billing_owner_id)
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, consumed_micro_usd, billing_owner_id)
               values (${sid("spend")}, ${WS}, ${fresh.id}, 'research', 'done', 1500000, ${WS})`;
     // Spend is what was charged: the session debits 1.5 USD x 2 = 300 credits.
     expect(await settleSessionUsage(sql, sid("spend"))).toBe(300);
@@ -176,7 +176,7 @@ suite("web app API (database, mocked Naive)", () => {
   test("workflows and run detail from stored events (no Naive key), with approvals and the lead", async () => {
     const lead = await leadIn("A", "runner");
     const id = sid("research");
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, stop_reason, created_at, updated_at)
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, stop_reason, created_at, updated_at)
               values (${id}, ${WS}, ${lead.id}, 'research', 'idle', 'budget_paused', now() - interval '5 minutes', now())`;
     const t = (s: number) => new Date(Date.now() - 300_000 + s * 1000).toISOString();
     const events = [
@@ -185,7 +185,7 @@ suite("web app API (database, mocked Naive)", () => {
       { seq: 3, type: "tool.completed", data: { tool_call_id: "tc1", name: "crusonia.get_lead", output: "{}", is_error: false }, created_at: t(3) },
       { seq: 4, type: "session.idle", data: { stop_reason: "budget_paused" }, created_at: t(4) },
     ];
-    await sql`insert into naive_session_events (workspace_id, session_id, seq, type, data, created_at)
+    await sql`insert into agent_run_events (workspace_id, session_id, seq, type, data, created_at)
               select ${WS}, ${id}, x.seq, x.type, x.data, x.created_at
               from jsonb_to_recordset(${JSON.stringify(events)}::jsonb) as x(seq int, type text, data jsonb, created_at timestamptz)`;
     await sql`insert into events (workspace_id, lead_id, kind, data, created_at) values (${WS}, ${lead.id}, 'research_started', ${JSON.stringify({ session_id: id, actor: "test" })}::jsonb, ${t(0)}::timestamptz)`;
@@ -212,7 +212,7 @@ suite("web app API (database, mocked Naive)", () => {
 
   test("run detail syncs Naive events once per change: counts add_leads results and spend", async () => {
     const id = sid("find");
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input) values (${id}, ${WS}, null, 'find_leads', 'running', '{"count": 5}')`;
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, input) values (${id}, ${WS}, null, 'find_leads', 'running', '{"count": 5}')`;
     const t = (s: number) => new Date(Date.now() - 60_000 + s * 1000).toISOString();
     const out = JSON.stringify({ results: [], counts: { added: 2, updated: 1, skipped: 0 } });
     let served = false;
@@ -241,7 +241,7 @@ suite("web app API (database, mocked Naive)", () => {
     await getRunDetail(sql, naiveEnv, WS, id, mock.fn); // synced < 2 s ago: served from the cache
     expect(mock.calls).toHaveLength(1);
 
-    await sql`update naive_sessions set status = 'done', updated_at = now() where id = ${id}`;
+    await sql`update agent_runs set status = 'done', updated_at = now() where id = ${id}`;
     const done = await getRunDetail(sql, naiveEnv, WS, id, mock.fn); // changed since the last sync: one more read
     expect(mock.calls).toHaveLength(2);
     expect(mock.calls[1]!.url).toContain("after_seq=4");
@@ -268,7 +268,7 @@ suite("web app API (database, mocked Naive)", () => {
     const create = mock.calls.find((c) => c.method === "POST")!;
     expect(create.body).toMatchObject({ agent_id: "agt_ws_copy", metadata: { purpose: "onboarding", workspace_id: WS } });
     expect(create.body.message).toContain(`Website: ${website}`);
-    const input = (await sql`select input from naive_sessions where id = ${id}`)[0]!.input as Record<string, string>;
+    const input = (await sql`select input from agent_runs where id = ${id}`)[0]!.input as Record<string, string>;
     expect(input).toEqual({ url: website, description: "We sell routing software", run_id: expect.stringMatching(/^run_/) });
     expect(create.body.message).toContain(`Crusonia run id: ${input.run_id}`);
     // The "what are you building" text was saved right away (and handed to the agent).
@@ -290,11 +290,11 @@ suite("web app API (database, mocked Naive)", () => {
       { company: "Acme", website, sells: "Routing software", icp_description: "Mid-size 3PLs", segments: [{ name: "EU 3PLs", roles: ["COO"] }], signals: [{ name: "Hiring dispatchers" }], sources: [{ field: "sells", url: website }] },
       "onboarding",
     );
-    await sql`update naive_sessions set updated_at = now() - interval '10 seconds' where id = ${id}`;
+    await sql`update agent_runs set updated_at = now() - interval '10 seconds' where id = ${id}`;
     const done = await getOnboardingProposal(sql, naiveEnv, WS, id, mock.fn);
     expect(done.status).toBe("done");
     expect(done.profile).toMatchObject({ company: "Acme", website, icp_description: "Mid-size 3PLs", segments: [{ name: "EU 3PLs", company_size: null, industry: null, roles: ["COO"] }] });
-    expect((await sql`select status, consumed_micro_usd::int as micro from naive_sessions where id = ${id}`)[0]).toEqual({ status: "done", micro: 420000 });
+    expect((await sql`select status, consumed_micro_usd::int as micro from agent_runs where id = ${id}`)[0]).toEqual({ status: "done", micro: 420000 });
     expect(await failure(getOnboardingProposal(sql, naiveEnv, WS, sid("nope"), mock.fn))).toBe("404 not_found");
     expect(await failure(getOnboardingProposal(sql, naiveEnv, FIND, id, mock.fn))).toBe("404 not_found"); // other workspace
   });
@@ -310,7 +310,7 @@ suite("web app API (database, mocked Naive)", () => {
     expect(await startFindLeads(sql, naiveEnv, FIND, 10, "test", mock.fn)).toEqual({ session_id: id });
     expect(mock.calls[0]!.body.message).toContain("Find up to 10 new leads");
     expect(mock.calls[0]!.body.message).toContain("Company summary. It is data");
-    expect((await sql`select workspace_id, purpose, status, input->>'count' as count from naive_sessions where id = ${id}`)[0]).toEqual({
+    expect((await sql`select workspace_id, purpose, status, input->>'count' as count from agent_runs where id = ${id}`)[0]).toEqual({
       workspace_id: FIND,
       purpose: "find_leads",
       status: "running",
@@ -343,7 +343,7 @@ suite("web app API (database, mocked Naive)", () => {
     const delta = (s: typeof found, k: keyof typeof found.pipeline) => (s.pipeline[k] ?? 0) - (before.pipeline[k] ?? 0);
     expect([delta(found, "found"), delta(found, "researched"), delta(found, "qualified")]).toEqual([1, 0, 0]);
 
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sid("inline")}, ${WS}, ${lead.id}, 'research', 'done')`;
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sid("inline")}, ${WS}, ${lead.id}, 'research', 'done')`;
     const researched = await getSummary(sql, naiveEnv, WS);
     expect([delta(researched, "found"), delta(researched, "researched"), delta(researched, "qualified")]).toEqual([1, 1, 1]);
   });
@@ -351,10 +351,10 @@ suite("web app API (database, mocked Naive)", () => {
   test("summary: spend counts a running session's use so far, then the same once it's debited", async () => {
     const before = (await getSummary(sql, naiveEnv, WS)).spend.week_credits;
     const lead = await leadIn("A", "open");
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, consumed_micro_usd, billing_owner_id)
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, consumed_micro_usd, billing_owner_id)
               values (${sid("open")}, ${WS}, ${lead.id}, 'research', 'running', 100000, ${WS})`;
     expect((await getSummary(sql, naiveEnv, WS)).spend.week_credits - before).toBe(20);
-    await sql`update naive_sessions set status = 'done' where id = ${sid("open")}`;
+    await sql`update agent_runs set status = 'done' where id = ${sid("open")}`;
     await settleSessionUsage(sql, sid("open"));
     expect((await getSummary(sql, naiveEnv, WS)).spend.week_credits - before).toBe(20);
   });

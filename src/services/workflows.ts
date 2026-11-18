@@ -1,6 +1,6 @@
 // Naive sessions: start research per lead, react when a session goes idle (auto-confirm allowlisted tools,
 // turn everything else into owner approvals), and reconcile sessions whose webhooks we missed.
-// A session belongs to the workspace that started it (naive_sessions.workspace_id) and runs on that workspace's
+// A session belongs to the workspace that started it (agent_runs.workspace_id) and runs on that workspace's
 // Naive agent; webhooks and the cron find the workspace through the session row.
 import { settleSessionUsage } from "../billing/usage.ts";
 import type { Sql } from "../db.ts";
@@ -123,7 +123,7 @@ export async function startResearch(
 
   const running = new Set(
     (
-      await sql`select lead_id from naive_sessions
+      await sql`select lead_id from agent_runs
                 where workspace_id = ${ws} and purpose in ('research', 'redraft') and status in ('running', 'idle')
                   and lead_id = any(${leads.map((l) => l.id)}::text[])`
     ).map((r) => r.lead_id as string),
@@ -163,7 +163,7 @@ export async function startResearch(
         metadata: { lead_id: lead.id, purpose: "research", workspace_id: ws, run_id: runId },
       });
       await sql.transaction([
-        sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, billing_owner_id, input, workflow_version)
+        sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, billing_owner_id, input, workflow_version)
             values (${session.id}, ${ws}, ${lead.id}, 'research', 'running', ${opts.billable === false ? null : ws},
                     ${JSON.stringify({ run_id: runId, ...(workflow ? { workflow_id: brief?.workflow_id, workflow_version: workflow.version } : {}) })}::jsonb,
                     ${runVersion(naive.workflowVersion, workflow)})
@@ -200,7 +200,7 @@ export async function startRedraft(
   if (await isPaused(sql, ws)) throw new ApiError(423, "paused", "Crusonia is paused; no new work starts (PUT /api/settings/pause to resume)");
   const [draft] = (await sql`
     select d.id, d.lead_id, d.channel, d.status, l.stage,
-           exists (select 1 from naive_sessions s where s.workspace_id = d.workspace_id and s.lead_id = d.lead_id
+           exists (select 1 from agent_runs s where s.workspace_id = d.workspace_id and s.lead_id = d.lead_id
                    and s.purpose in ('research', 'redraft') and s.status in ('running', 'idle')) as session_open
     from drafts d join leads l on l.id = d.lead_id where d.workspace_id = ${ws} and d.id = ${input.draftId}`) as {
     id: string;
@@ -231,7 +231,7 @@ export async function startRedraft(
     });
   const data = { draft_id: draft.id, channel: draft.channel, run_id: runId, ...(input.instructions ? { instructions: input.instructions.slice(0, 500) } : {}) };
   await sql.transaction([
-    sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input, billing_owner_id, workflow_version)
+    sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, input, billing_owner_id, workflow_version)
         values (${session.id}, ${ws}, ${draft.lead_id}, 'redraft', 'running', ${JSON.stringify(data)}::jsonb, ${ws}, ${naive.workflowVersion})
         on conflict (id) do nothing`,
     sql`insert into events (workspace_id, lead_id, kind, data)
@@ -243,7 +243,7 @@ export async function startRedraft(
 type SessionRow = { id: string; workspace_id: string; lead_id: string | null; purpose: string; status: string; last_seq: number };
 
 /**
- * Our naive_sessions.status (running | idle | done | error) from Naive's status and stop_reason.
+ * Our agent_runs.status (running | idle | done | error) from Naive's status and stop_reason.
  * `idle` means waiting on the owner (or budget); a finished turn is `done`, so research can run again.
  */
 export function sessionStatus(remote: NaiveSession["status"] | undefined, stopReason: string | null | undefined): string {
@@ -282,7 +282,7 @@ export async function handleSessionIdle(
   input: { sessionId: string; stopReason?: string | null; pendingActions?: PendingAction[] },
   fetchFn?: FetchFn,
 ): Promise<{ known: boolean; auto_allowed: string[]; approvals: string[] }> {
-  const rows = (await sql`select id, workspace_id, lead_id, purpose, status, last_seq from naive_sessions where id = ${input.sessionId}`) as SessionRow[];
+  const rows = (await sql`select id, workspace_id, lead_id, purpose, status, last_seq from agent_runs where id = ${input.sessionId}`) as SessionRow[];
   const session = rows[0];
   if (!session) {
     // Only act on sessions we started (audited in the owner workspace: it belongs to no workspace).
@@ -366,7 +366,7 @@ export async function handleSessionIdle(
   // Nothing new to record when another handler already confirmed everything this one saw (a duplicate delivery).
   const duplicate = pending.length > 0 && handledElsewhere === pending.length;
   await sql.transaction([
-    sql`update naive_sessions set status = ${status}, stop_reason = ${stopReason}, updated_at = now(),
+    sql`update agent_runs set status = ${status}, stop_reason = ${stopReason}, updated_at = now(),
           consumed_micro_usd = greatest(consumed_micro_usd, ${consumed}::bigint)
         where id = ${session.id}`,
     ...(duplicate
@@ -407,7 +407,7 @@ export function latestIdle(events: NaiveEvent[]): NaiveEvent | undefined {
 export async function reconcileSessions(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<number> {
   if (!env.NAIVE_API_KEY) return 0;
   const sessions = (await sql`
-    select id, workspace_id, lead_id, purpose, status, last_seq from naive_sessions
+    select id, workspace_id, lead_id, purpose, status, last_seq from agent_runs
     where (status = 'running' and updated_at < now() - interval '2 minutes')
        or (purpose = 'onboarding' and status = 'idle' and stop_reason = 'awaiting_answer')
     order by updated_at limit 10`) as SessionRow[];
@@ -438,7 +438,7 @@ export async function reconcileSessions(sql: Sql, env: Env, fetchFn?: FetchFn): 
           handled++;
         }
       }
-      await sql`update naive_sessions set last_seq = greatest(last_seq, ${after}),
+      await sql`update agent_runs set last_seq = greatest(last_seq, ${after}),
                   updated_at = case when status = 'running' then now() else updated_at end
                 where id = ${s.id}`;
     } catch (err) {

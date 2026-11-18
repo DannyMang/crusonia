@@ -33,7 +33,7 @@ export async function mergeLeads(sql: Sql, ws: string, input: { keepLeadId: stri
   const rows = (await sql`
     select l.id, l.stage, l.email, l.consent_at, l.excluded_at,
       (select count(*)::int from approvals a where a.lead_id = l.id and a.status = 'pending' and a.expires_at > now()) as open_approvals,
-      (select count(*)::int from naive_sessions s where s.lead_id = l.id and s.status in ('running', 'idle')) as open_sessions
+      (select count(*)::int from agent_runs s where s.lead_id = l.id and s.status in ('running', 'idle')) as open_sessions
     from leads l where l.workspace_id = ${ws} and l.id = any(${[input.keepLeadId, input.mergeLeadId]}::text[])`) as MergeRow[];
   const keep = rows.find((r) => r.id === input.keepLeadId);
   const merge = rows.find((r) => r.id === input.mergeLeadId);
@@ -47,7 +47,7 @@ export async function mergeLeads(sql: Sql, ws: string, input: { keepLeadId: stri
     sql`update lookalikes set lead_id = ${k} where workspace_id = ${ws} and lead_id = ${m}`,
     sql`update approvals set lead_id = ${k} where workspace_id = ${ws} and lead_id = ${m}`,
     sql`update messages set lead_id = ${k} where workspace_id = ${ws} and lead_id = ${m}`,
-    sql`update naive_sessions set lead_id = ${k} where workspace_id = ${ws} and lead_id = ${m}`,
+    sql`update agent_runs set lead_id = ${k} where workspace_id = ${ws} and lead_id = ${m}`,
     sql`update drafts set lead_id = ${k}, version = version + (select coalesce(max(version), 0) from drafts where lead_id = ${k})
         where workspace_id = ${ws} and lead_id = ${m}`,
     sql`update events set lead_id = ${k} where workspace_id = ${ws} and lead_id = ${m}`,

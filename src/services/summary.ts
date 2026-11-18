@@ -108,10 +108,10 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
           -- Sessions still running aren't debited until they end: count what they've used so far.
           (select coalesce(sum(greatest(${creditsSql(sql, "s.consumed_micro_usd")}
                                         - coalesce((select -sum(l.amount) from credit_ledger l where l.session_id = s.id and l.reason = 'usage'), 0), 0)), 0)::text
-             from naive_sessions s
+             from agent_runs s
              where s.workspace_id = ${ws} and s.status in ('running', 'idle') and s.billing_owner_id is not null) as open_credits,
           -- Raw provider cost behind it: Naive's running totals and Apify run usage.
-          (select sum(consumed_micro_usd)::text from naive_sessions
+          (select sum(consumed_micro_usd)::text from agent_runs
              where workspace_id = ${ws} and coalesce(last_event_at, updated_at) >= now() - interval '7 days') as week_naive_micro,
           (select sum(usage_micro_usd)::text from apify_runs where workspace_id = ${ws} and created_at >= now() - interval '7 days') as week_apify_micro,
           coalesce((select paused from workspaces where id = ${ws}), false) as paused`,
@@ -123,7 +123,7 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
                  -- A find step scores a lead as it adds it. That's a first look, not research: research is a score from a
                  -- finished research session, or (an agent connected over MCP) a score given later than that.
                  l.score is not null
-                   and (exists (select 1 from naive_sessions s where s.lead_id = l.id and s.purpose = 'research' and s.status = 'done')
+                   and (exists (select 1 from agent_runs s where s.lead_id = l.id and s.purpose = 'research' and s.status = 'done')
                         or exists (select 1 from events e where e.workspace_id = ${ws} and e.lead_id = l.id and e.kind = 'lead_scored'
                                    and e.created_at > l.created_at + interval '30 seconds')) as was_researched
           from leads l

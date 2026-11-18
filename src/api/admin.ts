@@ -83,7 +83,7 @@ admin.get("/runs", async (c) => {
   const rows = (await sql`
     select id, workspace_id, lead_id, purpose, status, stop_reason, input, consumed_micro_usd, leads_processed, events_seq,
            events_synced_at, last_event_at, created_at, updated_at
-    from naive_sessions
+    from agent_runs
     where workspace_id = ${q.workspace} and (${q.purpose ?? null}::text is null or purpose = ${q.purpose ?? null})
     order by created_at desc limit ${q.limit}`) as SessionRow[];
   await logEvent(sql, q.workspace, null, "admin_viewed", { admin: actorOf(c.get("principal")), what: "runs", purpose: q.purpose ?? null, count: rows.length });
@@ -94,11 +94,11 @@ admin.get("/runs", async (c) => {
 admin.get("/runs/:id/trace", async (c) => {
   const sql = sqlFor(c.env);
   const id = c.req.param("id");
-  const [session] = await sql`select workspace_id from naive_sessions where id = ${id}`;
+  const [session] = await sql`select workspace_id from agent_runs where id = ${id}`;
   if (!session) throw new ApiError(404, "not_found", `No run with session id ${id}`);
   const ws = session.workspace_id as string;
   const detail = await getRunDetail(sql, c.env, ws, id, undefined, { readOnly: true });
-  const events = await sql`select seq, type, data, created_at from naive_session_events
+  const events = await sql`select seq, type, data, created_at from agent_run_events
                            where workspace_id = ${ws} and session_id = ${id} order by seq limit 5000`;
   await logEvent(sql, ws, detail.run.lead_id, "admin_viewed", { admin: actorOf(c.get("principal")), what: "trace", session_id: id });
   return c.json({ workspace_id: ws, ...detail, events });

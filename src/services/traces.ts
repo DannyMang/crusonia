@@ -1,4 +1,4 @@
-// Agent traces: the full record of every Naive session, kept in our database. naive_session_events holds every Naive
+// Agent traces: the full record of every Naive session, kept in our database. agent_run_events holds every Naive
 // event (tool calls with their inputs and outputs, messages, confirmations, model requests with token usage and cost;
 // huge fields truncated, see storableEvent in ./runs.ts), and our own `events` rows for the session hold what
 // Crusonia did (auto-allowed confirmations, approvals, credit debits). The clean timeline (buildSteps) is the default
@@ -33,7 +33,7 @@ export async function traceSession(sql: Sql, viewer: TraceViewer, sessionId: str
   const [row] = (await sql`
     select id, workspace_id, workflow_version, lead_id, purpose, status, stop_reason, input, consumed_micro_usd, leads_processed,
            events_seq, events_synced_at, last_event_at, created_at, updated_at
-    from naive_sessions where id = ${sessionId} and (${admin}::boolean or workspace_id = ${viewer.workspace})`) as SessionRow[];
+    from agent_runs where id = ${sessionId} and (${admin}::boolean or workspace_id = ${viewer.workspace})`) as SessionRow[];
   if (!row) throw new ApiError(404, "not_found", `No workflow run with session id ${sessionId}`);
   return row;
 }
@@ -112,7 +112,7 @@ export async function getTrace(
   const limit = Math.min(Math.max(page.limit ?? 200, 1), TRACE_PAGE_MAX);
   const after = Math.max(page.afterSeq ?? 0, 0);
   const [events, ctx] = await Promise.all([
-    sql`select seq, type, data, created_at from naive_session_events
+    sql`select seq, type, data, created_at from agent_run_events
         where workspace_id = ${row.workspace_id} and session_id = ${sessionId} and seq > ${after} order by seq limit ${limit + 1}`,
     sessionContext(sql, row.workspace_id, sessionId, row.lead_id, row.created_at),
   ]);
@@ -140,7 +140,7 @@ export async function exportTrace(sql: Sql, env: Env, viewer: TraceViewer, sessi
   const sync = await refresh(sql, env, row, fetchFn, viewer);
   row = await traceSession(sql, viewer, sessionId);
   const [events, ctx] = await Promise.all([
-    sql`select seq, type, data, created_at from naive_session_events
+    sql`select seq, type, data, created_at from agent_run_events
         where workspace_id = ${row.workspace_id} and session_id = ${sessionId} order by seq limit ${EXPORT_MAX_EVENTS}`,
     sessionContext(sql, row.workspace_id, sessionId, row.lead_id, row.created_at),
   ]);
@@ -164,7 +164,7 @@ export async function exportTrace(sql: Sql, env: Env, viewer: TraceViewer, sessi
 export async function syncFinishedTraces(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<number> {
   if (!env.NAIVE_API_KEY) return 0;
   const rows = (await sql`
-    select id, workspace_id, events_seq from naive_sessions
+    select id, workspace_id, events_seq from agent_runs
     where status in ('done', 'error') and (events_synced_at is null or events_synced_at < updated_at)
       and created_at > now() - make_interval(days => ${traceRetentionDays(env)}::int)
     order by updated_at limit 3`) as Pick<SessionRow, "id" | "workspace_id" | "events_seq">[];
@@ -184,9 +184,9 @@ export async function syncFinishedTraces(sql: Sql, env: Env, fetchFn?: FetchFn):
 /** Cron: drop the stored events of sessions older than TRACE_RETENTION_DAYS (the run row and audit trail stay). */
 export async function pruneTraces(sql: Sql, env: Env): Promise<number> {
   const rows = await sql`
-    delete from naive_session_events e
+    delete from agent_run_events e
     where e.ctid in (
-      select e2.ctid from naive_session_events e2 join naive_sessions s on s.id = e2.session_id
+      select e2.ctid from agent_run_events e2 join agent_runs s on s.id = e2.session_id
       where s.created_at < now() - make_interval(days => ${traceRetentionDays(env)}::int)
       limit 5000
     )

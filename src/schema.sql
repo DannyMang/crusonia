@@ -153,7 +153,30 @@ create table if not exists messages (
   created_at          timestamptz not null default now()
 );
 
-create table if not exists naive_sessions (
+-- Agent runs: one row per agent session. The tables were named naive_sessions / naive_session_events; an existing
+-- database is renamed in place, once (tables, indexes and the workflow-run trigger).
+do $$
+begin
+  if to_regclass('public.naive_sessions') is not null and to_regclass('public.agent_runs') is null then
+    alter table naive_sessions rename to agent_runs;
+  end if;
+  if to_regclass('public.naive_session_events') is not null and to_regclass('public.agent_run_events') is null then
+    alter table naive_session_events rename to agent_run_events;
+  end if;
+  if to_regclass('public.agent_runs') is not null then
+    drop trigger if exists naive_sessions_record_workflow_run on agent_runs;
+  end if;
+end
+$$;
+alter index if exists naive_sessions_pkey rename to agent_runs_pkey;
+alter index if exists naive_session_events_pkey rename to agent_run_events_pkey;
+alter index if exists naive_sessions_status_idx rename to agent_runs_status_idx;
+alter index if exists naive_sessions_purpose_idx rename to agent_runs_purpose_idx;
+alter index if exists naive_sessions_billing_idx rename to agent_runs_billing_idx;
+alter index if exists naive_sessions_ws_idx rename to agent_runs_ws_idx;
+alter index if exists naive_sessions_workflow_run_idx rename to agent_runs_workflow_run_idx;
+
+create table if not exists agent_runs (
   id          text primary key,
   lead_id     text references leads(id) on delete cascade,
   purpose     text not null,
@@ -220,7 +243,7 @@ create index if not exists drafts_thread_idx on drafts (provider_thread_id) wher
 alter table messages add column if not exists label text;
 create index if not exists messages_thread_idx on messages (thread_id) where thread_id is not null;
 
-create index if not exists naive_sessions_status_idx on naive_sessions (status, updated_at);
+create index if not exists agent_runs_status_idx on agent_runs (status, updated_at);
 
 -- ---------------------------------------------------------------------------
 -- Web app API (dashboard, onboarding, workflows, experiments, API keys). Additive and idempotent.
@@ -230,18 +253,18 @@ create index if not exists naive_sessions_status_idx on naive_sessions (status, 
 -- description, find_leads count). `consumed_micro_usd` is Naive's running total for the session (null =
 -- not reported yet). `events_seq` is how far the event cache below goes; it is separate from `last_seq`,
 -- which belongs to the reconcile cron. `leads_processed` counts leads a find_leads run added or updated.
-alter table naive_sessions add column if not exists input jsonb not null default '{}';
-alter table naive_sessions add column if not exists consumed_micro_usd bigint;
-alter table naive_sessions add column if not exists events_seq int not null default 0;
-alter table naive_sessions add column if not exists events_synced_at timestamptz;
-alter table naive_sessions add column if not exists last_event_at timestamptz;
-alter table naive_sessions add column if not exists leads_processed int not null default 0;
-create index if not exists naive_sessions_purpose_idx on naive_sessions (purpose, created_at desc);
+alter table agent_runs add column if not exists input jsonb not null default '{}';
+alter table agent_runs add column if not exists consumed_micro_usd bigint;
+alter table agent_runs add column if not exists events_seq int not null default 0;
+alter table agent_runs add column if not exists events_synced_at timestamptz;
+alter table agent_runs add column if not exists last_event_at timestamptz;
+alter table agent_runs add column if not exists leads_processed int not null default 0;
+create index if not exists agent_runs_purpose_idx on agent_runs (purpose, created_at desc);
 
 -- Cached Naive session events for the run view (GET /api/workflows/runs/:id). Tool outputs and messages
 -- came from the agent and the web: untrusted, stored as data and truncated.
-create table if not exists naive_session_events (
-  session_id text not null references naive_sessions(id) on delete cascade,
+create table if not exists agent_run_events (
+  session_id text not null references agent_runs(id) on delete cascade,
   seq        int not null,
   type       text not null,
   data       jsonb not null default '{}',
@@ -366,8 +389,8 @@ create trigger credit_ledger_append_only before update or delete on credit_ledge
 
 -- Who pays for a Naive session (the billing owner of the caller that started it). Null for sessions started
 -- before billing existed: those are never debited.
-alter table naive_sessions add column if not exists billing_owner_id text;
-create index if not exists naive_sessions_billing_idx on naive_sessions (status, updated_at) where billing_owner_id is not null;
+alter table agent_runs add column if not exists billing_owner_id text;
+create index if not exists agent_runs_billing_idx on agent_runs (status, updated_at) where billing_owner_id is not null;
 
 -- ---------------------------------------------------------------------------
 -- CRM sync (HubSpot, Notion). Additive and idempotent. See "CRM sync" in README.md.
@@ -562,7 +585,7 @@ declare
   t text;
 begin
   foreach t in array array[
-    'leads', 'evidence', 'lookalikes', 'drafts', 'approvals', 'messages', 'naive_sessions', 'naive_session_events',
+    'leads', 'evidence', 'lookalikes', 'drafts', 'approvals', 'messages', 'agent_runs', 'agent_run_events',
     'events', 'suppressions', 'api_keys', 'billing_accounts', 'credit_ledger', 'crm_sync_queue',
     'apify_runs', 'lead_notes'
   ] loop
@@ -649,7 +672,7 @@ begin
     update lookalikes set lead_id = d.keeper where lead_id = d.id;
     update approvals set lead_id = d.keeper where lead_id = d.id;
     update messages set lead_id = d.keeper where lead_id = d.id;
-    update naive_sessions set lead_id = d.keeper where lead_id = d.id;
+    update agent_runs set lead_id = d.keeper where lead_id = d.id;
     update drafts set lead_id = d.keeper,
            version = version + (select coalesce(max(version), 0) from drafts where lead_id = d.keeper)
     where lead_id = d.id;
@@ -703,7 +726,7 @@ insert into settings (key, value)
 select 'qualification_workflow:ws_owner', value from settings where key = 'qualification_workflow'
 on conflict (key) do nothing;
 create index if not exists leads_ws_cohort_idx on leads (workspace_id, cohort);
-alter table naive_sessions add column if not exists workflow_version text;
+alter table agent_runs add column if not exists workflow_version text;
 alter table drafts add column if not exists workflow_version text;
 alter table drafts add column if not exists session_id text;
 alter table workspaces add column if not exists naive_workflow_version text;
@@ -715,7 +738,7 @@ create unique index if not exists suppressions_ws_email_uq on suppressions (work
 create index if not exists approvals_ws_idx on approvals (workspace_id, status, created_at desc);
 create index if not exists drafts_ws_lead_idx on drafts (workspace_id, lead_id);
 create index if not exists messages_ws_inbound_idx on messages (workspace_id, id desc) where direction = 'in';
-create index if not exists naive_sessions_ws_idx on naive_sessions (workspace_id, purpose, created_at desc);
+create index if not exists agent_runs_ws_idx on agent_runs (workspace_id, purpose, created_at desc);
 create index if not exists events_ws_idx on events (workspace_id, id desc);
 create index if not exists events_ws_kind_idx on events (workspace_id, kind, created_at);
 create index if not exists credit_ledger_ws_idx on credit_ledger (workspace_id, id desc);
@@ -969,12 +992,12 @@ alter table drafts add column if not exists workflow_run_id text;
 alter table drafts add column if not exists workflow_id text;
 alter table drafts add column if not exists workflow_def_version int;
 alter table drafts add column if not exists cohort text;
-alter table naive_sessions add column if not exists workflow_run_id text;
-alter table naive_sessions add column if not exists workflow_id text;
-alter table naive_sessions add column if not exists workflow_def_version int;
-alter table naive_sessions add column if not exists cohort text;
+alter table agent_runs add column if not exists workflow_run_id text;
+alter table agent_runs add column if not exists workflow_id text;
+alter table agent_runs add column if not exists workflow_def_version int;
+alter table agent_runs add column if not exists cohort text;
 create index if not exists drafts_workflow_run_idx on drafts (workflow_run_id) where workflow_run_id is not null;
-create index if not exists naive_sessions_workflow_run_idx on naive_sessions (workflow_run_id) where workflow_run_id is not null;
+create index if not exists agent_runs_workflow_run_idx on agent_runs (workflow_run_id) where workflow_run_id is not null;
 
 create or replace function record_workflow_run() returns trigger language plpgsql as $$
 begin
@@ -988,8 +1011,8 @@ end
 $$;
 drop trigger if exists drafts_record_workflow_run on drafts;
 create trigger drafts_record_workflow_run before insert on drafts for each row execute function record_workflow_run();
-drop trigger if exists naive_sessions_record_workflow_run on naive_sessions;
-create trigger naive_sessions_record_workflow_run before insert on naive_sessions
+drop trigger if exists agent_runs_record_workflow_run on agent_runs;
+create trigger agent_runs_record_workflow_run before insert on agent_runs
   for each row execute function record_workflow_run();
 
 -- Follow-ups (src/services/followups.ts): an email draft that follows up on a sent one, sent at `scheduled_for`. Each

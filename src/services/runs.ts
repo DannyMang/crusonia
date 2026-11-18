@@ -1,6 +1,6 @@
-// Workflows and runs for the web app, derived from naive_sessions: one workflow per purpose (research,
+// Workflows and runs for the web app, derived from agent_runs: one workflow per purpose (research,
 // find_leads, onboarding), one run per Naive session. Run steps come from Naive's events API (a free read),
-// cached in naive_session_events, merged with our own audit events for the session.
+// cached in agent_run_events, merged with our own audit events for the session.
 // Also starts the owner-triggered sessions: onboarding proposals and lead finding. Everything is per workspace:
 // runs are the workspace's sessions, and a session runs on the workspace's own Naive agent (./naive-agents.ts).
 import { creditsSql } from "../billing/credits-sql.ts";
@@ -171,15 +171,15 @@ export async function listWorkflows(sql: Sql, ws: string, opts: { recentRuns?: n
             max(coalesce(last_event_at, updated_at)) as last_event_at,
             (count(distinct lead_id) + coalesce(sum(leads_processed) filter (where lead_id is null), 0))::int as leads_processed,
             sum(consumed_micro_usd)::text as cost_micro,
-            (case when count(consumed_micro_usd) > 0 or bool_or(exists (select 1 from apify_runs a where a.session_id = naive_sessions.id))
+            (case when count(consumed_micro_usd) > 0 or bool_or(exists (select 1 from apify_runs a where a.session_id = agent_runs.id))
                   then (coalesce(sum(${creditsSql(sql, "consumed_micro_usd")}), 0)
-                        + coalesce(sum((select sum(${creditsSql(sql, "a.usage_micro_usd")}) from apify_runs a where a.session_id = naive_sessions.id)), 0))::text
+                        + coalesce(sum((select sum(${creditsSql(sql, "a.usage_micro_usd")}) from apify_runs a where a.session_id = agent_runs.id)), 0))::text
              end) as cost_credits,
             (array_agg(status order by created_at desc))[1] as latest_status
-          from naive_sessions where workspace_id = ${ws} group by purpose
+          from agent_runs where workspace_id = ${ws} group by purpose
           order by max(coalesce(last_event_at, updated_at)) desc`,
       sql`select ${SESSION_COLUMNS(sql)} from (
-            select *, row_number() over (partition by purpose order by created_at desc) as rn from naive_sessions
+            select *, row_number() over (partition by purpose order by created_at desc) as rn from agent_runs
             where workspace_id = ${ws}
           ) s where rn <= ${recent} order by created_at desc`,
       sql`select paused from workspaces where id = ${ws}`,
@@ -487,7 +487,7 @@ export function buildSteps(events: StoredEvent[], audit: AuditEvent[] = [], appr
 }
 
 // ---------- event cache (the durable trace) ----------
-// naive_session_events is the session's full trace, not a display cache: every event except streaming deltas
+// agent_run_events is the session's full trace, not a display cache: every event except streaming deltas
 // (message.completed carries the whole message), with huge fields truncated. src/services/traces.ts serves it and
 // prunes it after TRACE_RETENTION_DAYS.
 
@@ -540,7 +540,7 @@ export function needsSync(row: Pick<SessionRow, "status" | "events_synced_at" | 
   return now - synced > ACTIVE_SYNC_INTERVAL_MS;
 }
 
-/** Reads new events from Naive (free) into naive_session_events and updates the run's cost and counters. */
+/** Reads new events from Naive (free) into agent_run_events and updates the run's cost and counters. */
 export async function syncSessionEvents(
   sql: Sql,
   client: NaiveClient,
@@ -569,7 +569,7 @@ export async function syncSessionEvents(
   if (rows.length) {
     // Only rows this call inserted count toward leads_processed, so concurrent syncs never double count.
     const inserted = (await sql`
-      insert into naive_session_events (workspace_id, session_id, seq, type, data, created_at)
+      insert into agent_run_events (workspace_id, session_id, seq, type, data, created_at)
       select ${row.workspace_id}, ${row.id}, x.seq, x.type, x.data, x.created_at
       from jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) as x(seq int, type text, data jsonb, created_at timestamptz)
       on conflict (session_id, seq) do nothing
@@ -580,7 +580,7 @@ export async function syncSessionEvents(
   }
   // events_synced_at is set only when the read reached the end, so a partial read of a long trace is continued.
   await sql`
-    update naive_sessions set
+    update agent_runs set
       events_seq = greatest(events_seq, ${after}),
       events_synced_at = case when ${complete} then now() else events_synced_at end,
       last_event_at = greatest(last_event_at, ${lastAt}::timestamptz),
@@ -593,7 +593,7 @@ export async function syncSessionEvents(
 // ---------- run detail ----------
 
 async function loadSession(sql: Sql, ws: string, id: string): Promise<SessionRow | undefined> {
-  return (await sql`select ${SESSION_COLUMNS(sql)} from naive_sessions where workspace_id = ${ws} and id = ${id}`)[0] as SessionRow | undefined;
+  return (await sql`select ${SESSION_COLUMNS(sql)} from agent_runs where workspace_id = ${ws} and id = ${id}`)[0] as SessionRow | undefined;
 }
 
 /**
@@ -620,7 +620,7 @@ export async function getRunDetail(sql: Sql, env: Env, ws: string, sessionId: st
 
   const [events, audit, leads, approvals, pausedRows] = await sql.transaction(
     [
-      sql`select seq, type, data, created_at from naive_session_events where workspace_id = ${ws} and session_id = ${sessionId} order by seq limit 2000`,
+      sql`select seq, type, data, created_at from agent_run_events where workspace_id = ${ws} and session_id = ${sessionId} order by seq limit 2000`,
       // Plus what happened to the run's lead meanwhile that the UI must explain (e.g. it now waits for review).
       sql`select id, kind, data, created_at from events
           where workspace_id = ${ws}
@@ -733,7 +733,7 @@ async function startOwnerSession(
     .catch(naiveFailure);
   const data = { ...input.data, run_id: runId };
   await sql.transaction([
-    sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input, billing_owner_id, workflow_version, workflow_run_id, workflow_id, workflow_def_version)
+    sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, input, billing_owner_id, workflow_version, workflow_run_id, workflow_id, workflow_def_version)
         values (${session.id}, ${ws}, null, ${input.purpose}, 'running', ${JSON.stringify(data)}::jsonb, ${ws}, ${naive.workflowVersion},
                 ${input.workflow?.runId ?? null}, ${input.workflow?.workflowId ?? null}, ${input.workflow?.version ?? null})
         on conflict (id) do nothing`,
@@ -848,7 +848,7 @@ export async function getFindRun(sql: Sql, env: Env, ws: string, sessionId: stri
     }
   }
   const events = (await sql`
-    select seq, type, data, created_at from naive_session_events
+    select seq, type, data, created_at from agent_run_events
     where workspace_id = ${ws} and session_id = ${sessionId} and type = 'tool.completed' and data->>'name' like '%add_leads'
     order by seq`) as StoredEvent[];
   const statuses = findStatusesFromEvents(events);
@@ -887,7 +887,7 @@ export async function getOnboardingProposal(sql: Sql, env: Env, ws: string, sess
         await handleSessionIdle(sql, env, { sessionId }, fetchFn);
       } else {
         // Unchanged (or resumed): remember that we looked, so the next poll within a few seconds stays local.
-        await sql`update naive_sessions set status = ${next === "running" ? "running" : row.status},
+        await sql`update agent_runs set status = ${next === "running" ? "running" : row.status},
                     consumed_micro_usd = greatest(consumed_micro_usd, ${consumed}::bigint), updated_at = now()
                   where workspace_id = ${ws} and id = ${sessionId}`;
       }

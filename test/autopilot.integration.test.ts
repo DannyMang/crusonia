@@ -88,7 +88,7 @@ async function finishFind(n: ReturnType<typeof naive>, ws: string, sessionId: st
     { cohort: `run:${sessionId}` },
   );
   n.events.set(sessionId, [{ seq: 1, type: "tool.completed", data: { name: "crusonia.add_leads", output: JSON.stringify(out) }, created_at: new Date().toISOString() }]);
-  await sql`update naive_sessions set status = 'done' where id = ${sessionId}`;
+  await sql`update agent_runs set status = 'done' where id = ${sessionId}`;
   return out;
 }
 
@@ -110,7 +110,7 @@ suite("autopilot (database, mocked Naive)", () => {
   });
   afterAll(async () => {
     if (!sql) return;
-    await sql`delete from naive_sessions where workspace_id = any(${created}::text[])`;
+    await sql`delete from agent_runs where workspace_id = any(${created}::text[])`;
     await deleteTestWorkspaces(sql, created);
   });
 
@@ -134,11 +134,11 @@ suite("autopilot (database, mocked Naive)", () => {
     expect(n.sessions).toHaveLength(0);
 
     // An onboarding session still writing: wait.
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status) values (${`ses_ob_${run}`}, ${ws}, 'onboarding', 'running')`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status) values (${`ses_ob_${run}`}, ${ws}, 'onboarding', 'running')`;
     await summary(ws);
     await runAutopilot(sql, env, n.fn);
     expect(n.sessions).toHaveLength(0);
-    await sql`update naive_sessions set status = 'done' where id = ${`ses_ob_${run}`}`;
+    await sql`update agent_runs set status = 'done' where id = ${`ses_ob_${run}`}`;
 
     await runAutopilot(sql, env, n.fn);
     const state = await getAutopilot(sql, env, ws);
@@ -152,7 +152,7 @@ suite("autopilot (database, mocked Naive)", () => {
     expect(find.agent_id).toBe("agt_ws");
     const [fr] = await sql`select * from workflow_runs where workspace_id = ${ws}`;
     expect(fr).toMatchObject({ phase: "finding", trigger: "schedule", find_session_id: find.id });
-    const [s] = await sql`select workflow_run_id, workflow_id from naive_sessions where id = ${find.id}`;
+    const [s] = await sql`select workflow_run_id, workflow_id from agent_runs where id = ${find.id}`;
     expect(s).toMatchObject({ workflow_run_id: fr!.id, workflow_id: state.workflow!.id });
 
     // Not due again, and the running find session isn't touched.
@@ -173,7 +173,7 @@ suite("autopilot (database, mocked Naive)", () => {
     expect(research[0]!.message).toContain("Don't call ask_operator");
     const rows = await sql`select l.company, rl.status from workflow_run_leads rl join leads l on l.id = rl.lead_id where rl.run_id = ${fr!.id} order by l.company`;
     expect(rows.map((r) => `${r.company}:${r.status}`).filter((r) => r.endsWith(":started")).map((r) => r.split(":")[0]).sort()).toEqual(["alpha", "beta", "gamma"]);
-    const [session] = await sql`select workflow_run_id from naive_sessions where id = ${research[0]!.id}`;
+    const [session] = await sql`select workflow_run_id from agent_runs where id = ${research[0]!.id}`;
     expect(session!.workflow_run_id).toBe(fr!.id);
 
     // One active run per workflow: a due schedule waits, and says so once.
@@ -185,7 +185,7 @@ suite("autopilot (database, mocked Naive)", () => {
     expect(skips!.n).toBe(1);
 
     // Research finishes: the run ends and logs it. The Operator runs next, on its own agent. The due schedule starts too.
-    await sql`update naive_sessions set status = 'done' where workspace_id = ${ws}`;
+    await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
     await sql`update workflow_defs set next_run_at = now() + interval '1 hour' where workspace_id = ${ws} and is_autopilot`;
     await runAutopilot(sql, env, n.fn);
     const [done] = await sql`select phase, finished_at from workflow_runs where id = ${fr!.id}`;
@@ -263,7 +263,7 @@ suite("autopilot (database, mocked Naive)", () => {
     expect(def!.last_skip).toBeNull();
 
     // A failed start retries soon, and closes its run.
-    await sql`update naive_sessions set status = 'done' where workspace_id = ${ws}`;
+    await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
     await sql`update workflow_runs set phase = 'done' where workspace_id = ${ws}`;
     await sql`update workflow_defs set next_run_at = now() - interval '1 minute' where workspace_id = ${ws} and is_autopilot`;
     n.fail(true);
@@ -310,17 +310,17 @@ suite("autopilot (database, mocked Naive)", () => {
     await addLeads(sql, ws, [{ company: "Saved", domain: `saved-${run}.dev`, source: "it", source_url: `https://saved-${run}.dev/`, score: 80, qualified: true, rationale: "r" }], { cohort: `run:${find.id}` }).then((out) =>
       n.events.set(find.id, [{ seq: 1, type: "tool.completed", data: { name: "crusonia.add_leads", output: JSON.stringify(out) }, created_at: new Date().toISOString() }]),
     );
-    await sql`update naive_sessions set status = 'idle', stop_reason = 'budget_paused' where id = ${find.id}`;
+    await sql`update agent_runs set status = 'idle', stop_reason = 'budget_paused' where id = ${find.id}`;
     await runAutopilot(sql, env, n.fn);
     await runAutopilot(sql, env, n.fn);
     const research = n.sessions.filter((s) => s.metadata.purpose === "research");
     expect(research).toHaveLength(1);
-    await sql`update naive_sessions set status = 'idle', stop_reason = 'budget_paused' where id = ${research[0]!.id}`;
+    await sql`update agent_runs set status = 'idle', stop_reason = 'budget_paused' where id = ${research[0]!.id}`;
     await runAutopilot(sql, env, n.fn);
     const [r] = await sql`select phase from workflow_runs where workspace_id = ${ws}`;
     expect(r!.phase).toBe("done");
     // Nothing waits on the owner, and these sessions don't use up the workspace's active limit.
-    await sql`update naive_sessions set status = 'done' where workspace_id = ${ws} and purpose = 'operate'`;
+    await sql`update agent_runs set status = 'done' where workspace_id = ${ws} and purpose = 'operate'`;
     expect((await getAutopilot(sql, env, ws)).running).toEqual([]);
     expect((await spendStatus(sql, env, ws)).active_sessions).toBe(0);
   }, 60_000);
@@ -354,7 +354,7 @@ suite("autopilot (database, mocked Naive)", () => {
     const ids = out.results.map((r) => r.id!);
     const auto = await runWorkflow(sql, env, ws, id, { lead_ids: ids, trigger: "operator" }, "agent:x", { fetch: n.fn });
     expect(auto.started).toHaveLength(5);
-    await sql`update naive_sessions set status = 'done' where workspace_id = ${ws}`;
+    await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
     await sql`update workflow_runs set phase = 'done' where workspace_id = ${ws}`;
     const person = await runWorkflow(sql, env, ws, id, { lead_ids: ids }, "clerk:u1", { fetch: n.fn });
     expect(person.started).toHaveLength(12);
@@ -376,7 +376,7 @@ suite("autopilot (database, mocked Naive)", () => {
     const research = n.sessions.filter((s) => s.metadata.purpose === "research");
     expect(research).toHaveLength(1);
     expect(research[0]!.message).toContain("This lead replied");
-    await sql`update naive_sessions set status = 'done' where workspace_id = ${ws}`;
+    await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
     await runAutopilot(sql, env, n.fn);
     await runAutopilot(sql, env, n.fn);
     expect(n.sessions.filter((s) => s.metadata.purpose === "research")).toHaveLength(1);
@@ -399,7 +399,7 @@ suite("autopilot (database, mocked Naive)", () => {
     expect(rows).toHaveLength(5);
     const id = (name: string) => rows.find((r) => r.company === name)!.id;
     const researchedAgo = async (name: string, days: number) => {
-      await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, created_at)
+      await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, created_at)
                 values (${`ses_st_${name}_${ws}`}, ${ws}, ${id(name)}, 'research', 'done', now() - make_interval(days => ${days}))`;
     };
     await researchedAgo("old", 70);
@@ -468,7 +468,7 @@ suite("autopilot (database, mocked Naive)", () => {
     await sql`insert into workflow_runs (id, workspace_id, workflow_id, version, actor, trigger, phase)
               values (${runId}, ${ws}, ${def.workflow.id}, 1, 'test', 'manual', 'done')`;
     // $0.10 of agent time is 20 credits, and $0.05 of Apify is 10: the same as the ledger debits.
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, consumed_micro_usd, workflow_run_id, billing_owner_id)
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, consumed_micro_usd, workflow_run_id, billing_owner_id)
               values (${`ses_cr_${ws}`}, ${ws}, 'find_leads', 'done', 100000, ${runId}, ${ws})`;
     await sql`insert into apify_runs (run_id, workspace_id, actor, status, usage_micro_usd, session_id, billing_owner_id)
               values (${`apr_cr_${ws}`}, ${ws}, 'x', 'SUCCEEDED', 50000, ${`ses_cr_${ws}`}, ${ws})`;
@@ -509,8 +509,8 @@ suite("autopilot (database, mocked Naive)", () => {
       { cohort: "x" },
     );
     const [mine, other] = results.map((r) => r.id!);
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input) values (${`ses_r_${run}`}, ${ws}, ${mine}, 'research', 'running', ${JSON.stringify({ run_id: `run_r_${run}` })}::jsonb)`;
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, input) values (${`ses_f_${run}`}, ${ws}, 'find_leads', 'running', ${JSON.stringify({ run_id: `run_f_${run}`, like_lead_id: other })}::jsonb)`;
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, input) values (${`ses_r_${run}`}, ${ws}, ${mine}, 'research', 'running', ${JSON.stringify({ run_id: `run_r_${run}` })}::jsonb)`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, input) values (${`ses_f_${run}`}, ${ws}, 'find_leads', 'running', ${JSON.stringify({ run_id: `run_f_${run}`, like_lead_id: other })}::jsonb)`;
     await addNote(sql, ws, { leadId: other!, author: "user:u1", body: "secret note about other", kind: "note" });
     await sql`update leads set excluded_at = now(), excluded_reason = 'x' where id = ${other}`;
     const call = await mcp(ws, env, "researcher");
@@ -630,7 +630,7 @@ suite("autopilot (database, mocked Naive)", () => {
       return new Response(JSON.stringify({ id: "x", status: "idle", stop_reason: "awaiting_approval", pending_actions: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
     };
     const id = `ses_conf_${run}`;
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status) values (${id}, ${ws}, 'operate', 'running')`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status) values (${id}, ${ws}, 'operate', 'running')`;
     const res = await handleSessionIdle(
       sql,
       env,
@@ -672,22 +672,22 @@ suite("autopilot (database, mocked Naive)", () => {
         ? { id, status: "idle", stop_reason: "awaiting_approval", pending_actions: [{ kind: "tool", tool_call_id: call, name: "crusonia.search_web", args: {}, parked_seq: 79 }] }
         : { id, status: "running", stop_reason: null, pending_actions: [] });
     };
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, last_seq, updated_at)
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, last_seq, updated_at)
               values (${id}, ${ws}, 'research', 'running', 100, now() - interval '10 minutes')`;
     // What the bug left behind: the first park's claim, with the same id.
     await sql`insert into webhook_events (source, event_id) values ('naive-autoconfirm', ${`autoconfirm:${id}:${call}`})`;
 
     await reconcileSessions(sql, env, fetchFn);
     expect(confirms).toEqual([call]);
-    const [row] = await sql`select status from naive_sessions where id = ${id}`;
+    const [row] = await sql`select status from agent_runs where id = ${id}`;
     expect(row!.status).toBe("running");
 
     // Once it's running again, the same pass finds nothing to answer.
-    await sql`update naive_sessions set updated_at = now() - interval '10 minutes' where id = ${id}`;
+    await sql`update agent_runs set updated_at = now() - interval '10 minutes' where id = ${id}`;
     await reconcileSessions(sql, env, fetchFn);
     expect(confirms).toEqual([call]);
     await sql`delete from webhook_events where event_id like ${`%${id}%`}`;
-    await sql`update naive_sessions set status = 'done' where id = ${id}`;
+    await sql`update agent_runs set status = 'done' where id = ${id}`;
   });
 
   test("a tool call parked again with the same id is confirmed again; a duplicate delivery of one park isn't", async () => {
@@ -700,7 +700,7 @@ suite("autopilot (database, mocked Naive)", () => {
     };
     const id = `ses_repark_${run}`;
     const call = `tc_repark_${run}`;
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status) values (${id}, ${ws}, 'research', 'running')`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status) values (${id}, ${ws}, 'research', 'running')`;
     const park = (seq: number) =>
       handleSessionIdle(sql, env, { sessionId: id, stopReason: "awaiting_approval", pendingActions: [{ tool_call_id: call, name: "crusonia.search_web", args: {}, parked_seq: seq }] }, fetchFn);
 
@@ -712,7 +712,7 @@ suite("autopilot (database, mocked Naive)", () => {
     // Later Naive parks the same call again. Before this, nobody answered it and the session stayed open for good.
     await park(79);
     expect(confirms).toEqual([call, call]);
-    const [row] = await sql`select status from naive_sessions where id = ${id}`;
+    const [row] = await sql`select status from agent_runs where id = ${id}`;
     expect(row!.status).toBe("running");
     await sql`delete from webhook_events where event_id like ${`%${id}%`}`;
   });

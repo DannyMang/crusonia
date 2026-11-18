@@ -88,7 +88,7 @@ export async function getLeadFull(sql: Sql, ws: string, id: string) {
       // Inbound bodies are untrusted: returned as data for display, never as instructions.
       sql`select id, direction, provider_message_id, thread_id, from_addr, to_addr, subject, body, label, created_at
           from messages where workspace_id = ${ws} and lead_id = ${id} order by id desc limit 100`,
-      sql`select id, purpose, status, stop_reason, created_at, updated_at from naive_sessions
+      sql`select id, purpose, status, stop_reason, created_at, updated_at from agent_runs
           where workspace_id = ${ws} and lead_id = ${id} order by created_at desc limit 20`,
       sql`select id, kind, data, created_at from events where workspace_id = ${ws} and lead_id = ${id} order by id desc limit 200`,
     ],

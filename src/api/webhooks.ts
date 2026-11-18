@@ -98,8 +98,8 @@ webhooks.post("/naive", async (c) => {
   } else {
     // The session's workspace (deliveries for sessions we don't know are audited in the owner workspace).
     await sql`insert into events (workspace_id, lead_id, kind, data)
-              values (coalesce((select workspace_id from naive_sessions where id = ${sessionId ?? null}), ${OWNER_WORKSPACE_ID}),
-                      (select lead_id from naive_sessions where id = ${sessionId ?? null}), 'naive_webhook',
+              values (coalesce((select workspace_id from agent_runs where id = ${sessionId ?? null}), ${OWNER_WORKSPACE_ID}),
+                      (select lead_id from agent_runs where id = ${sessionId ?? null}), 'naive_webhook',
                       ${JSON.stringify({ type: delivery.type, session_id: sessionId ?? null })}::jsonb)`;
   }
   return c.json({ ok: true });

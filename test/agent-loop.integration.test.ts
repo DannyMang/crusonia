@@ -296,13 +296,13 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
     // Runs without a billing owner are recorded, never debited. A session's own debit ignores Apify rows.
     await recordApifyRun(sql, { ...base, billable: false, run: { id: `${runId}_free`, status: "SUCCEEDED", usageTotalUsd: 0.5 } });
     expect(await settleApifyRun(sql, `${runId}_free`)).toBe(0);
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, consumed_micro_usd, billing_owner_id) values (${sid("meter")}, ${WS}, 'research', 'done', 100000, ${WS})`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, consumed_micro_usd, billing_owner_id) values (${sid("meter")}, ${WS}, 'research', 'done', 100000, ${WS})`;
     expect(await settleSessionUsage(sql, sid("meter"))).toBe(20);
   });
 
   test("auto-confirm: parallel, idempotent; a call another handler claimed counts as allowed, so the session stays running", async () => {
     const sessionId = sid("idle");
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status) values (${sessionId}, ${WS}, 'find_leads', 'running')`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status) values (${sessionId}, ${WS}, 'find_leads', 'running')`;
     const pendingActions = [1, 2, 3].map((n) => ({ kind: "tool" as const, tool_call_id: `c${n}`, name: "crusonia.search_web", args: { query: `q${n}` } }));
     const nv = provider((c) => (c.url.endsWith("/tool_confirmations") ? Response.json({}) : undefined));
     const first = await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
@@ -313,7 +313,7 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
     const second = await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
     expect(second.auto_allowed).toHaveLength(3);
     expect(nv.calls).toHaveLength(3);
-    expect((await sql`select status from naive_sessions where id = ${sessionId}`)[0]!.status).toBe("running");
+    expect((await sql`select status from agent_runs where id = ${sessionId}`)[0]!.status).toBe("running");
     expect((await sql`select count(*)::int as n from events where kind = 'naive_idle' and data->>'session_id' = ${sessionId}`)[0]!.n).toBe(1);
     expect((await sql`select count(*)::int as n from events where kind = 'naive_tool_auto_allowed' and data->>'session_id' = ${sessionId}`)[0]!.n).toBe(3);
 
@@ -360,8 +360,8 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
       const nv = provider((c) => (c.url.endsWith("/v1/sessions") ? Response.json({ id: sid("review"), status: "running" }) : undefined));
       await startResearch(sql, env, WS, { lead_ids: [id] }, "test", nv.fn);
       expect(nv.calls[0]!.body.message).toContain("[hiring] (required) A sales hire in the last 90 days");
-      expect((await sql`select input from naive_sessions where id = ${sid("review")}`)[0]!.input).toMatchObject({ workflow_version: v2.version });
-      await sql`update naive_sessions set status = 'done' where id = ${sid("review")}`;
+      expect((await sql`select input from agent_runs where id = ${sid("review")}`)[0]!.input).toMatchObject({ workflow_version: v2.version });
+      await sql`update agent_runs set status = 'done' where id = ${sid("review")}`;
 
       // A score without the required evidence is not stored: the lead pauses with a question.
       const paused = await saveResearch(sql, WS, {
@@ -425,7 +425,7 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
       const { session_id } = await startFindLeads(sql, env, WS, 5, "test", nv.fn, { likeLeadId: likeId });
       expect(session_id).toBe(sid("find"));
       expect(nv.calls[0]!.body.message).toContain(`companies like lead ${likeId}`);
-      expect((await sql`select input from naive_sessions where id = ${session_id}`)[0]!.input).toMatchObject({ count: 5, like_lead_id: likeId });
+      expect((await sql`select input from agent_runs where id = ${session_id}`)[0]!.input).toMatchObject({ count: 5, like_lead_id: likeId });
 
       // The run's add_leads call, as the trace stores it.
       const added = await addLeads(sql, WS, [found("found1"), found("like")]);
@@ -452,7 +452,7 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
 
   test("traces: the full event trace is stored and paginated, exported, and pruned after the retention window", async () => {
     const sessionId = sid("trace");
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, consumed_micro_usd, created_at, updated_at)
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, consumed_micro_usd, created_at, updated_at)
               values (${sessionId}, ${WS}, 'find_leads', 'done', 250000, now() - interval '1 hour', now() - interval '1 hour')`;
     const big = "y".repeat(80_000);
     const all = Array.from({ length: 7 }, (_, i) => ({
@@ -487,8 +487,8 @@ suite("agent loop v2 (database, mocked Naive and Apify)", () => {
       skipped: expect.stringContaining("read-only"),
     });
 
-    await sql`update naive_sessions set created_at = now() - interval '400 days' where id = ${sessionId}`;
+    await sql`update agent_runs set created_at = now() - interval '400 days' where id = ${sessionId}`;
     expect(await pruneTraces(sql, { ...env, TRACE_RETENTION_DAYS: "365" })).toBeGreaterThanOrEqual(6);
-    expect((await sql`select count(*)::int as n from naive_session_events where session_id = ${sessionId}`)[0]!.n).toBe(0);
+    expect((await sql`select count(*)::int as n from agent_run_events where session_id = ${sessionId}`)[0]!.n).toBe(0);
   });
 });

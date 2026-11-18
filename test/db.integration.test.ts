@@ -197,7 +197,7 @@ suite("database integration (mocked providers)", () => {
   test("Naive idle: allowlisted tools are auto-allowed once, others and questions become approvals", async () => {
     const lead = await newLead("naive");
     const sessionId = `ses_it_${run}_1`;
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
     const nv = provider([(c) => (c.method === "POST" ? ok({}, 202) : undefined)]);
     const pendingActions = [
       { tool_call_id: "c1", name: "crusonia.get_lead", args: { lead_id: lead.id } },
@@ -226,12 +226,12 @@ suite("database integration (mocked providers)", () => {
     expect(await failure(answerQuestion(deps, question, { other: "x" }))).toBe("400 invalid_answers");
     await answerQuestion(deps, question, { mailbox: "hi@example.com" });
     expect(nv.calls.at(-1)).toMatchObject({ url: `https://api.vetta.sh/v1/sessions/${sessionId}/answers`, body: { tool_call_id: "c3", answers: { mailbox: "hi@example.com" } } });
-    expect((await sql`select status from naive_sessions where id = ${sessionId}`)[0]!.status).toBe("running");
+    expect((await sql`select status from agent_runs where id = ${sessionId}`)[0]!.status).toBe("running");
   });
 
   test("onboarding answers its own question instead of waiting on the owner", async () => {
     const sessionId = `ses_it_${run}_onboard`;
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status) values (${sessionId}, ${WS}, 'onboarding', 'running')`;
+    await sql`insert into agent_runs (id, workspace_id, purpose, status) values (${sessionId}, ${WS}, 'onboarding', 'running')`;
     const nv = provider([(c) => (c.method === "POST" ? ok({}, 202) : undefined)]);
     const pendingActions = [{ kind: "question" as const, tool_call_id: "q1", name: "ask_operator", question: { prompt: "Who buys?", fields: [{ key: "buyer" }, { key: "tags", multiple: true }] } }];
     const first = await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
@@ -241,7 +241,7 @@ suite("database integration (mocked providers)", () => {
     const answers = (nv.calls[0]!.body as { answers: Record<string, unknown> }).answers;
     expect(answers.buyer).toContain("best guess");
     expect(Array.isArray(answers.tags)).toBe(true);
-    expect((await sql`select status from naive_sessions where id = ${sessionId}`)[0]!.status).toBe("running");
+    expect((await sql`select status from agent_runs where id = ${sessionId}`)[0]!.status).toBe("running");
 
     await handleSessionIdle(sql, env, { sessionId, stopReason: "awaiting_approval", pendingActions }, nv.fn);
     expect(nv.calls).toHaveLength(1);
@@ -249,7 +249,7 @@ suite("database integration (mocked providers)", () => {
 
   test("the cron answers an onboarding question that was already waiting, and closes its card", async () => {
     const sessionId = `ses_it_${run}_onboard_old`;
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, stop_reason, updated_at)
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, stop_reason, updated_at)
               values (${sessionId}, ${WS}, 'onboarding', 'idle', 'awaiting_answer', now() - interval '30 days')`;
     const action = { kind: "question" as const, tool_call_id: "q2", name: "ask_operator", question: { prompt: "Who buys?", fields: [{ key: "buyer" }] } };
     const code = (await createAgentApproval(sql, { workspaceId: WS, sessionId, leadId: null, action, ttlMinutes: 60 }))!;
@@ -261,13 +261,13 @@ suite("database integration (mocked providers)", () => {
     await reconcileSessions(sql, env, nv.fn);
     expect(nv.calls.filter((c) => c.url.endsWith(`/sessions/${sessionId}/answers`))).toHaveLength(1);
     expect(await getApproval(sql, WS, code)).toMatchObject({ status: "answered", decided_via: "auto" });
-    expect((await sql`select status from naive_sessions where id = ${sessionId}`)[0]!.status).toBe("running");
+    expect((await sql`select status from agent_runs where id = ${sessionId}`)[0]!.status).toBe("running");
   });
 
   test("paused: nothing is auto-allowed", async () => {
     const lead = await newLead("paused");
     const sessionId = `ses_it_${run}_p`;
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
     await sql`update workspaces set paused = true where id = ${WS}`;
     const nv = provider([() => ok({}, 202)]);
     try {
@@ -282,7 +282,7 @@ suite("database integration (mocked providers)", () => {
   test("cron: reconciles a session from its events and denies expired tool approvals", async () => {
     const lead = await newLead("cron");
     const sessionId = `ses_it_${run}_c`;
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, updated_at) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running', now() - interval '5 minutes')`;
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, updated_at) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running', now() - interval '5 minutes')`;
     const nv = provider([
       (c) =>
         c.url.startsWith(`https://api.vetta.sh/v1/sessions/${sessionId}/events`)
@@ -299,7 +299,7 @@ suite("database integration (mocked providers)", () => {
       (c) => (c.method === "POST" ? ok({}, 202) : undefined),
     ]);
     expect(await reconcileSessions(sql, env, nv.fn)).toBeGreaterThanOrEqual(1);
-    const [s] = await sql`select status, last_seq from naive_sessions where id = ${sessionId}`;
+    const [s] = await sql`select status, last_seq from agent_runs where id = ${sessionId}`;
     expect(s).toEqual({ status: "running", last_seq: 2 }); // web_search auto-allowed, so it resumed
     const [approval] = await sql`select code from approvals where naive_session_id = ${sessionId} and tool_call_id = 'x1'`;
     expect(approval).toBeDefined();
@@ -323,7 +323,7 @@ suite("database integration (mocked providers)", () => {
     expect(nv.calls[0]!.body).toMatchObject({ agent_id: "agt_ws_copy", metadata: { lead_id: lead.id, purpose: "research", workspace_id: WS } });
     expect(nv.calls[0]!.body.message).toContain("There is no Company summary yet");
     expect((await sql`select stage from leads where id = ${lead.id}`)[0]!.stage).toBe("researching");
-    expect((await sql`select workspace_id, billing_owner_id, workflow_version from naive_sessions where id = ${`ses_it_${run}_r`}`)[0]).toEqual({
+    expect((await sql`select workspace_id, billing_owner_id, workflow_version from agent_runs where id = ${`ses_it_${run}_r`}`)[0]).toEqual({
       workspace_id: WS,
       billing_owner_id: WS,
       workflow_version: "research@3, agent v7",
@@ -392,7 +392,7 @@ suite("database integration (mocked providers)", () => {
     test("agent tool and question approvals last 1 hour by default", async () => {
       const lead = await newLead("ttl-tool");
       const sessionId = `ses_it_${run}_ttl`;
-      await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
+      await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
       const nv = provider([() => ok({}, 202)]);
       const res = await handleSessionIdle(
         sql,
@@ -411,7 +411,7 @@ suite("database integration (mocked providers)", () => {
       for (const code of res.approvals) expect(await lifetime(code)).toBe(HOUR);
 
       const sessionId2 = `ses_it_${run}_ttl2`;
-      await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId2}, ${WS}, ${lead.id}, 'research', 'running')`;
+      await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sessionId2}, ${WS}, ${lead.id}, 'research', 'running')`;
       const custom = await handleSessionIdle(
         sql,
         { ...env, TOOL_APPROVAL_TTL_MINUTES: "5" },
@@ -424,7 +424,7 @@ suite("database integration (mocked providers)", () => {
     test("after an hour the cron denies a tool approval to Naive; a send approval from the same moment stays open", async () => {
       const lead = await newLead("ttl-cron");
       const sessionId = `ses_it_${run}_ttlc`;
-      await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
+      await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${sessionId}, ${WS}, ${lead.id}, 'research', 'running')`;
       const nv = provider([() => ok({}, 202)]);
       const idle = await handleSessionIdle(
         sql,

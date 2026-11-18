@@ -83,7 +83,7 @@ async function onAutopilot(label: string, env: Env, opts: { credits?: number; cr
 }
 
 const session = (ws: string, id: string, over: { status?: string; consumed?: number | null } = {}) =>
-  sql`insert into naive_sessions (id, workspace_id, purpose, status, consumed_micro_usd) values (${`ses_it_${run}_${id}`}, ${ws}, 'research', ${over.status ?? "done"}, ${over.consumed ?? null})`;
+  sql`insert into agent_runs (id, workspace_id, purpose, status, consumed_micro_usd) values (${`ses_it_${run}_${id}`}, ${ws}, 'research', ${over.status ?? "done"}, ${over.consumed ?? null})`;
 
 const refusedBusy = { status: 429, code: "instance_busy" };
 
@@ -106,7 +106,7 @@ suite("going live (database, mocked Naive)", () => {
   afterAll(async () => {
     if (!sql) return;
     await sql`delete from apify_runs where workspace_id = any(${created}::text[]) or run_id like ${`run_it_${run}%`}`;
-    await sql`delete from naive_sessions where id like ${`ses_it_${run}%`}`;
+    await sql`delete from agent_runs where id like ${`ses_it_${run}%`}`;
     await deleteTestWorkspaces(sql, created);
     await sql`delete from settings where key = ${CONTROL_KEY}`;
     await sql`delete from events where workspace_id = 'ws_owner' and kind in ('instance_cap_reached', 'instance_halted', 'instance_resumed') and created_at >= ${startedAt}::timestamptz`;
@@ -144,10 +144,10 @@ suite("going live (database, mocked Naive)", () => {
       const before = (await instanceState(sql, env)).spent_micro_usd;
       await session("ws_owner", "owner", { consumed: 900_000_000 });
       await session(ws, "old", { consumed: 900_000_000 });
-      await sql`update naive_sessions set created_at = now() - interval '25 hours' where id = ${`ses_it_${run}_old`}`;
+      await sql`update agent_runs set created_at = now() - interval '25 hours' where id = ${`ses_it_${run}_old`}`;
       const after = (await instanceState(sql, env)).spent_micro_usd;
       // Not left there: it would also be the owner workspace's own spend today, against its own daily cap.
-      await sql`delete from naive_sessions where id = ${`ses_it_${run}_owner`}`;
+      await sql`delete from agent_runs where id = ${`ses_it_${run}_owner`}`;
       expect(after - before).toBeLessThan(100_000_000);
     });
   });
@@ -184,7 +184,7 @@ suite("going live (database, mocked Naive)", () => {
       expect(await http(key, "POST", "/api/onboarding/read-website", { url: "https://example.com" }, env)).toMatchObject(busy);
       expect(await http(key, "POST", `/api/workflow-definitions/${def!.id}/run`, { lead_ids: [leadId] }, env)).toMatchObject(busy);
       expect(await sql`select 1 from workflow_runs where workspace_id = ${ws}`).toEqual([]);
-      expect(await sql`select 1 from naive_sessions where workspace_id = ${ws}`).toEqual([]);
+      expect(await sql`select 1 from agent_runs where workspace_id = ${ws}`).toEqual([]);
     });
 
     test("an agent asking for more is told, and starts nothing", async () => {
@@ -224,7 +224,7 @@ suite("going live (database, mocked Naive)", () => {
       await addLeads(sql, ws, [{ company: "Queued", domain: `q-${run}.dev`, source: "it", source_url: `https://q-${run}.dev/`, score: 80, qualified: true, rationale: "r" }], { cohort: "c" });
       const [lead] = await sql`select id, variant from leads where workspace_id = ${ws} limit 1`;
       await sql`update workflow_runs set phase = 'researching' where id = ${wf!.id}`;
-      await sql`update naive_sessions set status = 'done' where workspace_id = ${ws}`;
+      await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
       await sql`insert into workflow_run_leads (run_id, lead_id, variant, status) values (${wf!.id}, ${lead!.id}, ${lead!.variant}, 'queued')`;
       const startedBefore = n.sessions.length;
 
@@ -344,7 +344,7 @@ suite("going live (database, mocked Naive)", () => {
       await addLeads(sql, ws, [{ company: "Queued", domain: `dr-${run}.dev`, source: "it", source_url: `https://dr-${run}.dev/`, score: 80, qualified: true, rationale: "r" }], { cohort: "c" });
       const [lead] = await sql`select id, variant from leads where workspace_id = ${ws} limit 1`;
       await sql`update workflow_runs set phase = 'researching' where id = ${wf!.id}`;
-      await sql`update naive_sessions set status = 'done' where workspace_id = ${ws}`;
+      await sql`update agent_runs set status = 'done' where workspace_id = ${ws}`;
       await sql`insert into workflow_run_leads (run_id, lead_id, variant, status) values (${wf!.id}, ${lead!.id}, ${lead!.variant}, 'queued')`;
       await sql`insert into credit_ledger (workspace_id, owner_id, amount, reason, source) values (${ws}, ${ws}, ${-(await getBalance(sql, ws))}, 'usage', ${`test:drain:${ws}`})`;
 

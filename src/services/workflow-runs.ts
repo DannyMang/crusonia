@@ -65,11 +65,11 @@ export async function runWorkflow(
             await sql`
               select l.id, l.stage, l.variant, l.cohort, l.excluded_at from leads l
               where l.workspace_id = ${ws} and l.stage in ('qualified', 'disqualified') and l.excluded_at is null
-                and exists (select 1 from naive_sessions s where s.lead_id = l.id and s.purpose = 'research')
-                and not exists (select 1 from naive_sessions s where s.lead_id = l.id and s.purpose = 'research'
+                and exists (select 1 from agent_runs s where s.lead_id = l.id and s.purpose = 'research')
+                and not exists (select 1 from agent_runs s where s.lead_id = l.id and s.purpose = 'research'
                                 and s.created_at > now() - make_interval(days => ${workflow.trigger.stale_days}))
                 and not exists (select 1 from drafts d where d.lead_id = l.id and d.status in ('draft', 'pending_approval', 'scheduled', 'open'))
-              order by (select max(s.created_at) from naive_sessions s where s.lead_id = l.id and s.purpose = 'research') limit ${limit}`
+              order by (select max(s.created_at) from agent_runs s where s.lead_id = l.id and s.purpose = 'research') limit ${limit}`
           : // No cohort or leads given: new leads this workflow has never run on.
           await sql`
             select l.id, l.stage, l.variant, l.cohort, l.excluded_at from leads l
@@ -83,7 +83,7 @@ export async function runWorkflow(
   }
   const open = new Set(
     (
-      await sql`select lead_id from naive_sessions where workspace_id = ${ws} and purpose in ('research', 'redraft') and status in ('running', 'idle')
+      await sql`select lead_id from agent_runs where workspace_id = ${ws} and purpose in ('research', 'redraft') and status in ('running', 'idle')
                 and lead_id = any(${candidates.map((c) => c.id)}::text[])`
     ).map((r) => r.lead_id as string),
   );
@@ -163,7 +163,7 @@ export async function resumeWorkflow(sql: Sql, env: Env, ws: string, workflowId:
   const leads = await sql`
     select rl.lead_id from workflow_run_leads rl join leads l on l.id = rl.lead_id
     where rl.run_id = ${last.id} and l.stage in ('new', 'no_consent', 'researching')
-      and not exists (select 1 from naive_sessions s where s.workspace_id = ${ws} and s.lead_id = l.id and s.status in ('running', 'idle'))`;
+      and not exists (select 1 from agent_runs s where s.workspace_id = ${ws} and s.lead_id = l.id and s.status in ('running', 'idle'))`;
   if (!leads.length) return null;
   return runWorkflow(sql, env, ws, workflowId, { version: last.version as number, lead_ids: leads.map((r) => r.lead_id as string) }, actor, opts);
 }
@@ -276,15 +276,15 @@ export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: {
       (select count(distinct d.lead_id)::int from drafts d where d.workflow_run_id = r.id and d.status = 'sent') as sent,
       (select count(*)::int from approvals a join drafts d on d.id = a.draft_id
         where d.workflow_run_id = r.id and a.kind = 'send' and a.status = 'pending' and a.expires_at > now()) as waiting,
-      (select count(*)::int from naive_sessions s where s.workflow_run_id = r.id) as sessions,
-      (select count(*)::int from naive_sessions s where s.workflow_run_id = r.id and s.status in ('running', 'idle')) as open_sessions,
-      (select count(*)::int from naive_sessions s where s.workflow_run_id = r.id and s.status = 'error') as error_sessions,
+      (select count(*)::int from agent_runs s where s.workflow_run_id = r.id) as sessions,
+      (select count(*)::int from agent_runs s where s.workflow_run_id = r.id and s.status in ('running', 'idle')) as open_sessions,
+      (select count(*)::int from agent_runs s where s.workflow_run_id = r.id and s.status = 'error') as error_sessions,
       (select coalesce(sum(s.consumed_micro_usd), 0) + coalesce(sum((select sum(a.usage_micro_usd) from apify_runs a where a.session_id = s.id)), 0)
-         from naive_sessions s where s.workflow_run_id = r.id) as cost_micro,
+         from agent_runs s where s.workflow_run_id = r.id) as cost_micro,
       (select coalesce(sum(${creditsSql(sql, "s.consumed_micro_usd")}), 0) + coalesce(sum((select sum(${creditsSql(sql, "a.usage_micro_usd")}) from apify_runs a where a.session_id = s.id)), 0)
-         from naive_sessions s where s.workflow_run_id = r.id) as cost_credits,
-      (select count(*)::int from naive_session_events e join naive_sessions s on s.id = e.session_id where s.workflow_run_id = r.id) as trace_steps,
-      (select array_agg(s.id order by s.created_at) from naive_sessions s where s.workflow_run_id = r.id) as session_ids
+         from agent_runs s where s.workflow_run_id = r.id) as cost_credits,
+      (select count(*)::int from agent_run_events e join agent_runs s on s.id = e.session_id where s.workflow_run_id = r.id) as trace_steps,
+      (select array_agg(s.id order by s.created_at) from agent_runs s where s.workflow_run_id = r.id) as session_ids
     from workflow_runs r
     left join workflow_run_leads rl on rl.run_id = r.id
     left join leads l on l.id = rl.lead_id

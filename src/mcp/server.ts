@@ -104,12 +104,12 @@ type RunRef = { id: string; purpose: string; workflow_version: string | null };
  */
 export async function resolveRun(sql: Sql, ws: string, bearer: BearerIdentity | undefined, runId?: string | null): Promise<RunRef | null> {
   if (runId) {
-    const [s] = await sql`select id, purpose, workflow_version from naive_sessions where workspace_id = ${ws} and input->>'run_id' = ${runId} limit 1`;
+    const [s] = await sql`select id, purpose, workflow_version from agent_runs where workspace_id = ${ws} and input->>'run_id' = ${runId} limit 1`;
     if (s) return s as RunRef;
   }
   if (!bearer || bearer.kind === "owner_token" || bearer.agent) {
     const active = await sql`
-      select id, purpose, workflow_version from naive_sessions where workspace_id = ${ws} and status in ('running', 'idle')
+      select id, purpose, workflow_version from agent_runs where workspace_id = ${ws} and status in ('running', 'idle')
       order by created_at desc limit 2`;
     if (active.length === 1) return active[0] as RunRef;
   }
@@ -173,7 +173,7 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
   // The researcher only sees its target lead: its run id must name a session on that lead (the id is in its first message).
   const runOf = async (runId: string | null | undefined) => {
     if (!runId) throw new ServiceError("invalid", "Pass run_id: the Crusonia run id from your first message.");
-    const [s] = await db()`select lead_id, purpose, input from naive_sessions where workspace_id = ${ws} and input->>'run_id' = ${runId} limit 1`;
+    const [s] = await db()`select lead_id, purpose, input from agent_runs where workspace_id = ${ws} and input->>'run_id' = ${runId} limit 1`;
     if (!s) throw new ServiceError("not_found", `No run with id ${runId}.`);
     return s as { lead_id: string | null; purpose: string; input: { like_lead_id?: string } | null };
   };

@@ -137,7 +137,7 @@ suite("workspaces (database, faked Naive)", () => {
     b.suppressed = `nope-${run}@it.example.com`;
     await addSuppression(sql, B, b.suppressed, "manual", "test");
     b.session = `ses_ws_${run}_b`;
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status) values (${b.session}, ${B}, ${b.lead}, 'research', 'done')`;
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status) values (${b.session}, ${B}, ${b.lead}, 'research', 'done')`;
     await sql`insert into messages (workspace_id, lead_id, direction, provider_message_id, thread_id, from_addr, subject, body, label)
               values (${B}, ${b.lead}, 'in', ${`ws-${run}-reply`}, ${`thr_ws_${run}_b`}, ${b.email}, 'Re: Hi', 'Yes please', 'interested')`;
     await call(keyB, "PUT", "/api/company-summary", { markdown: "# B Corp\n\n## What we sell\n\nB things" });
@@ -215,7 +215,7 @@ suite("workspaces (database, faked Naive)", () => {
     });
 
     test("every tenant table has a NOT NULL workspace_id with no unassigned rows; the owner workspace exists", async () => {
-      const tables = ["leads", "evidence", "lookalikes", "drafts", "approvals", "messages", "naive_sessions", "naive_session_events", "events",
+      const tables = ["leads", "evidence", "lookalikes", "drafts", "approvals", "messages", "agent_runs", "agent_run_events", "events",
         "suppressions", "api_keys", "billing_accounts", "credit_ledger", "crm_sync_queue", "company_summaries"];
       const cols = await sql`select table_name, is_nullable from information_schema.columns
                              where table_schema = 'public' and column_name = 'workspace_id' and table_name = any(${tables}::text[])`;
@@ -498,7 +498,7 @@ suite("workspaces (database, faked Naive)", () => {
     const imported = await sql`select cohort, variant from leads where workspace_id = ${ws} and email like ${`c_-${run}@it.example.com`}`;
     expect(new Set(imported.map((r) => r.cohort))).toEqual(new Set([csv.body.cohort]));
     // Leads an agent run finds are that run's cohort; the run records its workflow version.
-    await sql`insert into naive_sessions (id, workspace_id, purpose, status, input, workflow_version)
+    await sql`insert into agent_runs (id, workspace_id, purpose, status, input, workflow_version)
               values (${`ses_ws_${run}_find`}, ${ws}, 'find_leads', 'done', ${JSON.stringify({ run_id: `run_${run}_find` })}::jsonb, 'research@3, agent v7')`;
     const found = (await tool(key, "add_leads", { run_id: `run_${run}_find`, leads: [{ email: `c3-${run}@it.example.com`, source: "it", source_url: "https://example.com/x" }] })).data;
     const leadId = found.results[0].id as string;
@@ -512,7 +512,7 @@ suite("workspaces (database, faked Naive)", () => {
     // A draft written in a run records the run and its workflow version; one written by a person records none.
     // Consent is a person's decision (an API key gets 403 human_required, src/api/guards.ts): grant it as the owner would.
     await patchLead(sql, ws, leadId, { consent: { text: "opted in" } }, "test");
-    await sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input, workflow_version)
+    await sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, input, workflow_version)
               values (${`ses_ws_${run}_res`}, ${ws}, ${leadId}, 'research', 'running', ${JSON.stringify({ run_id: `run_${run}_res` })}::jsonb, 'research@3, agent v8')`;
     const draft = (await tool(key, "create_draft", { run_id: `run_${run}_res`, lead_id: leadId, subject: "Hi", body: "Body" })).data.draft;
     expect(draft).toMatchObject({ session_id: `ses_ws_${run}_res`, workflow_version: "research@3, agent v8", variant: before });
@@ -600,7 +600,7 @@ suite("workspaces (database, faked Naive)", () => {
       const ws = await createTestWorkspace(sql, `auth_${run}`);
       created.push(ws);
       const key = await testKey(sql, ws, "agent");
-      await sql`insert into naive_sessions (id, workspace_id, purpose, status, input) values
+      await sql`insert into agent_runs (id, workspace_id, purpose, status, input) values
         (${`ses_ws_${run}_r1`}, ${ws}, 'research', 'running', ${JSON.stringify({ run_id: `run_${run}_1` })}::jsonb),
         (${`ses_ws_${run}_o1`}, ${ws}, 'onboarding', 'running', ${JSON.stringify({ run_id: `run_${run}_2` })}::jsonb)`;
       expect((await tool(key, "update_company_summary", { markdown: "# X", run_id: `run_${run}_1` })).data.updated_by).toBe(`agent:ses_ws_${run}_r1`);
@@ -639,10 +639,10 @@ suite("workspaces (database, faked Naive)", () => {
       created.push(ws);
       const e = env({ PAID_STARTS_PER_HOUR: "3", MAX_ACTIVE_SESSIONS: "10", WORKSPACE_DAILY_CAP_USD: "1" });
       expect((await paidStartAllowance(sql, e, ws, 5)).allowed).toBe(3);
-      await sql`insert into naive_sessions (id, workspace_id, purpose, status, consumed_micro_usd) values
+      await sql`insert into agent_runs (id, workspace_id, purpose, status, consumed_micro_usd) values
         (${`ses_ws_${run}_l1`}, ${ws}, 'research', 'done', 100000), (${`ses_ws_${run}_l2`}, ${ws}, 'research', 'done', 100000)`;
       expect(await paidStartAllowance(sql, e, ws, 5)).toMatchObject({ allowed: 1, reason: "rate_limited" });
-      await sql`update naive_sessions set consumed_micro_usd = 600000 where workspace_id = ${ws}`;
+      await sql`update agent_runs set consumed_micro_usd = 600000 where workspace_id = ${ws}`;
       expect(await paidStartAllowance(sql, e, ws, 1)).toMatchObject({ allowed: 0, reason: "daily_cap_reached" });
       // A per-workspace cap overrides the default.
       await sql`update workspaces set daily_cap_micro_usd = 5000000 where id = ${ws}`;
@@ -713,7 +713,7 @@ suite("workspaces (database, faked Naive)", () => {
       expect((await call(keyA, "GET", `/api/admin/runs?workspace=${B}`, undefined, e)).status).toBe(403);
       expect((await call(`it-owner-${run}`, "GET", `/api/admin/runs/${b.session}/trace`, undefined, e)).status).toBe(403);
 
-      await sql`insert into naive_session_events (workspace_id, session_id, seq, type, data, created_at)
+      await sql`insert into agent_run_events (workspace_id, session_id, seq, type, data, created_at)
                 values (${B}, ${b.session}, 1, 'message.completed', '{"role":"user","content":"Research lead"}'::jsonb, now())`;
       const runs = await call(admin, "GET", `/api/admin/runs?workspace=${B}`, undefined, e);
       expect(runs.status).toBe(200);

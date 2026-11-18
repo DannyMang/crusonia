@@ -378,27 +378,27 @@ async function statsFor(sql: Sql, ids: string[]): Promise<Map<string, DefStats>>
     -- What each run cost: its sessions' agent time and the Apify runs they started.
     spend as (
       select r.workflow_id, r.id as run_id, s.created_at, s.consumed_micro_usd as micro
-      from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = any(${ids}::text[])
+      from agent_runs s join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = any(${ids}::text[])
       union all
       select r.workflow_id, r.id, s.created_at, a.usage_micro_usd
-      from apify_runs a join naive_sessions s on s.id = a.session_id join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = any(${ids}::text[])
+      from apify_runs a join agent_runs s on s.id = a.session_id join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = any(${ids}::text[])
     )
     select d.id as workflow_id,
-      (select count(*)::int from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id
+      (select count(*)::int from agent_runs s join workflow_runs r on r.id = s.workflow_run_id
         where r.workflow_id = d.id and s.status in ('running', 'idle')) as running,
       (select count(*)::int from approvals a join drafts dr on dr.id = a.draft_id
         where dr.workflow_id = d.id and a.kind = 'send' and a.status = 'pending' and a.expires_at > now()) as waiting_drafts,
       (select count(*)::int from workflow_run_leads rl join leads l on l.id = rl.lead_id
         where rl.run_id = last.id and l.stage in ('new', 'no_consent', 'researching')
-          and not exists (select 1 from naive_sessions s where s.lead_id = l.id and s.status in ('running', 'idle'))) as remaining,
+          and not exists (select 1 from agent_runs s where s.lead_id = l.id and s.status in ('running', 'idle'))) as remaining,
       (select coalesce(sum(x.micro), 0) from spend x where x.workflow_id = d.id and x.created_at > now() - interval '7 days') as spend_week_micro,
       (select coalesce(sum(x.micro), 0) from spend x where x.run_id = last.id) as spend_last_run_micro,
       (select coalesce(sum(${creditsSql(sql, "x.micro")}), 0) from spend x where x.workflow_id = d.id and x.created_at > now() - interval '7 days') as spend_week_credits,
       (select coalesce(sum(${creditsSql(sql, "x.micro")}), 0) from spend x where x.run_id = last.id) as spend_last_run_credits,
       last.id as last_run_id, last.started_at as last_run_started_at, last.test as last_run_test,
-      (select count(*)::int from naive_sessions s where s.workflow_run_id = last.id and s.status in ('running', 'idle')) as last_run_running,
-      (select count(*)::int from naive_sessions s where s.workflow_run_id = last.id and s.status = 'error') as last_run_errors,
-      (select count(*)::int from naive_sessions s where s.workflow_run_id = last.id) as last_run_sessions,
+      (select count(*)::int from agent_runs s where s.workflow_run_id = last.id and s.status in ('running', 'idle')) as last_run_running,
+      (select count(*)::int from agent_runs s where s.workflow_run_id = last.id and s.status = 'error') as last_run_errors,
+      (select count(*)::int from agent_runs s where s.workflow_run_id = last.id) as last_run_sessions,
       (select count(*)::int from workflow_run_leads rl where rl.run_id = last.id and rl.status in ('started', 'found', 'queued')) as last_run_found,
       (select count(*)::int from workflow_run_leads rl join leads l on l.id = rl.lead_id where rl.run_id = last.id and rl.status = 'started'
         and (l.score is not null or l.stage in ('qualified', 'disqualified', 'needs_review', 'awaiting_approval', 'sent', 'replied', 'interested', 'not_interested', 'meeting_booked'))) as last_run_researched,

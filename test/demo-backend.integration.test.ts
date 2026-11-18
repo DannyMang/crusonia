@@ -257,7 +257,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     const ada = leads.find((l) => l.id === adaId)!;
     const rows = await sql`select lead_id, variant, cohort, status, session_id from workflow_run_leads where run_id = ${runId}`;
     expect(rows.find((r) => r.lead_id === adaId)).toMatchObject({ variant: ada.variant, cohort, status: "started" });
-    const sessions = await sql`select id, workflow_run_id, workflow_def_version, cohort from naive_sessions where workflow_run_id = ${runId}`;
+    const sessions = await sql`select id, workflow_run_id, workflow_def_version, cohort from agent_runs where workflow_run_id = ${runId}`;
     expect(sessions).toHaveLength(2);
     expect(sessions[0]).toMatchObject({ workflow_def_version: 1, cohort });
 
@@ -266,7 +266,7 @@ suite("demo backend (database, mocked Naive and AgentMail)", () => {
     expect(message).toContain("[e1] (required) A dated hiring signal with a source URL");
     expect(message).not.toContain("Their current outbound tool");
     expect(message).toContain(ada.variant === "A" ? "Lead with the hiring signal" : "Lead with what a tool stack costs");
-    await sql`update naive_sessions set status = 'done' where workflow_run_id = ${runId}`;
+    await sql`update agent_runs set status = 'done' where workflow_run_id = ${runId}`;
 
     // Missing the run version's required evidence: paused for review, no score.
     const paused = await saveResearch(sql, WS, {

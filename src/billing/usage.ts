@@ -1,4 +1,4 @@
-// Metered usage: a finished Naive session debits its reported spend (naive_sessions.consumed_micro_usd) times
+// Metered usage: a finished Naive session debits its reported spend (agent_runs.consumed_micro_usd) times
 // the markup in src/billing/plans.ts, from the workspace that started it (a session with billing_owner_id set is
 // billable; it holds the workspace id, or the legacy owner id for older sessions). Idempotent per session: the debit
 // is the difference between what the spend is worth now and what was already debited for the session, written
@@ -19,7 +19,7 @@ export async function settleSessionUsage(sql: Sql, sessionId: string): Promise<n
     sql`
       with s as (
         select id, workspace_id, lead_id, purpose, billing_owner_id, consumed_micro_usd, ${creditsSql(sql, "consumed_micro_usd")} as total
-        from naive_sessions
+        from agent_runs
         where id = ${sessionId} and billing_owner_id is not null and status in ('done', 'error') and consumed_micro_usd > 0
       ),
       d as (select coalesce(-sum(amount), 0)::bigint as debited from credit_ledger where session_id = ${sessionId} and reason = 'usage')
@@ -52,7 +52,7 @@ export async function settleSessionUsage(sql: Sql, sessionId: string): Promise<n
 export async function settleUsage(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<number> {
   if (env.NAIVE_API_KEY) {
     const missing = await sql`
-      select id from naive_sessions
+      select id from agent_runs
       where billing_owner_id is not null and status in ('done', 'error') and consumed_micro_usd is null
         and updated_at > now() - interval '1 day'
       order by updated_at limit 5`;
@@ -61,14 +61,14 @@ export async function settleUsage(sql: Sql, env: Env, fetchFn?: FetchFn): Promis
       try {
         const remote = await client.getSession(id as string);
         const consumed = typeof remote.consumed_micro_usd === "number" ? Math.round(remote.consumed_micro_usd) : 0;
-        await sql`update naive_sessions set consumed_micro_usd = greatest(coalesce(consumed_micro_usd, 0), ${consumed}::bigint) where id = ${id}`;
+        await sql`update agent_runs set consumed_micro_usd = greatest(coalesce(consumed_micro_usd, 0), ${consumed}::bigint) where id = ${id}`;
       } catch (err) {
         console.error(`usage backfill ${id}:`, err instanceof Error ? err.message : err);
       }
     }
   }
   const owing = await sql`
-    select s.id from naive_sessions s
+    select s.id from agent_runs s
     where s.billing_owner_id is not null and s.status in ('done', 'error') and s.consumed_micro_usd > 0
       and s.updated_at > now() - interval '30 days'
       and ${creditsSql(sql, "s.consumed_micro_usd")} >

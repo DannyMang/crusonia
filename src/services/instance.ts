@@ -36,7 +36,7 @@ export async function instanceState(sql: Sql, env: Env): Promise<InstanceState> 
     select
       (select coalesce(sum(case when status = 'running' then greatest(coalesce(consumed_micro_usd, 0), ${RUNNING_SESSION_RESERVE_MICRO_USD}::bigint)
                                 else coalesce(consumed_micro_usd, 0) end), 0)::text
-         from naive_sessions where workspace_id <> ${OWNER_WORKSPACE_ID} and created_at > now() - interval '1 day') as naive,
+         from agent_runs where workspace_id <> ${OWNER_WORKSPACE_ID} and created_at > now() - interval '1 day') as naive,
       (select coalesce(sum(case when usage_final then coalesce(usage_micro_usd, 0)
                                 else greatest(coalesce(usage_micro_usd, 0), (coalesce(max_charge_usd, 0) * 1000000)::bigint) end), 0)::text
          from apify_runs where workspace_id <> ${OWNER_WORKSPACE_ID} and created_at > now() - interval '1 day') as apify,

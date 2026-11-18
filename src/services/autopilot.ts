@@ -235,7 +235,7 @@ async function gateFor(sql: Sql, env: Env, ws: string, def: { id: string; enable
   const [[w], [active], day, credits, brake] = await Promise.all([
     sql`select autopilot, paused from workspaces where id = ${ws}`,
     sql`select exists (select 1 from workflow_runs where workflow_id = ${def.id} and phase <> 'done')
-           or exists (select 1 from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id
+           or exists (select 1 from agent_runs s join workflow_runs r on r.id = s.workflow_run_id
                       where r.workflow_id = ${def.id} and s.status in ('running', 'idle') and coalesce(s.stop_reason, '') <> 'budget_paused'
                         and s.created_at > now() - make_interval(secs => ${RUN_MAX_AGE_MS / 1000})) as active`,
     spendStatus(sql, env, ws),
@@ -355,7 +355,7 @@ async function provisionNew(sql: Sql, env: Env, tick: Tick): Promise<string[]> {
     where w.autopilot_provisioned_at is null
       and ${canRun(sql, { ...tick, capReached: false })}
       and exists (select 1 from company_summaries v where v.workspace_id = w.id)
-      and not exists (select 1 from naive_sessions s where s.workspace_id = w.id and s.purpose = 'onboarding' and s.status in ('running', 'idle'))
+      and not exists (select 1 from agent_runs s where s.workspace_id = w.id and s.purpose = 'onboarding' and s.status in ('running', 'idle'))
     order by w.created_at
     limit ${MAX_WORKSPACES_PER_TICK}`;
   const done: string[] = [];
@@ -465,7 +465,7 @@ async function startQueued(sql: Sql, env: Env, run: ActiveRun, fetchFn?: FetchFn
   }
   const [open] = await sql`
     select (exists (select 1 from workflow_run_leads where run_id = ${run.id} and status in ('queued', 'starting'))
-         or exists (select 1 from naive_sessions where workflow_run_id = ${run.id} and status in ('running', 'idle') and coalesce(stop_reason, '') <> 'budget_paused')) as busy`;
+         or exists (select 1 from agent_runs where workflow_run_id = ${run.id} and status in ('running', 'idle') and coalesce(stop_reason, '') <> 'budget_paused')) as busy`;
   if (!open?.busy) await finishRun(sql, run);
 }
 
@@ -478,10 +478,10 @@ async function spendStop(sql: Sql, env: Env, run: ActiveRun): Promise<string | n
                coalesce(sum(x.micro) filter (where x.created_at > now() - interval '7 days'), 0)::text as week
         from (
           select s.workflow_run_id as run_id, s.created_at, s.consumed_micro_usd as micro
-          from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}
+          from agent_runs s join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}
           union all
           select s.workflow_run_id, s.created_at, a.usage_micro_usd
-          from apify_runs a join naive_sessions s on s.id = a.session_id join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}
+          from apify_runs a join agent_runs s on s.id = a.session_id join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}
         ) x`,
     spendStatus(sql, env, run.workspace_id),
     creditsEnforcedFor(env, run.workspace_id) ? getBalance(sql, run.workspace_id) : Promise.resolve(1),
@@ -502,7 +502,7 @@ async function advanceRuns(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn): P
     from workflow_runs r
     join workflow_defs d on d.id = r.workflow_id
     join workspaces w on w.id = r.workspace_id
-    left join naive_sessions s on s.id = r.find_session_id
+    left join agent_runs s on s.id = r.find_session_id
     where r.phase <> 'done'
     order by r.started_at limit 50`) as ActiveRun[];
   let moved = 0;
@@ -666,7 +666,7 @@ export async function operatorSnapshot(sql: Sql, ws: string) {
     sql`select l.id as lead_id, l.company, l.domain, l.score from leads l
         where l.workspace_id = ${ws} and l.stage = 'qualified' and l.excluded_at is null
           and not exists (select 1 from drafts d where d.lead_id = l.id and d.status not in ('superseded', 'skipped'))
-          and not exists (select 1 from naive_sessions s where s.lead_id = l.id and s.status in ('running', 'idle'))
+          and not exists (select 1 from agent_runs s where s.lead_id = l.id and s.status in ('running', 'idle'))
         order by l.score desc nulls last limit 10`,
     sql`select l.id as lead_id, l.company, l.domain, l.stage, l.updated_at from leads l
         where l.workspace_id = ${ws} and l.stage in ('new', 'no_consent') and l.excluded_at is null and l.updated_at < now() - interval '1 day'
@@ -725,7 +725,7 @@ export async function startOperatorCycle(sql: Sql, env: Env, ws: string, actor: 
     metadata: { purpose: "operate", workspace_id: ws, run_id: runId },
   });
   await sql.transaction([
-    sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input, billing_owner_id, workflow_version)
+    sql`insert into agent_runs (id, workspace_id, lead_id, purpose, status, input, billing_owner_id, workflow_version)
         values (${session.id}, ${ws}, null, 'operate', 'running', ${JSON.stringify({ run_id: runId })}::jsonb, ${ws}, ${naive.workflowVersion})
         on conflict (id) do nothing`,
     sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, null, 'operate_started', ${JSON.stringify({ session_id: session.id, run_id: runId, actor })}::jsonb)`,
@@ -740,12 +740,12 @@ async function runOperators(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
   const rows = (await sql`
     select * from (
     select w.id, w.autopilot_operator_next_at as next_at, w.autopilot_operator_next_at::text as next_at_raw,
-      (select max(s.created_at) from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate') as last_started_at,
-      (select count(*)::int from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate' and s.created_at > now() - interval '1 day') as cycles_today,
-      exists (select 1 from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate' and s.status in ('running', 'idle')) as open_session,
+      (select max(s.created_at) from agent_runs s where s.workspace_id = w.id and s.purpose = 'operate') as last_started_at,
+      (select count(*)::int from agent_runs s where s.workspace_id = w.id and s.purpose = 'operate' and s.created_at > now() - interval '1 day') as cycles_today,
+      exists (select 1 from agent_runs s where s.workspace_id = w.id and s.purpose = 'operate' and s.status in ('running', 'idle')) as open_session,
       exists (select 1 from workflow_runs r where r.workspace_id = w.id and r.phase <> 'done') as active_run,
       -- Something the Operator hasn't seen: a run finished, a reply came in, or a person rated or noted a lead.
-      exists (select 1 from events e where e.workspace_id = w.id and e.created_at > coalesce((select max(s.created_at) from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate'), w.created_at)
+      exists (select 1 from events e where e.workspace_id = w.id and e.created_at > coalesce((select max(s.created_at) from agent_runs s where s.workspace_id = w.id and s.purpose = 'operate'), w.created_at)
               and (e.kind in ('workflow_run_finished', 'email_received') or (e.kind = 'note_added' and e.data->>'author' like 'user:%'))) as changed
     from workspaces w
     where w.autopilot and not w.paused and ${canRun(sql, tick)} and ${hasCredits(sql)}

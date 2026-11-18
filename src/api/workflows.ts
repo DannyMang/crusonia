@@ -1,5 +1,5 @@
 // /api/workflows: start agent work and inspect it. Research runs one Naive session per lead (NAIVE_AGENT_ID);
-// the agent works through our MCP tools and can never send email. Workflows are naive_sessions grouped by
+// the agent works through our MCP tools and can never send email. Workflows are agent_runs grouped by
 // purpose; a run is one session (src/services/runs.ts).
 import { Hono } from "hono";
 import { z } from "zod";
@@ -44,7 +44,7 @@ const TraceQuery = z.object({
 // research session, and `run_sessions` lists all of them (one per lead).
 async function traceTarget(sql: Sql, ws: string, id: string): Promise<{ sessionId: string; sessions?: string[] }> {
   if (!id.startsWith("wfr_")) return { sessionId: id };
-  const rows = await sql`select id from naive_sessions where workspace_id = ${ws} and workflow_run_id = ${id} order by created_at`;
+  const rows = await sql`select id from agent_runs where workspace_id = ${ws} and workflow_run_id = ${id} order by created_at`;
   if (!rows.length) throw new ApiError(404, "not_found", `Workflow run ${id} has no research sessions yet`);
   return { sessionId: rows[0]!.id as string, sessions: rows.map((r) => r.id as string) };
 }

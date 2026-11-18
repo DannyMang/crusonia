@@ -201,7 +201,7 @@ const RUNNING_TEXT: Record<string, string> = {
 export async function runningNow(sql: Sql, ws: string) {
   const rows = await sql`
     select s.id, s.purpose, s.status, s.stop_reason, s.lead_id, coalesce(l.company, l.name, l.domain, l.email) as who
-    from naive_sessions s left join leads l on l.id = s.lead_id
+    from agent_runs s left join leads l on l.id = s.lead_id
     where s.workspace_id = ${ws} and s.status in ('running', 'idle') and coalesce(s.stop_reason, '') <> 'budget_paused'
     order by s.created_at desc limit 20`;
   return rows.map((r) => ({
