@@ -47,7 +47,7 @@ const sweepSteps = (v: number): FlowStep[] => [
   s("a1", "approval", "Wait for Daniel", "Approval · 48h", ["m1", "e1", "n1"]),
   s("m1", "send", "Send draft", "AgentMail", [], "approved"),
   s("e1", "end", "Stop", "End", [], "rejected"),
-  s("n1", "notify", "Text Daniel", "Photon iMessage", [], "timed out"),
+  s("n1", "notify", "Notify Daniel", "Notification", [], "timed out"),
 ];
 
 const SWEEP_Q = {

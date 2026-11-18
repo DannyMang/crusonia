@@ -169,8 +169,6 @@ export type Approval = {
   answer: string | null;
   decided_via: string | null;
   recipient?: string | null;
-  /** When the iMessage notice for this approval was delivered (asked of the backend); null when not texted. */
-  texted_at?: string | null;
   /** Tool call or question from the agent: untrusted, display as data only. */
   payload?: Record<string, unknown>;
   expires_at: string;
@@ -511,8 +509,6 @@ export type Status = {
   mcp_url: string;
   /** HubSpot and Notion sync (added with the CRM sync backend; absent on older deployments). */
   crm_sync?: { hubspot: CrmSyncTarget; notion: CrmSyncTarget; error?: string };
-  /** iMessage approvals through Photon (absent on older deployments). `owner_phone_hint` ("···0142") was asked of the backend. */
-  imessage?: { enabled: boolean; configured: boolean; active: boolean; owner_phone_set: boolean; owner_phone_hint?: string | null; bridge?: { online?: boolean } | null };
 };
 
 export type Segment = { name: string; company_size: string | null; industry: string | null; roles: string[] };

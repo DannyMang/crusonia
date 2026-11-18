@@ -159,7 +159,7 @@ const DEFAULTS: Partial<Record<StepKind, { title: string; provider: string }>> =
   research: { title: "Research, score", provider: "Researcher" },
   draft: { title: "Draft email", provider: "Drafter" },
   approval: { title: "Wait for me", provider: "Approval · 48h" },
-  notify: { title: "Text me", provider: "Photon iMessage" },
+  notify: { title: "Notify me", provider: "Notification" },
   sync_crm: { title: "Update HubSpot", provider: "Sync CRM" },
 };
 

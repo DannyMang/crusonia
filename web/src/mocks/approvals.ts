@@ -39,8 +39,6 @@ const sendApprovals: ApprovalListItem[] = seeds.map(([code, leadId, name, compan
   expires_at: ahead(expiresIn),
   decided_at: null,
   decided_via: null,
-  // Texted to the owner over iMessage (texted_at, asked of the backend with owner_phone_hint).
-  texted_at: code === "R9D1" || code === "M4T6" ? ago(TTL - expiresIn - MIN) : null,
   created_at: ago(TTL - expiresIn),
   draft: {
     id: `drf_${code.toLowerCase()}`,

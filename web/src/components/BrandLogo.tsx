@@ -22,7 +22,6 @@ export const BRAND_LABEL = {
   hubspot: "HubSpot",
   naive: "Naive",
   notion: "Notion",
-  photon: "Photon",
   stripe: "Stripe",
 } as const;
 export type BrandName = keyof typeof BRAND_LABEL;

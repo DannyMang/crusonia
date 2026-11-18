@@ -216,7 +216,7 @@ describe("Terms and Privacy", () => {
 
   test("Privacy names what the product really does", async () => {
     const text = await read("web/src/pages/legal/Privacy.tsx");
-    for (const word of ["Cloudflare", "Neon", "Clerk", "Naive", "Apify", "AgentMail", "Stripe", "HubSpot and Notion", "Photon", "180 days", "public web pages", "Agent traces", "audit trail"]) {
+    for (const word of ["Cloudflare", "Neon", "Clerk", "Naive", "Apify", "AgentMail", "Stripe", "HubSpot and Notion", "180 days", "public web pages", "Agent traces", "audit trail"]) {
       expect(text).toContain(word);
     }
   });

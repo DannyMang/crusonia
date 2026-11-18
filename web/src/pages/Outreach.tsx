@@ -1,8 +1,7 @@
 // Outreach at /app/outreach (Paper: "Final · Outreach · Approvals" and "Final · Outreach · Tasks"), two tabs:
 // - Approvals: what the agent wants to send by email, one exact draft version per request code. Approve & send
 //   takes two presses (it emails a real person); Edit saves a new version, which gets a new code and replaces the
-//   approval; Reject takes an optional reason. A texted approval shows "iMessage", and with iMessage on the phone
-//   panel shows the thread. Tool calls and agent questions open the existing detail views.
+//   approval; Reject takes an optional reason. Tool calls and agent questions open the existing detail views.
 // - Tasks: the manual queue (LinkedIn, X, warm intro, own mailbox): copy the text, open the profile, send it
 //   yourself, mark it sent or skip it; after sending, record the outcome. Recent replies sit on the right.
 // Routes: /app/outreach(/:code) and /app/outreach/tasks(/:id); /app/approvals(/:code) redirects here.
@@ -16,14 +15,13 @@ import { Page } from "../components/AppShell.tsx";
 import { QuestionDetail, ToolDetail } from "../components/approvals/AgentDetail.tsx";
 import { isTypingTarget, useNow } from "../components/approvals/controls.tsx";
 import type { OnDecided } from "../components/approvals/parts.tsx";
-import { MailIcon, ThumbUpIcon } from "../components/core-icons.tsx";
+import { MailIcon } from "../components/core-icons.tsx";
 import { fitOf } from "../components/leads/core.tsx";
-import { Logo } from "../components/icons.tsx";
 import { CharCount, CitedBody, channelOf, TaskActions } from "../components/outreach/task.tsx";
 import { EmptyState, QueryError, ReplyLabel, Skeleton } from "../components/ui.tsx";
-import { clock, cx, shortDate, timeLeft } from "../lib/format.ts";
+import { cx, shortDate, timeLeft } from "../lib/format.ts";
 import { sourceLabel } from "../lib/citations.ts";
-import { keys, useApprovals, useReplies, useStatus, useTasks } from "../queries.ts";
+import { keys, useApprovals, useReplies, useTasks } from "../queries.ts";
 
 type Tab = "approvals" | "tasks";
 
@@ -51,7 +49,7 @@ export default function Outreach() {
     <Page className="gap-5 px-4 pb-14 pt-6 sm:px-8 sm:pt-8">
       <header className="flex h-10 shrink-0 items-center justify-between gap-4">
         <h1 className="text-xl/7 font-semibold tracking-[-0.01em] text-ink">Outreach</h1>
-        <div className="flex items-center gap-2">{tab === "approvals" ? <IMessagePill /> : <TasksPill />}</div>
+        <div className="flex items-center gap-2">{tab === "approvals" ? null : <TasksPill />}</div>
       </header>
       <div className="flex shrink-0 items-end justify-between gap-4 border-b border-b-[#200D0D14]">
         <nav aria-label="Outreach" className="flex items-center gap-6">
@@ -93,18 +91,6 @@ function TabLink({ to, active, count, children }: { to: string; active: boolean;
 
 const headerPill = "flex h-8 shrink-0 items-center gap-2 rounded-full border border-[#200D0D1A] px-3 text-[13px]/4 font-medium text-ink";
 
-function IMessagePill() {
-  const status = useStatus();
-  const im = status.data?.imessage;
-  if (!im?.active) return null;
-  return (
-    <span className={headerPill}>
-      <span className={cx("size-1.5 rounded-full", im.bridge?.online === false ? "bg-[#200D0D4D]" : "bg-green")} />
-      {im.owner_phone_hint ? `iMessage linked to ${im.owner_phone_hint}` : "iMessage on"}
-    </span>
-  );
-}
-
 function TasksPill() {
   const open = useTasks("open");
   const sent = useTasks("sent");
@@ -127,7 +113,6 @@ function ApprovalsTab({ onToast }: { onToast: (m: string) => void }) {
   const code = raw?.toUpperCase();
   const navigate = useNavigate();
   const now = useNow(1000);
-  const status = useStatus();
   const pending = useApprovals({ status: "pending" });
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const items = useMemo(
@@ -179,8 +164,6 @@ function ApprovalsTab({ onToast }: { onToast: (m: string) => void }) {
     );
 
   const rest = items.filter((a) => a.code !== selected?.code);
-  // The phone shows the thread for an approval that was texted to the owner.
-  const phone = Boolean(status.data?.imessage?.active) && selected?.kind === "send" && texted(selected);
   return (
     <div className="flex items-start gap-5">
       <div className="flex min-w-0 grow basis-0 flex-col gap-4">
@@ -207,7 +190,7 @@ function ApprovalsTab({ onToast }: { onToast: (m: string) => void }) {
                     {a.lead?.company && a.lead.name ? <span className="font-normal text-muted"> · {a.lead.company}</span> : null}
                   </span>
                   <span className="shrink-0 text-xs/4 tabular-nums text-muted">
-                    {a.code} · {texted(a) ? "iMessage" : a.kind === "send" ? `expires in ${timeLeft(a.expires_at, now)}` : a.kind === "tool" ? "Tool call" : "Question"}
+                    {a.code} · {a.kind === "send" ? `expires in ${timeLeft(a.expires_at, now)}` : a.kind === "tool" ? "Tool call" : "Question"}
                   </span>
                 </Link>
               </li>
@@ -215,13 +198,11 @@ function ApprovalsTab({ onToast }: { onToast: (m: string) => void }) {
           </ul>
         ) : null}
       </div>
-      {phone && selected ? <PhonePanel a={selected} /> : null}
     </div>
   );
 }
 
 const who = (a: ApprovalListItem) => a.lead?.name ?? a.lead?.company ?? a.recipient ?? a.lead?.email ?? "Agent";
-const texted = (a: ApprovalListItem) => Boolean(a.texted_at) || a.decided_via === "imessage";
 
 function SendCard({ a, now, onDecided, editingRef }: { a: ApprovalListItem; now: number; onDecided: OnDecided; editingRef: { current: boolean } }) {
   const api = useApi();
@@ -315,7 +296,6 @@ function SendCard({ a, now, onDecided, editingRef }: { a: ApprovalListItem; now:
           {a.lead?.company && a.lead.name ? <span className="font-[450] text-muted"> · {a.lead.company}</span> : null}
         </h2>
         <div className="flex shrink-0 items-center gap-1.5">
-          {texted(a) ? <span className="flex h-6 items-center rounded-full bg-pill px-2.25 text-xs/4 font-medium text-ink">iMessage</span> : null}
           {draft ? <span className="flex h-6 items-center rounded-md border border-[#200D0D1A] px-2.25 text-xs/4 font-medium tabular-nums text-ink">v{draft.version}</span> : null}
           <span className="flex h-6 items-center rounded-md border border-[#200D0D1A] px-2.25 text-xs/4 font-medium tabular-nums text-ink">Code {a.code}</span>
           <span className={cx("flex h-6 items-center rounded-full bg-pill px-2.25 text-xs/4 font-medium tabular-nums", urgent ? "text-[#B42318]" : "text-ink")}>
@@ -444,52 +424,6 @@ function ActionPill({
       {children}
     </button>
   );
-}
-
-/** The approval as it reads on the owner's phone (iMessage through Photon): the notice, the draft, and a decision made by text. */
-function PhonePanel({ a }: { a: ApprovalListItem }) {
-  const draft = a.draft;
-  const at = a.texted_at ?? a.created_at;
-  const preview = draft ? (draft.body.length > 150 ? `${draft.body.slice(0, 150).trimEnd()}…` : draft.body) : null;
-  const byText = a.decided_via === "imessage";
-  return (
-    <aside aria-label="iMessage" className="hidden h-185 w-90 shrink-0 flex-col rounded-[56px] bg-[#1B1B1D] p-2.5 xl:flex">
-      <div className="flex min-h-0 grow basis-0 flex-col overflow-clip rounded-[46px] bg-white">
-        <div className="flex flex-col items-center gap-1 border-b border-b-[#E5E5EA] bg-[#F9F9F9] px-4 pb-2.5 pt-10">
-          <span className="flex size-11 items-center justify-center rounded-full bg-lime">
-            <Logo size={28} />
-          </span>
-          <span className="text-xs/3.5 font-medium text-black">Crusonia</span>
-        </div>
-        <div className="flex min-h-0 grow basis-0 flex-col gap-1.5 overflow-y-auto px-3 pb-2.5 pt-3.5">
-          <span className="self-center pb-1 text-[11px]/3.5 font-medium text-[#6C6C70]">
-            iMessage · {shortDate(at)} {clock(at)}
-          </span>
-          <Bubble>
-            Draft for {who(a)}
-            {a.lead?.company && a.lead.name ? ` at ${a.lead.company}` : ""}. {a.lead?.has_consent ? "Opted in. " : ""}Code {a.code}.
-          </Bubble>
-          {draft ? (
-            <Bubble className="relative flex flex-col gap-1.5">
-              <span className="text-xs/4 font-semibold text-[#3C3C43]">Subject: {draft.subject}</span>
-              <span>{preview}</span>
-              {byText && a.status === "approved" ? (
-                <span className="absolute -right-3 -top-3.5 flex size-8 items-center justify-center rounded-full border-2 border-white bg-ink text-white">
-                  <ThumbUpIcon size={15} />
-                </span>
-              ) : null}
-            </Bubble>
-          ) : null}
-          <Bubble>Thumbs up to send, thumbs down to reject.</Bubble>
-          {byText ? <Bubble>{a.status === "approved" ? `Approved ${a.code}.` : a.status === "rejected" ? `Rejected ${a.code}.` : `Answered ${a.code}.`}</Bubble> : null}
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-function Bubble({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cx("max-w-64.5 self-start rounded-[18px] bg-[#E9E9EB] px-3 py-2 text-sm/4.75 text-black [overflow-wrap:anywhere]", className)}>{children}</div>;
 }
 
 // ---------- tasks ----------

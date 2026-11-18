@@ -35,9 +35,6 @@ const SECRETS: Record<string, string[]> = {
   naive: ["NAIVE_API_KEY"],
 };
 
-/** iMessage approvals run only for the owner workspace with the bridge on; everyone else sees "Coming soon". */
-const imessageOn = (s: Status | undefined) => Boolean(s?.imessage?.active);
-
 const providerState = (p: ProviderStatus | undefined, known: boolean): State => (!known || !p ? "unknown" : p.configured ? "connected" : "needs_key");
 
 /** The instance's own accounts: HubSpot and Notion sync only the owner workspace, and only the owner can add a key or open the consoles. */
@@ -72,9 +69,9 @@ export default function Integrations() {
         clerkEnabled ? "connected" : "local",
       ]
     : [];
-  const connected = states.filter((x) => x === "connected").length + (imessageOn(s) ? 1 : 0);
+  const connected = states.filter((x) => x === "connected").length;
   const needs = states.filter((x) => x === "needs_key").length;
-  const soon = states.filter((x) => x === "soon").length + (imessageOn(s) ? 0 : 1);
+  const soon = states.filter((x) => x === "soon").length;
 
   return (
     <>
@@ -451,7 +448,7 @@ function PlatformCard({ status, known, owner }: CardProps) {
     <Card className="flex flex-col px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 pb-2">
         <h2 className="text-[15px]/4.5 font-medium text-ink">Platform</h2>
-        <div className="text-[13px]/4 font-medium text-faint">Runs the agent, signs you in, and {imessageOn(status) ? "" : "(soon) "}asks for approvals by text</div>
+        <div className="text-[13px]/4 font-medium text-faint">Runs the agent and signs you in</div>
       </div>
       <PlatformRow
         tile="naive"
@@ -475,22 +472,12 @@ function PlatformCard({ status, known, owner }: CardProps) {
         }
       />
       <PlatformRow
+        last
         tile="clerk"
         name="Clerk"
         state={clerkEnabled ? "connected" : "local"}
         description={clerkEnabled ? "Sign-in for your team and the dashboard." : "Sign-in for your team. This local build skips sign-in."}
         action={clerkEnabled && owner ? <Manage href="https://dashboard.clerk.com" what="the Clerk dashboard" /> : undefined}
-      />
-      <PlatformRow
-        last
-        tile="photon"
-        name="Photon iMessage"
-        state={imessageOn(status) ? "connected" : "soon"}
-        description={
-          imessageOn(status) && status?.imessage?.owner_phone_hint
-            ? `Approve or edit drafts by replying to a text. Linked to ${status.imessage.owner_phone_hint}.`
-            : "Approve or edit drafts by replying to a text."
-        }
       />
     </Card>
   );

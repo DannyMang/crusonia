@@ -11,7 +11,6 @@ const PROCESSORS: [string, string][] = [
   ["AgentMail", "sending and receiving email"],
   ["Stripe", "payments, once they open"],
   ["HubSpot and Notion", "only if your workspace connects them"],
-  ["Photon", "iMessage approvals, for the instance owner's own workspace only"],
 ];
 
 export default function Privacy() {

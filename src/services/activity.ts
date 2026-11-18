@@ -71,7 +71,7 @@ export function feedItem(r: FeedRow): FeedItem | null {
     case "workflow_skipped":
       return row(`Next run is waiting · ${SKIP_TEXT[d.reason as string] ?? String(d.reason ?? "")}`, "system");
     case "approval_approved":
-      return row(`You approved the email to ${name}${d.via === "imessage" ? " by iMessage" : ""}`, "you");
+      return row(`You approved the email to ${name}`, "you");
     case "approval_rejected":
       return row(`You rejected the email to ${name}`, "you");
     case "email_sent":

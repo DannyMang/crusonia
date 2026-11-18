@@ -138,23 +138,6 @@ export interface Env {
   NOTION_LEADS_DATABASE_ID?: string;
   // Leads synced per target per cron run (default 5). Keep it small on the Workers Free plan (50 subrequests).
   CRM_SYNC_BATCH_SIZE?: string;
-
-  // iMessage approvals through Photon (src/services/imessage.ts, bridge/). The Photon credentials
-  // (SPECTRUM_PROJECT_ID / SPECTRUM_PROJECT_SECRET) live only on the bridge, never on the Worker.
-  // The bridge only calls the Worker (it accepts no inbound traffic), so the Worker needs no bridge URL.
-  // "true" turns on new notices (default off): new approvals and expiry reminders are texted. Off does not cancel what
-  // was already texted: a tapback on a delivered notice is still applied. To stop that too, stop the bridge.
-  IMESSAGE_ENABLED?: string;
-  // Shared HMAC secret signing the bridge's calls to /webhooks/photon and /webhooks/photon/poll. `openssl rand -hex 32`.
-  BRIDGE_SECRET?: string;
-  // "true" also texts approvals that belong to integration-test fixtures (leads with an it_* source, reserved example
-  // domains, ses_it_* sessions). Off by default so test suites on a shared database never text the owner.
-  IMESSAGE_INCLUDE_TEST_DATA?: string;
-  // Send cap: notices texted per 10 minutes before the rest collapse into one "+N more" text (default 6).
-  IMESSAGE_NOTICE_CAP?: string;
-  // Owner's phone in E.164. Optional on the Worker: when set, /webhooks/photon also refuses any other sender
-  // (the bridge already filters; this is defense in depth).
-  OWNER_PHONE?: string;
 }
 
 type SecretKey = { [K in keyof Env]-?: undefined extends Env[K] ? (Env[K] extends string | undefined ? K : never) : never }[keyof Env];

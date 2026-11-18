@@ -62,7 +62,7 @@ export function useRole() {
   return { role, canManage: role === "owner" || role === "admin", isOwner: role === "owner" };
 }
 
-/** Whether this is the instance owner's workspace: HubSpot, Notion and iMessage run only there. Null until it's known; true on deployments without workspaces. */
+/** Whether this is the instance owner's workspace: HubSpot and Notion run only there. Null until it's known; true on deployments without workspaces. */
 export function useOwnerWorkspace(): boolean | null {
   const list = useWorkspaces();
   if (list.isPending) return null;

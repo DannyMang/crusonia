@@ -69,7 +69,7 @@ describe("canonicalRedirect", () => {
   });
 
   test("the old hostname keeps serving machines", () => {
-    for (const path of ["/health", "/mcp", "/mcp?role=operator", "/webhooks/naive", "/webhooks/photon/poll", "/api/me"]) {
+    for (const path of ["/health", "/mcp", "/mcp?role=operator", "/webhooks/naive", "/webhooks/stripe", "/api/me"]) {
       expect(to(`https://${OLD_HOST}${path}`, "POST")).toBeNull();
       expect(to(`https://${OLD_HOST}${path}`)).toBeNull();
     }
@@ -162,7 +162,7 @@ describe("no production URL in the code", () => {
     });
 
   test("the old hostname appears only in wrangler.jsonc", () => {
-    const found = ["src", "web/src", "bridge", "scripts", "playbooks"]
+    const found = ["src", "web/src", "scripts", "playbooks"]
       .flatMap(files)
       .filter((file) => !/\.(lockb|png|jpg|webp|mp4|webm|woff2?)$/.test(file) && readFileSync(join(ROOT, file), "utf8").includes(OLD_HOST));
     expect(found).toEqual([]);

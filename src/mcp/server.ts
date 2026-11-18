@@ -40,7 +40,6 @@ import { patchLead, searchLeads } from "../services/crm.ts";
 import { CRM_TARGETS } from "../services/crm-fields.ts";
 import { crmStatusSummary, enqueueManualSync } from "../services/crm-sync.ts";
 import { createFollowUp, followupInputSchema, listFollowUps } from "../services/followups.ts";
-import { imessageStatus } from "../services/imessage.ts";
 import { commitImport } from "../services/import-preview.ts";
 import { mergeLeads } from "../services/merge-leads.ts";
 import { listReplies } from "../services/replies.ts";
@@ -684,7 +683,7 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
     "get_integrations",
     {
       title: "Get integration status",
-      description: "Which providers are set up, CRM sync state (HubSpot, Notion: on or off, queue, last sync) and iMessage approvals. Shows state only, never a key.",
+      description: "Which providers are set up, and CRM sync state (HubSpot, Notion: on or off, queue, last sync). Shows state only, never a key.",
       annotations: READ,
     },
     () =>
@@ -692,7 +691,7 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
         const status = await getStatus(env, ws);
         const sql = status.database.reachable ? db() : null;
         const owner = ctx.workspace.owner;
-        return { providers: status.providers, crm_sync: owner ? await crmStatusSummary(sql, env) : null, imessage: owner ? await imessageStatus(sql, env) : null };
+        return { providers: status.providers, crm_sync: owner ? await crmStatusSummary(sql, env) : null };
       }),
   );
 

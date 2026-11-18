@@ -1,5 +1,5 @@
 // Drafts, the approvals that gate email drafts, and manual-channel tasks. Nothing here sends anything: an email
-// goes out only after a human approves its approval row (web / iMessage), in the backend; a manual draft (LinkedIn,
+// goes out only after a human approves its approval row (web), in the backend; a manual draft (LinkedIn,
 // X, intro, the owner's own mailbox) is a task the owner sends personally. Channel rules: ./channels.ts.
 import { z } from "zod";
 import type { Approval, Draft, Sql } from "../db.ts";
