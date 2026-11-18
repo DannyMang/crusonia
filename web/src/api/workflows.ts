@@ -85,9 +85,8 @@ export type RunTrace = {
   next_after_seq: number | null;
   audit: { id: string; lead_id: string | null; kind: string; data: Record<string, unknown>; created_at: string }[];
   approvals: { code: string; kind: string; status: string; summary: string; created_at: string }[];
-  spend: { naive_usd: number | null; credits_debited: number; credits?: number; apify_runs: { usage_usd: number | null }[] };
+  spend: { agent_usd: number | null; credits_debited: number; credits?: number; apify_runs: { usage_usd: number | null }[] };
   retention_days: number;
-  sync?: { ok: boolean; complete?: boolean; error?: string; skipped?: string };
 };
 
 // ---------- client ----------

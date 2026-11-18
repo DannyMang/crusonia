@@ -10,7 +10,6 @@ import { crmStatusSummary } from "../services/crm-sync.ts";
 import { listReplies } from "../services/replies.ts";
 import { getStatus } from "../services/status.ts";
 import { getSummary } from "../services/summary.ts";
-import { workspaceMcpUrl } from "../services/naive-agents.ts";
 import { getWorkspace, type Workspace, type WorkspaceRole } from "../services/workspaces.ts";
 import { platformAdminIds } from "./admin.ts";
 
@@ -63,10 +62,8 @@ dashboard.get("/status", async (c) => {
     ...status,
     workspace_id: ws.id,
     inbox_address: c.env.AGENTMAIL_API_KEY && inbox && inbox.includes("@") ? inbox : null,
-    naive_agent_configured: Boolean(c.env.NAIVE_API_KEY && c.env.NAIVE_AGENT_ID),
-    // Workspace API keys work on the plain /mcp URL; the workspace's own Naive agent uses /mcp?ws=<id>.
+    // Workspace API keys and MCP_TOKEN both work on this URL.
     mcp_url: `${c.env.PUBLIC_URL.replace(/\/+$/, "")}/mcp`,
-    agent_mcp_url: ws.owner ? `${c.env.PUBLIC_URL.replace(/\/+$/, "")}/mcp` : workspaceMcpUrl(c.env, ws.id),
     billing: billingConfig(c.env),
     // Per target: enabled, configured, active, queue_depth, failed, last_sync_at, last_error. Details: GET /api/integrations/crm.
     // CRM sync is the instance's own HubSpot / Notion: the owner workspace only.

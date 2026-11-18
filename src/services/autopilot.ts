@@ -4,8 +4,7 @@
 //   3. starts workflows whose trigger fired: a schedule that is due, new CSV imports, a new reply;
 //   4. runs the Operator (playbooks/operator.md) by the clock, or sooner when something changed.
 //
-// Schedules run here rather than on Naive deployments: a deployment fires one fixed instruction, and every start here
-// needs this moment's Company summary, a run id and the checks below. Each start passes the same gates: the workspace's
+// Every start needs this moment's Company summary, a run id and the checks below. Each start passes the same gates: the workspace's
 // autopilot switch, the global pause, the instance's brakes (./instance.ts), one active run per workflow, the workflow's
 // spend cap, the workspace's daily cap, and credits. Nothing here sends anything: drafts wait for the owner, and paid work
 // past a cap waits for them too.
@@ -19,17 +18,16 @@ import { logEvent, type Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { newId } from "../ids.ts";
 import { ApiError } from "../lib/errors.ts";
-import type { FetchFn } from "../providers/http.ts";
 import { activityFeed, autonomyCounts, runningNow } from "./activity.ts";
 import { getCompanySummary, summaryForMessage, type SummaryView } from "./company-summary.ts";
 import { ServiceError } from "./errors.ts";
 import { brakeFor, instanceBrake, instanceState, noteCapReached, type InstanceState } from "./instance.ts";
 import { paidStartAllowance, spendStatus } from "./limits.ts";
-import { naiveOperatorFor, operatorConfigured } from "./naive-agents.ts";
+import { newRunId, queueRun } from "./agent-runs.ts";
 import { getFindRun, startFindLeads } from "./runs.ts";
 import { createDefinition, DEFAULT_STEPS, everyHoursOf, getDefinition, loadVersion, type DefRow, type VersionRow, type WorkflowStep, type WorkflowTrigger } from "./workflow-defs.ts";
 import { runWorkflow } from "./workflow-runs.ts";
-import { startResearch } from "./workflows.ts";
+import { PLAYBOOK_VERSION, startResearch } from "./workflows.ts";
 import { blockedUserIds, OWNER_WORKSPACE_ID } from "./workspaces.ts";
 
 // ---------- configuration ----------
@@ -66,7 +64,6 @@ export function autopilotAvailable(env: Env, ws: string): boolean {
   return list.includes("*") || list.includes(ws);
 }
 const instanceOn = (env: Env) => Boolean(env.AUTOPILOT_WORKSPACES?.trim());
-const naiveReady = (env: Env) => Boolean(env.NAIVE_API_KEY && env.NAIVE_AGENT_ID);
 
 // ---------- pure decisions ----------
 
@@ -152,9 +149,9 @@ export function autopilotSteps(everyHours: number): WorkflowStep[] {
   return [
     { id: "trigger", kind: "trigger", title: `Every ${everyHours} hours`, next: ["find"] },
     { id: "find", kind: "find", title: `Find about ${DEFAULT_BATCH} companies`, provider: "apify", next: ["research"] },
-    { id: "research", kind: "research", title: "Research the best ones", provider: "naive", next: ["qualified"] },
+    { id: "research", kind: "research", title: "Research the best ones", provider: "agent", next: ["qualified"] },
     { id: "qualified", kind: "condition", title: "Qualified?", next: ["draft", "end"] },
-    { id: "draft", kind: "draft", title: "Draft a task or an email", provider: "naive", branch: "yes", next: ["approval"] },
+    { id: "draft", kind: "draft", title: "Draft a task or an email", provider: "agent", branch: "yes", next: ["approval"] },
     { id: "approval", kind: "approval", title: "You approve every email", next: ["send"] },
     send,
     sync,
@@ -235,8 +232,8 @@ async function gateFor(sql: Sql, env: Env, ws: string, def: { id: string; enable
   const [[w], [active], day, credits, brake] = await Promise.all([
     sql`select autopilot, paused from workspaces where id = ${ws}`,
     sql`select exists (select 1 from workflow_runs where workflow_id = ${def.id} and phase <> 'done')
-           or exists (select 1 from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id
-                      where r.workflow_id = ${def.id} and s.status in ('running', 'idle') and coalesce(s.stop_reason, '') <> 'budget_paused'
+           or exists (select 1 from agent_runs s join workflow_runs r on r.id = s.workflow_run_id
+                      where r.workflow_id = ${def.id} and s.status in ('queued', 'running')
                         and s.created_at > now() - make_interval(secs => ${RUN_MAX_AGE_MS / 1000})) as active`,
     spendStatus(sql, env, ws),
     creditsEnforcedFor(env, ws) ? getBalance(sql, ws) : Promise.resolve(1),
@@ -265,7 +262,7 @@ async function noteSkip(sql: Sql, ws: string, workflowId: string, reason: string
 
 type DueDef = Pick<DefRow, "id" | "workspace_id" | "trigger" | "latest_version" | "enabled" | "next_run_at">;
 
-type StartOpts = { trigger: "schedule" | "operator"; actor: string; count?: number; likeLeadId?: string | null; fetch?: FetchFn };
+type StartOpts = { trigger: "schedule" | "operator"; actor: string; count?: number; likeLeadId?: string | null };
 
 /** A run with a find step: the session that looks for leads. Research follows when it finishes (advanceRun). */
 export async function startFindRun(sql: Sql, env: Env, ws: string, def: Pick<DueDef, "id" | "trigger" | "latest_version">, opts: StartOpts) {
@@ -280,7 +277,7 @@ export async function startFindRun(sql: Sql, env: Env, ws: string, def: Pick<Due
     throw err;
   }
   try {
-    const { session_id } = await startFindLeads(sql, env, ws, count, opts.actor, opts.fetch, {
+    const { session_id } = await startFindLeads(sql, env, ws, count, opts.actor, {
       likeLeadId: opts.likeLeadId,
       autopilot: true,
       workflow: { runId, workflowId: def.id, version: def.latest_version },
@@ -321,7 +318,7 @@ export async function startRun(sql: Sql, env: Env, ws: string, def: DueDef, opts
     def.id,
     { lead_ids: opts.leadIds, trigger: opts.reply ? "reply" : opts.csv ? "csv_import" : opts.trigger },
     opts.actor,
-    { fetch: opts.fetch, research: { autopilot: true, reply: opts.reply } },
+    { research: { autopilot: true, reply: opts.reply } },
   );
 }
 
@@ -355,7 +352,7 @@ async function provisionNew(sql: Sql, env: Env, tick: Tick): Promise<string[]> {
     where w.autopilot_provisioned_at is null
       and ${canRun(sql, { ...tick, capReached: false })}
       and exists (select 1 from company_summaries v where v.workspace_id = w.id)
-      and not exists (select 1 from naive_sessions s where s.workspace_id = w.id and s.purpose = 'onboarding' and s.status in ('running', 'idle'))
+      and not exists (select 1 from agent_runs s where s.workspace_id = w.id and s.purpose = 'onboarding' and s.status in ('queued', 'running'))
     order by w.created_at
     limit ${MAX_WORKSPACES_PER_TICK}`;
   const done: string[] = [];
@@ -413,10 +410,10 @@ async function finishRun(sql: Sql, run: Pick<ActiveRun, "id" | "workspace_id" | 
 }
 
 /** The find step finished: record what it found and queue the best leads for research. */
-async function queueFound(sql: Sql, env: Env, run: ActiveRun, fetchFn?: FetchFn) {
+async function queueFound(sql: Sql, run: ActiveRun) {
   const claimed = await sql`update workflow_runs set phase = 'researching' where id = ${run.id} and phase = 'finding' returning id`;
   if (!claimed.length) return;
-  const { leads } = await getFindRun(sql, env, run.workspace_id, run.find_session_id!, fetchFn);
+  const { leads } = await getFindRun(sql, run.workspace_id, run.find_session_id!);
   const { research, found } = pickForResearch(leads as unknown as Found[], run.trigger_cfg.research ?? DEFAULT_RESEARCH);
   const rows = [
     ...research.map((l) => ({ lead_id: l.id, variant: (l as unknown as { variant: string }).variant, cohort: (l as unknown as { cohort: string | null }).cohort, status: "queued" })),
@@ -435,7 +432,7 @@ async function queueFound(sql: Sql, env: Env, run: ActiveRun, fetchFn?: FetchFn)
 }
 
 /** Starts the next research sessions of a run, as many as the caps allow now. The rest wait for the next tick. */
-async function startQueued(sql: Sql, env: Env, run: ActiveRun, fetchFn?: FetchFn) {
+async function startQueued(sql: Sql, env: Env, run: ActiveRun) {
   const stop = await spendStop(sql, env, run);
   if (stop) {
     await finishRun(sql, run, stop);
@@ -447,7 +444,7 @@ async function startQueued(sql: Sql, env: Env, run: ActiveRun, fetchFn?: FetchFn
     returning lead_id`) as { lead_id: string }[];
   if (claimed.length) {
     const ids = claimed.map((c) => c.lead_id);
-    const result = await startResearch(sql, env, run.workspace_id, { lead_ids: ids }, `autopilot:${run.id}`, fetchFn, { autopilot: true }).catch(async (err) => {
+    const result = await startResearch(sql, env, run.workspace_id, { lead_ids: ids }, `autopilot:${run.id}`, { autopilot: true }).catch(async (err) => {
       await sql`update workflow_run_leads set status = 'queued' where run_id = ${run.id} and status = 'starting'`;
       throw err;
     });
@@ -465,7 +462,7 @@ async function startQueued(sql: Sql, env: Env, run: ActiveRun, fetchFn?: FetchFn
   }
   const [open] = await sql`
     select (exists (select 1 from workflow_run_leads where run_id = ${run.id} and status in ('queued', 'starting'))
-         or exists (select 1 from naive_sessions where workflow_run_id = ${run.id} and status in ('running', 'idle') and coalesce(stop_reason, '') <> 'budget_paused')) as busy`;
+         or exists (select 1 from agent_runs where workflow_run_id = ${run.id} and status in ('queued', 'running'))) as busy`;
   if (!open?.busy) await finishRun(sql, run);
 }
 
@@ -478,10 +475,10 @@ async function spendStop(sql: Sql, env: Env, run: ActiveRun): Promise<string | n
                coalesce(sum(x.micro) filter (where x.created_at > now() - interval '7 days'), 0)::text as week
         from (
           select s.workflow_run_id as run_id, s.created_at, s.consumed_micro_usd as micro
-          from naive_sessions s join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}
+          from agent_runs s join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}
           union all
           select s.workflow_run_id, s.created_at, a.usage_micro_usd
-          from apify_runs a join naive_sessions s on s.id = a.session_id join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}
+          from apify_runs a join agent_runs s on s.id = a.session_id join workflow_runs r on r.id = s.workflow_run_id where r.workflow_id = ${run.workflow_id}
         ) x`,
     spendStatus(sql, env, run.workspace_id),
     creditsEnforcedFor(env, run.workspace_id) ? getBalance(sql, run.workspace_id) : Promise.resolve(1),
@@ -495,14 +492,14 @@ async function spendStop(sql: Sql, env: Env, run: ActiveRun): Promise<string | n
   return null;
 }
 
-async function advanceRuns(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn): Promise<number> {
+async function advanceRuns(sql: Sql, env: Env, tick: Tick): Promise<number> {
   const runs = (await sql`
     select r.id, r.workspace_id, r.workflow_id, r.version, r.phase, r.find_session_id, r.started_at, d.trigger as trigger_cfg,
            w.autopilot, (w.paused or coalesce(w.created_by, '') = any(${tick.blocked}::text[])) as paused, s.status as session_status, s.stop_reason as session_stop
     from workflow_runs r
     join workflow_defs d on d.id = r.workflow_id
     join workspaces w on w.id = r.workspace_id
-    left join naive_sessions s on s.id = r.find_session_id
+    left join agent_runs s on s.id = r.find_session_id
     where r.phase <> 'done'
     order by r.started_at limit 50`) as ActiveRun[];
   let moved = 0;
@@ -519,13 +516,13 @@ async function advanceRuns(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn): P
         // A session out of budget won't go on by itself: what it saved so far is what the run has.
         const ended = run.session_status === "done" || run.session_status === "error" || run.session_stop === "budget_paused";
         if (ended || (!run.find_session_id && Date.now() - new Date(run.started_at).getTime() > 5 * 60_000)) {
-          if (run.find_session_id) await queueFound(sql, env, run, fetchFn);
+          if (run.find_session_id) await queueFound(sql, run);
           else await finishRun(sql, run, "did_not_start");
           moved++;
         }
         continue;
       }
-      await startQueued(sql, env, run, fetchFn);
+      await startQueued(sql, env, run);
       moved++;
     } catch (err) {
       console.error(`autopilot run ${run.id}:`, err instanceof Error ? err.message : err);
@@ -539,7 +536,7 @@ async function advanceRuns(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn): P
 const RETRY_MINUTES = 5;
 
 /** Schedules that are due. A claim moves next_run_at forward first, so two ticks never start the same run. */
-async function startDueSchedules(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
+async function startDueSchedules(sql: Sql, env: Env, tick: Tick) {
   // A skipped schedule stays due, so it starts the minute it can. So those are read apart: fresh ones oldest first, then a
   // few of the skipped at random. One already skipped for no credits costs nothing until it has some again.
   const due = sql`d.enabled and w.autopilot and not w.paused and d.trigger->>'kind' = 'schedule' and (d.next_run_at is null or d.next_run_at <= now()) and ${canRun(sql, tick)}`;
@@ -569,13 +566,13 @@ async function startDueSchedules(sql: Sql, env: Env, tick: Tick, fetchFn?: Fetch
         where id = ${def.id} and (next_run_at is null or next_run_at <= now()) returning id`;
       if (!claim.length) continue;
       try {
-        await startRun(sql, env, ws, def, { trigger: "schedule", actor: "autopilot:schedule", fetch: fetchFn });
+        await startRun(sql, env, ws, def, { trigger: "schedule", actor: "autopilot:schedule"});
         started.push(def.id);
       } catch (err) {
         const code = (err as { code?: string }).code;
         if (code === "no_leads" || code === "active_run") await noteSkip(sql, ws, def.id, code);
         else {
-          // Naive at capacity, or a transient failure: retry soon rather than waiting a whole interval.
+          // A transient failure: retry soon rather than waiting a whole interval.
           await sql`update workflow_defs set next_run_at = now() + make_interval(mins => ${RETRY_MINUTES}) where id = ${def.id}`;
           await noteSkip(sql, ws, def.id, "failed");
           console.error(`autopilot schedule ${def.id}:`, err instanceof Error ? err.message : err);
@@ -593,7 +590,7 @@ async function startDueSchedules(sql: Sql, env: Env, tick: Tick, fetchFn?: Fetch
  * Inbound replies go to a workflow with a reply trigger. Workflows with these triggers only see what arrived after they
  * were created.
  */
-async function startEventRuns(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
+async function startEventRuns(sql: Sql, env: Env, tick: Tick) {
   // Every workspace on Autopilot has a default workflow, so only the ones with an import waiting are read, in random order.
   const defs = (await sql`
     select d.id, d.workspace_id, d.trigger, d.latest_version, d.enabled, d.next_run_at, d.is_autopilot, d.created_at,
@@ -642,7 +639,6 @@ async function startEventRuns(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn)
         leadIds: leads.map((l) => l.id),
         reply: kind === "reply",
         csv: kind === "csv_import",
-        fetch: fetchFn,
       });
       await sql`update workflow_defs set last_skip = null where id = ${def.id} and last_skip is not null`;
       started.push(def.id);
@@ -666,7 +662,7 @@ export async function operatorSnapshot(sql: Sql, ws: string) {
     sql`select l.id as lead_id, l.company, l.domain, l.score from leads l
         where l.workspace_id = ${ws} and l.stage = 'qualified' and l.excluded_at is null
           and not exists (select 1 from drafts d where d.lead_id = l.id and d.status not in ('superseded', 'skipped'))
-          and not exists (select 1 from naive_sessions s where s.lead_id = l.id and s.status in ('running', 'idle'))
+          and not exists (select 1 from agent_runs s where s.lead_id = l.id and s.status in ('queued', 'running'))
         order by l.score desc nulls last limit 10`,
     sql`select l.id as lead_id, l.company, l.domain, l.stage, l.updated_at from leads l
         where l.workspace_id = ${ws} and l.stage in ('new', 'no_consent') and l.excluded_at is null and l.updated_at < now() - interval '1 day'
@@ -710,42 +706,35 @@ export async function agentStartsLeft(sql: Sql, env: Env, ws: string): Promise<n
   return Math.max(0, autopilotConfig(env).agentStartsPerHour - Number(row?.n ?? 0));
 }
 
-export async function startOperatorCycle(sql: Sql, env: Env, ws: string, actor: string, fetchFn?: FetchFn) {
-  const [naive, summary, snapshot, day, starts] = await Promise.all([
-    naiveOperatorFor(sql, env, ws, fetchFn),
-    getCompanySummary(sql, ws),
-    operatorSnapshot(sql, ws),
-    spendStatus(sql, env, ws),
-    agentStartsLeft(sql, env, ws),
-  ]);
-  const runId = newId("run");
-  const session = await naive.client.createSession({
-    agent_id: naive.agentId,
-    message: operatorMessage(runId, summary, snapshot, { daily_left_usd: Math.max(0, day.cap_micro_usd - day.spent_micro_usd) / 1_000_000, agent_starts_left: starts }),
-    metadata: { purpose: "operate", workspace_id: ws, run_id: runId },
-  });
+/** Queues one Operator cycle: the state it decides from goes in its first message, so it needs few calls. */
+export async function startOperatorCycle(sql: Sql, env: Env, ws: string, actor: string) {
+  const [summary, snapshot, day, starts] = await Promise.all([getCompanySummary(sql, ws), operatorSnapshot(sql, ws), spendStatus(sql, env, ws), agentStartsLeft(sql, env, ws)]);
+  const runId = newRunId();
   await sql.transaction([
-    sql`insert into naive_sessions (id, workspace_id, lead_id, purpose, status, input, billing_owner_id, workflow_version)
-        values (${session.id}, ${ws}, null, 'operate', 'running', ${JSON.stringify({ run_id: runId })}::jsonb, ${ws}, ${naive.workflowVersion})
-        on conflict (id) do nothing`,
-    sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, null, 'operate_started', ${JSON.stringify({ session_id: session.id, run_id: runId, actor })}::jsonb)`,
+    queueRun(sql, env, {
+      id: runId,
+      ws,
+      purpose: "operate",
+      message: operatorMessage(runId, summary, snapshot, { daily_left_usd: Math.max(0, day.cap_micro_usd - day.spent_micro_usd) / 1_000_000, agent_starts_left: starts }),
+      workflowVersion: PLAYBOOK_VERSION.operator,
+    }),
+    sql`insert into events (workspace_id, lead_id, kind, data) values (${ws}, null, 'operate_started', ${JSON.stringify({ session_id: runId, run_id: runId, actor })}::jsonb)`,
   ]);
-  return { session_id: session.id, run_id: runId };
+  return { session_id: runId, run_id: runId };
 }
 
-async function runOperators(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
-  if (!operatorConfigured(env)) return [];
+async function runOperators(sql: Sql, env: Env, tick: Tick) {
   const cfg = autopilotConfig(env);
   // Only the ones it might start for, longest waiting first: the limit must not fill up with workspaces that have nothing to do.
   const rows = (await sql`
     select * from (
     select w.id, w.autopilot_operator_next_at as next_at, w.autopilot_operator_next_at::text as next_at_raw,
-      (select max(s.created_at) from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate') as last_started_at,
-      (select count(*)::int from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate' and s.created_at > now() - interval '1 day') as cycles_today,
-      exists (select 1 from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate' and s.status in ('running', 'idle')) as open_session,
+      (select max(s.created_at) from agent_runs s where s.workspace_id = w.id and s.purpose = 'operate') as last_started_at,
+      (select count(*)::int from agent_runs s where s.workspace_id = w.id and s.purpose = 'operate' and s.created_at > now() - interval '1 day') as cycles_today,
+      exists (select 1 from agent_runs s where s.workspace_id = w.id and s.purpose = 'operate' and s.status in ('queued', 'running')) as open_session,
       exists (select 1 from workflow_runs r where r.workspace_id = w.id and r.phase <> 'done') as active_run,
       -- Something the Operator hasn't seen: a run finished, a reply came in, or a person rated or noted a lead.
-      exists (select 1 from events e where e.workspace_id = w.id and e.created_at > coalesce((select max(s.created_at) from naive_sessions s where s.workspace_id = w.id and s.purpose = 'operate'), w.created_at)
+      exists (select 1 from events e where e.workspace_id = w.id and e.created_at > coalesce((select max(s.created_at) from agent_runs s where s.workspace_id = w.id and s.purpose = 'operate'), w.created_at)
               and (e.kind in ('workflow_run_finished', 'email_received') or (e.kind = 'note_added' and e.data->>'author' like 'user:%'))) as changed
     from workspaces w
     where w.autopilot and not w.paused and ${canRun(sql, tick)} and ${hasCredits(sql)}
@@ -792,7 +781,7 @@ async function runOperators(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
         update workspaces set autopilot_operator_next_at = now() + make_interval(mins => ${hours})
         where id = ${w.id} and autopilot_operator_next_at::text is not distinct from ${w.next_at_raw} returning id`;
       if (!claim.length) continue;
-      await startOperatorCycle(sql, env, w.id, "autopilot:operator", fetchFn);
+      await startOperatorCycle(sql, env, w.id, "autopilot:operator");
       started.push(w.id);
     } catch (err) {
       console.error(`autopilot operator ${w.id}:`, err instanceof Error ? err.message : err);
@@ -803,7 +792,7 @@ async function runOperators(sql: Sql, env: Env, tick: Tick, fetchFn?: FetchFn) {
 
 // ---------- starts an agent asks for (MCP tools) ----------
 
-async function requireAgentStart(sql: Sql, env: Env, ws: string, def: { id: string; enabled: boolean }, opts: { respectSwitch: boolean }) {
+async function requireAgentStart(sql: Sql, env: Env, ws: string, def: { id: string; enabled: boolean }, opts: { respectSwitch: boolean; actor: string }) {
   const reason = await gateFor(sql, env, ws, def);
   if (reason && (reason !== "autopilot_off" || opts.respectSwitch)) {
     const text: Record<SkipReason, string> = {
@@ -821,6 +810,12 @@ async function requireAgentStart(sql: Sql, env: Env, ws: string, def: { id: stri
   if ((await agentStartsLeft(sql, env, ws)) <= 0) {
     throw new ServiceError("conflict", `Agents already started ${autopilotConfig(env).agentStartsPerHour} sessions this hour. Try again later.`);
   }
+  // An Operator cycle starts one piece of work, then ends: its next cycle comes when that work has finished.
+  const [cycle] = await sql`
+    select exists (select 1 from agent_runs r where r.workspace_id = ${ws} and 'agent:' || r.id = ${opts.actor} and r.purpose = 'operate')
+       and exists (select 1 from events e where e.workspace_id = ${ws} and e.data->>'actor' = ${opts.actor}
+                   and e.kind in ('research_started', 'find_leads_started', 'workflow_run_started')) as started`;
+  if (cycle?.started) throw new ServiceError("conflict", "This cycle already started a run: one per cycle. Log the cycle and stop.");
 }
 
 async function autopilotDef(sql: Sql, env: Env, ws: string): Promise<DueDef> {
@@ -847,18 +842,18 @@ async function refuseWaiting(sql: Sql, ws: string, leadIds: string[] | undefined
 }
 
 /** MCP find_more_leads: a run of the default workflow, optionally looking for companies like one lead. */
-export async function agentFindMore(sql: Sql, env: Env, ws: string, input: { count?: number; likeLeadId?: string | null; actor: string; respectSwitch: boolean; fetch?: FetchFn }) {
+export async function agentFindMore(sql: Sql, env: Env, ws: string, input: { count?: number; likeLeadId?: string | null; actor: string; respectSwitch: boolean }) {
   const def = await autopilotDef(sql, env, ws);
-  await requireAgentStart(sql, env, ws, def, { respectSwitch: input.respectSwitch });
-  return startFindRun(sql, env, ws, def, { trigger: "operator", actor: input.actor, count: input.count, likeLeadId: input.likeLeadId, fetch: input.fetch });
+  await requireAgentStart(sql, env, ws, def, { respectSwitch: input.respectSwitch, actor: input.actor });
+  return startFindRun(sql, env, ws, def, { trigger: "operator", actor: input.actor, count: input.count, likeLeadId: input.likeLeadId});
 }
 
 /** MCP start_research: research sessions on named leads, under the default workflow (lead ids only, never free text). */
-export async function agentResearch(sql: Sql, env: Env, ws: string, input: { leadIds: string[]; actor: string; respectSwitch: boolean; fetch?: FetchFn }) {
+export async function agentResearch(sql: Sql, env: Env, ws: string, input: { leadIds: string[]; actor: string; respectSwitch: boolean }) {
   await refuseWaiting(sql, ws, input.leadIds);
   const def = await autopilotDef(sql, env, ws);
-  await requireAgentStart(sql, env, ws, def, { respectSwitch: input.respectSwitch });
-  return runWorkflow(sql, env, ws, def.id, { lead_ids: input.leadIds, trigger: "operator" }, input.actor, { fetch: input.fetch, research: { autopilot: true } });
+  await requireAgentStart(sql, env, ws, def, { respectSwitch: input.respectSwitch, actor: input.actor });
+  return runWorkflow(sql, env, ws, def.id, { lead_ids: input.leadIds, trigger: "operator" }, input.actor, { research: { autopilot: true } });
 }
 
 /** MCP run_workflow: a run of any workflow now, through the same gates. */
@@ -867,18 +862,17 @@ export async function agentRunWorkflow(
   env: Env,
   ws: string,
   workflowId: string,
-  input: { leadIds?: string[]; cohort?: string; version?: number; actor: string; respectSwitch: boolean; fetch?: FetchFn },
+  input: { leadIds?: string[]; cohort?: string; version?: number; actor: string; respectSwitch: boolean },
 ) {
   const [def] = (await sql`select id, workspace_id, trigger, latest_version, enabled, next_run_at from workflow_defs where id = ${workflowId} and workspace_id = ${ws}`) as DueDef[];
   if (!def) throw new ServiceError("not_found", `No workflow with id ${workflowId}. list_workflows lists them.`);
   await refuseWaiting(sql, ws, input.leadIds);
-  await requireAgentStart(sql, env, ws, def, { respectSwitch: input.respectSwitch });
+  await requireAgentStart(sql, env, ws, def, { respectSwitch: input.respectSwitch, actor: input.actor });
   const version = (await loadVersion(sql, def.id, input.version ?? def.latest_version)) as VersionRow;
   if (!input.leadIds?.length && !input.cohort && hasFindStep(version.steps ?? [])) {
-    return startFindRun(sql, env, ws, def, { trigger: "operator", actor: input.actor, fetch: input.fetch });
+    return startFindRun(sql, env, ws, def, { trigger: "operator", actor: input.actor});
   }
   return runWorkflow(sql, env, ws, def.id, { lead_ids: input.leadIds, cohort: input.cohort, version: version.version, trigger: "operator" }, input.actor, {
-    fetch: input.fetch,
     research: { autopilot: true },
   });
 }
@@ -886,8 +880,8 @@ export async function agentRunWorkflow(
 // ---------- the tick ----------
 
 /** One minute's work. Each step is independent: one failing doesn't stop the others. */
-export async function runAutopilot(sql: Sql, env: Env, fetchFn?: FetchFn): Promise<Record<string, unknown>> {
-  if (!instanceOn(env) || !naiveReady(env)) return { skipped: "off" };
+export async function runAutopilot(sql: Sql, env: Env): Promise<Record<string, unknown>> {
+  if (!instanceOn(env)) return { skipped: "off" };
   const state = await instanceState(sql, env);
   const capReached = state.spent_micro_usd >= state.cap_micro_usd;
   if (capReached) await noteCapReached(sql, state);
@@ -896,14 +890,14 @@ export async function runAutopilot(sql: Sql, env: Env, fetchFn?: FetchFn): Promi
   const report: Record<string, unknown> = {};
   const steps: [string, () => Promise<unknown>][] = [
     ["provisioned", () => provisionNew(sql, env, tick)],
-    ["advanced", () => advanceRuns(sql, env, tick, fetchFn)],
+    ["advanced", () => advanceRuns(sql, env, tick)],
     // The kill switch stops everyone, so nothing below can start. The cap leaves only the owner's (canRun).
     ...(state.halted
       ? []
       : ([
-          ["schedules", () => startDueSchedules(sql, env, tick, fetchFn)],
-          ["event_runs", () => startEventRuns(sql, env, tick, fetchFn)],
-          ["operators", () => runOperators(sql, env, tick, fetchFn)],
+          ["schedules", () => startDueSchedules(sql, env, tick)],
+          ["event_runs", () => startEventRuns(sql, env, tick)],
+          ["operators", () => runOperators(sql, env, tick)],
         ] as [string, () => Promise<unknown>][])),
   ];
   for (const [name, step] of steps) {

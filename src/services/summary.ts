@@ -108,11 +108,11 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
           -- Sessions still running aren't debited until they end: count what they've used so far.
           (select coalesce(sum(greatest(${creditsSql(sql, "s.consumed_micro_usd")}
                                         - coalesce((select -sum(l.amount) from credit_ledger l where l.session_id = s.id and l.reason = 'usage'), 0), 0)), 0)::text
-             from naive_sessions s
-             where s.workspace_id = ${ws} and s.status in ('running', 'idle') and s.billing_owner_id is not null) as open_credits,
-          -- Raw provider cost behind it: Naive's running totals and Apify run usage.
-          (select sum(consumed_micro_usd)::text from naive_sessions
-             where workspace_id = ${ws} and coalesce(last_event_at, updated_at) >= now() - interval '7 days') as week_naive_micro,
+             from agent_runs s
+             where s.workspace_id = ${ws} and s.status in ('queued', 'running') and s.billing_owner_id is not null) as open_credits,
+          -- Raw provider cost behind it: the agent runs' model spend and Apify run usage.
+          (select sum(consumed_micro_usd)::text from agent_runs
+             where workspace_id = ${ws} and coalesce(last_event_at, updated_at) >= now() - interval '7 days') as week_agent_micro,
           (select sum(usage_micro_usd)::text from apify_runs where workspace_id = ${ws} and created_at >= now() - interval '7 days') as week_apify_micro,
           coalesce((select paused from workspaces where id = ${ws}), false) as paused`,
     sql`with base as (
@@ -123,7 +123,7 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
                  -- A find step scores a lead as it adds it. That's a first look, not research: research is a score from a
                  -- finished research session, or (an agent connected over MCP) a score given later than that.
                  l.score is not null
-                   and (exists (select 1 from naive_sessions s where s.lead_id = l.id and s.purpose = 'research' and s.status = 'done')
+                   and (exists (select 1 from agent_runs s where s.lead_id = l.id and s.purpose = 'research' and s.status = 'done')
                         or exists (select 1 from events e where e.workspace_id = ${ws} and e.lead_id = l.id and e.kind = 'lead_scored'
                                    and e.created_at > l.created_at + interval '30 seconds')) as was_researched
           from leads l
@@ -152,9 +152,9 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
   const workflows = await listWorkflows(sql, ws, { recentRuns: 3, paused });
   const byStage = (counts?.by_stage ?? {}) as Record<string, number>;
   const weekCredits = Number(counts?.week_credits ?? 0) + Number(counts?.open_credits ?? 0);
-  const naiveUsd = microToUsd(counts?.week_naive_micro);
+  const agentUsd = microToUsd(counts?.week_agent_micro);
   const apifyUsd = microToUsd(counts?.week_apify_micro);
-  const providerUsd = naiveUsd === null && apifyUsd === null ? null : Math.round(((naiveUsd ?? 0) + (apifyUsd ?? 0)) * 1_000_000) / 1_000_000;
+  const providerUsd = agentUsd === null && apifyUsd === null ? null : Math.round(((agentUsd ?? 0) + (apifyUsd ?? 0)) * 1_000_000) / 1_000_000;
   return {
     // Cumulative: how many leads got at least this far.
     pipeline: cumulativePipeline((funnel ?? {}) as FunnelCounts, counts?.awaiting_open ?? 0),
@@ -175,14 +175,14 @@ export async function getSummary(sql: Sql, env: Env, ws: string) {
     active_workflows: workflows.filter((w) => w.active_runs > 0),
     recent_replies: replies.data,
     // week_usd is what the last 7 days cost in credits (usage at the markup), not raw provider cost: null until
-    // anything was charged or reported. provider_usd is the raw Naive + Apify cost behind it.
+    // anything was charged or reported. provider_usd is the raw agent + Apify cost behind it.
     spend: {
       week_usd: weekCredits > 0 ? creditsToUsd(weekCredits) : providerUsd === null ? null : 0,
       week_credits: weekCredits,
       provider_usd: providerUsd,
       budget_usd: weeklyBudgetUsd(env),
       budget_credits: budgetCredits(env),
-      // The per-workspace daily cap (src/services/limits.ts): Naive spend of sessions started in the last 24 hours.
+      // The per-workspace daily cap (src/services/limits.ts): agent spend of runs started in the last 24 hours.
       day_usd: microToUsd(today.spent_micro_usd),
       daily_cap_usd: microToUsd(today.cap_micro_usd),
     },

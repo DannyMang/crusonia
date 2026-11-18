@@ -20,7 +20,6 @@ export const BRAND_LABEL = {
   github: "GitHub",
   google: "Google",
   hubspot: "HubSpot",
-  naive: "Naive",
   notion: "Notion",
   stripe: "Stripe",
 } as const;

@@ -1,7 +1,7 @@
 // Running a workflow definition version (./workflow-defs.ts) on a cohort or a set of leads, and its run history.
 //
 // A run pins one version. Every lead it starts records the run, the version and its own stable A/B variant
-// (workflow_run_leads, and leads.workflow_*), then gets one Naive research session whose first message carries that
+// (workflow_run_leads, and leads.workflow_*), then gets one queued research run whose first message carries that
 // version's research questions, evidence requirements, completion criteria and the variant's angle. Drafts and
 // sessions created for the lead afterwards record the run, version and cohort (a trigger in schema.sql).
 //
@@ -12,8 +12,6 @@ import type { Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { newId } from "../ids.ts";
 import { ApiError } from "../lib/errors.ts";
-import type { FetchFn } from "../providers/http.ts";
-import { ServiceError } from "./errors.ts";
 import { requireInstanceOpen } from "./instance.ts";
 import { isPaused } from "./settings.ts";
 import { getDefinition, loadVersion, variantArms } from "./workflow-defs.ts";
@@ -35,13 +33,12 @@ export async function runWorkflow(
   workflowId: string,
   input: RunInput,
   actor: string,
-  opts: { fetch?: FetchFn; research?: ResearchOpts } = {},
+  opts: { research?: ResearchOpts } = {},
 ) {
   const { workflow } = await getDefinition(sql, ws, workflowId);
   if (!workflow.enabled) throw new ApiError(409, "workflow_disabled", "This workflow is turned off; enable it first");
   const version = input.version ?? workflow.latest_version;
   await loadVersion(sql, workflow.id, version); // 404 for an unknown version
-  if (!env.NAIVE_API_KEY || !env.NAIVE_AGENT_ID) throw new ServiceError("config_missing", "NAIVE_API_KEY and NAIVE_AGENT_ID must be set to run a workflow.");
   if (await isPaused(sql, ws)) throw new ApiError(423, "paused", "Crusonia is paused; no new work starts (PUT /api/settings/pause to resume)");
   await requireInstanceOpen(sql, env, ws); // Before the run exists: a brake must not leave an empty run behind.
   // A per-run cap limits one run: it can't stop the next one that starts by itself.
@@ -65,11 +62,11 @@ export async function runWorkflow(
             await sql`
               select l.id, l.stage, l.variant, l.cohort, l.excluded_at from leads l
               where l.workspace_id = ${ws} and l.stage in ('qualified', 'disqualified') and l.excluded_at is null
-                and exists (select 1 from naive_sessions s where s.lead_id = l.id and s.purpose = 'research')
-                and not exists (select 1 from naive_sessions s where s.lead_id = l.id and s.purpose = 'research'
+                and exists (select 1 from agent_runs s where s.lead_id = l.id and s.purpose = 'research')
+                and not exists (select 1 from agent_runs s where s.lead_id = l.id and s.purpose = 'research'
                                 and s.created_at > now() - make_interval(days => ${workflow.trigger.stale_days}))
                 and not exists (select 1 from drafts d where d.lead_id = l.id and d.status in ('draft', 'pending_approval', 'scheduled', 'open'))
-              order by (select max(s.created_at) from naive_sessions s where s.lead_id = l.id and s.purpose = 'research') limit ${limit}`
+              order by (select max(s.created_at) from agent_runs s where s.lead_id = l.id and s.purpose = 'research') limit ${limit}`
           : // No cohort or leads given: new leads this workflow has never run on.
           await sql`
             select l.id, l.stage, l.variant, l.cohort, l.excluded_at from leads l
@@ -83,7 +80,7 @@ export async function runWorkflow(
   }
   const open = new Set(
     (
-      await sql`select lead_id from naive_sessions where workspace_id = ${ws} and purpose in ('research', 'redraft') and status in ('running', 'idle')
+      await sql`select lead_id from agent_runs where workspace_id = ${ws} and purpose in ('research', 'redraft') and status in ('queued', 'running')
                 and lead_id = any(${candidates.map((c) => c.id)}::text[])`
     ).map((r) => r.lead_id as string),
   );
@@ -122,7 +119,7 @@ export async function runWorkflow(
     throw err;
   });
 
-  const result = await startResearch(sql, env, ws, { lead_ids: ids }, actor, opts.fetch, opts.research);
+  const result = await startResearch(sql, env, ws, { lead_ids: ids }, actor, opts.research);
   const session = new Map(result.started.map((s) => [s.lead_id, s.session_id]));
   const failed = new Map(result.failed.map((f) => [f.lead_id, f.error]));
   const late = new Map(result.skipped.map((s) => [s.lead_id, s.reason]));
@@ -157,15 +154,15 @@ export async function runWorkflow(
  * PATCH { resume: true }: continue the latest run's leads that never finished research (no verdict, no open session),
  * under the same version. Nothing to continue: `resumed` is null.
  */
-export async function resumeWorkflow(sql: Sql, env: Env, ws: string, workflowId: string, actor: string, opts: { fetch?: FetchFn } = {}) {
+export async function resumeWorkflow(sql: Sql, env: Env, ws: string, workflowId: string, actor: string) {
   const [last] = await sql`select id, version from workflow_runs where workflow_id = ${workflowId} and workspace_id = ${ws} order by started_at desc limit 1`;
   if (!last) return null;
   const leads = await sql`
     select rl.lead_id from workflow_run_leads rl join leads l on l.id = rl.lead_id
     where rl.run_id = ${last.id} and l.stage in ('new', 'no_consent', 'researching')
-      and not exists (select 1 from naive_sessions s where s.workspace_id = ${ws} and s.lead_id = l.id and s.status in ('running', 'idle'))`;
+      and not exists (select 1 from agent_runs s where s.workspace_id = ${ws} and s.lead_id = l.id and s.status in ('queued', 'running'))`;
   if (!leads.length) return null;
-  return runWorkflow(sql, env, ws, workflowId, { version: last.version as number, lead_ids: leads.map((r) => r.lead_id as string) }, actor, opts);
+  return runWorkflow(sql, env, ws, workflowId, { version: last.version as number, lead_ids: leads.map((r) => r.lead_id as string) }, actor);
 }
 
 // ---------- history ----------
@@ -276,15 +273,15 @@ export async function listRuns(sql: Sql, ws: string, workflowId: string, opts: {
       (select count(distinct d.lead_id)::int from drafts d where d.workflow_run_id = r.id and d.status = 'sent') as sent,
       (select count(*)::int from approvals a join drafts d on d.id = a.draft_id
         where d.workflow_run_id = r.id and a.kind = 'send' and a.status = 'pending' and a.expires_at > now()) as waiting,
-      (select count(*)::int from naive_sessions s where s.workflow_run_id = r.id) as sessions,
-      (select count(*)::int from naive_sessions s where s.workflow_run_id = r.id and s.status in ('running', 'idle')) as open_sessions,
-      (select count(*)::int from naive_sessions s where s.workflow_run_id = r.id and s.status = 'error') as error_sessions,
+      (select count(*)::int from agent_runs s where s.workflow_run_id = r.id) as sessions,
+      (select count(*)::int from agent_runs s where s.workflow_run_id = r.id and s.status in ('queued', 'running')) as open_sessions,
+      (select count(*)::int from agent_runs s where s.workflow_run_id = r.id and s.status = 'error') as error_sessions,
       (select coalesce(sum(s.consumed_micro_usd), 0) + coalesce(sum((select sum(a.usage_micro_usd) from apify_runs a where a.session_id = s.id)), 0)
-         from naive_sessions s where s.workflow_run_id = r.id) as cost_micro,
+         from agent_runs s where s.workflow_run_id = r.id) as cost_micro,
       (select coalesce(sum(${creditsSql(sql, "s.consumed_micro_usd")}), 0) + coalesce(sum((select sum(${creditsSql(sql, "a.usage_micro_usd")}) from apify_runs a where a.session_id = s.id)), 0)
-         from naive_sessions s where s.workflow_run_id = r.id) as cost_credits,
-      (select count(*)::int from naive_session_events e join naive_sessions s on s.id = e.session_id where s.workflow_run_id = r.id) as trace_steps,
-      (select array_agg(s.id order by s.created_at) from naive_sessions s where s.workflow_run_id = r.id) as session_ids
+         from agent_runs s where s.workflow_run_id = r.id) as cost_credits,
+      (select count(*)::int from agent_run_events e join agent_runs s on s.id = e.session_id where s.workflow_run_id = r.id) as trace_steps,
+      (select array_agg(s.id order by s.created_at) from agent_runs s where s.workflow_run_id = r.id) as session_ids
     from workflow_runs r
     left join workflow_run_leads rl on rl.run_id = r.id
     left join leads l on l.id = rl.lead_id

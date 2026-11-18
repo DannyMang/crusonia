@@ -268,7 +268,7 @@ function AutopilotCard() {
           <div className="flex flex-wrap gap-x-5 gap-y-1.5 border-b border-b-[#200D0D14] px-4.5 py-3.5">
             {state.running.slice(0, 4).map((r) => (
               <div key={r.session_id} className="flex items-center gap-2 text-[13px]/4 font-medium text-ink">
-                {r.waiting_on_you ? null : <RingSpinner />}
+                {r.queued ? null : <RingSpinner />}
                 {r.text}
               </div>
             ))}
@@ -464,7 +464,7 @@ function WaitingForYou({ approvals, total, loading }: { approvals: SummaryApprov
 
 // ---------- active workflows ----------
 
-const RUNNING = new Set(["running", "idle"]);
+const RUNNING = new Set(["running", "queued"]);
 const WORKFLOW_TABS = ["running", "paused"] as const;
 
 function WorkflowCard({ w }: { w: Workflow }) {
@@ -480,8 +480,8 @@ function WorkflowCard({ w }: { w: Workflow }) {
         <div className="flex items-center gap-2.5">
           {w.status === "running" ? (
             <LiveChip>{w.purpose === "research" ? "researching" : "running"}</LiveChip>
-          ) : w.status === "idle" ? (
-            <LiveChip spinning={false}>waiting on you</LiveChip>
+          ) : w.status === "queued" ? (
+            <LiveChip spinning={false}>waiting for an agent</LiveChip>
           ) : (
             <Pill tone="gray" className="h-5.75 px-3 text-[13px]/4 font-medium">
               {w.status}

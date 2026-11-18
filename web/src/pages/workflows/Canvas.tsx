@@ -6,7 +6,7 @@ import { cx } from "../../lib/format.ts";
 import { appendAfter, canRemove, insertOnEdge, KIND_LABEL, layout, MENU, NODE_H, NODE_W, removeStep, renameStep } from "./layout.ts";
 
 /** Default workflows store provider ids; templates store names. */
-const PROVIDER_LABEL: Record<string, string> = { apify: "Apify", naive: "Naive", agentmail: "AgentMail", hubspot: "HubSpot", notion: "Notion" };
+const PROVIDER_LABEL: Record<string, string> = { apify: "Apify", agent: "Agent", agentmail: "AgentMail", hubspot: "HubSpot", notion: "Notion" };
 
 type View = { x: number; y: number; k: number };
 type MenuAt = { x: number; y: number; insert: { parent: string; child: string } | { after: string } };

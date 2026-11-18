@@ -5,7 +5,7 @@ export type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 // Wrapped so the global is always called unbound (Workers rejects some detached-`this` calls).
 export const defaultFetch: FetchFn = (input, init) => fetch(input, init);
 
-export type ProviderName = "agentmail" | "naive" | "hubspot" | "notion";
+export type ProviderName = "agentmail" | "hubspot" | "notion";
 
 export class ProviderError extends Error {
   constructor(

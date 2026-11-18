@@ -30,7 +30,6 @@ export async function getStatus(env: Env, ws?: string): Promise<Status> {
     database: provider(env, "Neon Postgres: leads, drafts, approvals, events", ["DATABASE_URL"]),
     apify: provider(env, "web crawling (read_website) and Google search (search_web)", ["APIFY_TOKEN"]),
     agentmail: provider(env, "sending approved emails to opted-in leads and receiving replies", ["AGENTMAIL_API_KEY", "AGENTMAIL_INBOX_ID"]),
-    naive: provider(env, "managed agent sessions (research and drafting)", ["NAIVE_API_KEY"]),
     hubspot: provider(env, "CRM sync: import contacts/companies, push leads, notes and lead status (writes only with HUBSPOT_SYNC_ENABLED=true)", [
       "HUBSPOT_ACCESS_TOKEN",
     ]),

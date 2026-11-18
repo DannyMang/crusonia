@@ -5,7 +5,7 @@
 //                   their email is verified (./signup-check.ts).
 //   crs_live_ key   the key's workspace (api_keys.workspace_id); a header naming another one is refused
 //   MCP_TOKEN       the owner workspace; same
-// Webhooks map back through the row they are about (a Naive session, an email thread, a Stripe customer).
+// Webhooks map back through the row they are about (an email thread, a Stripe customer).
 import { logEvent, type Sql } from "../db.ts";
 import type { Env } from "../env.ts";
 import { newId } from "../ids.ts";

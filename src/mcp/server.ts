@@ -43,7 +43,8 @@ import { createFollowUp, followupInputSchema, listFollowUps } from "../services/
 import { commitImport } from "../services/import-preview.ts";
 import { mergeLeads } from "../services/merge-leads.ts";
 import { listReplies } from "../services/replies.ts";
-import { getRunDetail } from "../services/runs.ts";
+import { closeRun, countToolCall, recordToolCall } from "../services/agent-runs.ts";
+import { getRunDetail, leadsFromAddLeads } from "../services/runs.ts";
 import { getStatus } from "../services/status.ts";
 import { getSummary } from "../services/summary.ts";
 import { listRuns } from "../services/workflow-runs.ts";
@@ -99,17 +100,17 @@ async function run(fn: () => Promise<unknown>): Promise<CallToolResult> {
 type RunRef = { id: string; purpose: string; workflow_version: string | null };
 
 /**
- * The Naive run (session) behind an MCP call: the one named by `run_id` (every first message carries it), else the
- * only active session in the workspace when the caller is a Naive agent's credential (MCP_TOKEN or an agent key).
+ * The agent run behind an MCP call: the one named by `run_id` (every first message carries it), else the only open
+ * run in the workspace when the caller is an agent's credential (MCP_TOKEN or an agent key).
  */
 export async function resolveRun(sql: Sql, ws: string, bearer: BearerIdentity | undefined, runId?: string | null): Promise<RunRef | null> {
   if (runId) {
-    const [s] = await sql`select id, purpose, workflow_version from naive_sessions where workspace_id = ${ws} and input->>'run_id' = ${runId} limit 1`;
+    const [s] = await sql`select id, purpose, workflow_version from agent_runs where workspace_id = ${ws} and id = ${runId} limit 1`;
     if (s) return s as RunRef;
   }
   if (!bearer || bearer.kind === "owner_token" || bearer.agent) {
     const active = await sql`
-      select id, purpose, workflow_version from naive_sessions where workspace_id = ${ws} and status in ('running', 'idle')
+      select id, purpose, workflow_version from agent_runs where workspace_id = ${ws} and status = 'running'
       order by created_at desc limit 2`;
     if (active.length === 1) return active[0] as RunRef;
   }
@@ -165,15 +166,34 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
   const server = new McpServer(SERVER_INFO, { instructions: INSTRUCTIONS });
   const allowed = toolsFor(role);
   // Only the role's tools exist on this connection: a tool it may not use is not hidden, it is absent.
-  const register = ((name: string, config: unknown, cb: unknown) => {
-    if (!allowed || allowed.has(name)) return (server.registerTool as (n: string, c: unknown, f: unknown) => unknown)(name, config, cb);
+  // A call that names a run (run_id) counts against that run's limits and goes into its trace. A run past its time or
+  // its tool calls is closed, and the call is refused: that holds whoever is running the agent.
+  const tracked = (name: string, cb: (...a: unknown[]) => Promise<CallToolResult>) => async (...a: unknown[]) => {
+    const args = a[0] as { run_id?: unknown } | undefined;
+    const runId = typeof args?.run_id === "string" && args.run_id.trim() ? args.run_id.trim() : null;
+    if (!runId || !(deps.sql || env.DATABASE_URL)) return cb(...a);
+    const check = await countToolCall(db(), ws, runId);
+    if (!check.ok) {
+      if (check.reason === "not_found") return cb(...a); // not a Crusonia run: the tool says so itself where it matters
+      return { content: [{ type: "text", text: check.message }], isError: true } satisfies CallToolResult;
+    }
+    const startedAt = new Date();
+    const result = await cb(...a);
+    const output = result.content.map((p) => (p.type === "text" ? p.text : "")).join("");
+    const isError = result.isError === true;
+    const leads = leadsFromAddLeads({ type: "tool.completed", data: { name, output, is_error: isError } });
+    await recordToolCall(db(), ws, runId, { name, args, output, isError, startedAt, leads }).catch((err) => console.error(`trace ${runId}:`, err instanceof Error ? err.message : err));
+    return result;
+  };
+  const register = ((name: string, config: unknown, cb: (...a: unknown[]) => Promise<CallToolResult>) => {
+    if (!allowed || allowed.has(name)) return (server.registerTool as (n: string, c: unknown, f: unknown) => unknown)(name, config, tracked(name, cb));
     return undefined;
   }) as typeof server.registerTool;
 
   // The researcher only sees its target lead: its run id must name a session on that lead (the id is in its first message).
   const runOf = async (runId: string | null | undefined) => {
     if (!runId) throw new ServiceError("invalid", "Pass run_id: the Crusonia run id from your first message.");
-    const [s] = await db()`select lead_id, purpose, input from naive_sessions where workspace_id = ${ws} and input->>'run_id' = ${runId} limit 1`;
+    const [s] = await db()`select lead_id, purpose, input from agent_runs where workspace_id = ${ws} and id = ${runId} limit 1`;
     if (!s) throw new ServiceError("not_found", `No run with id ${runId}.`);
     return s as { lead_id: string | null; purpose: string; input: { like_lead_id?: string } | null };
   };
@@ -192,7 +212,7 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
   const sendTtlMinutes = sendApprovalTtlMinutes(env);
   const hasDb = Boolean(deps.sql || env.DATABASE_URL);
   // Apify runs started by a tool call are recorded and debited as credits to this workspace (src/billing/usage.ts),
-  // attributed to the Naive run when there is one.
+  // attributed to the agent run when there is one.
   const meter = () =>
     env.APIFY_TOKEN && hasDb
       ? apifyMeter(db(), { workspaceId: ws, sessionId: async () => (await resolveRun(db(), ws, ctx.bearer))?.id ?? null, via: "mcp" })
@@ -207,7 +227,7 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
     {
       title: "Get status",
       description:
-        "Shows which providers are configured (database, Apify, AgentMail, Naive, HubSpot, Notion), whether the database is reachable, this workspace's lead counts by stage, open approvals, the Company summary version, and suggested next steps. Call this first. Works with no keys set.",
+        "Shows which providers are configured (database, Apify, AgentMail, HubSpot, Notion), whether the database is reachable, this workspace's lead counts by stage, open approvals, the Company summary version, and suggested next steps. Call this first. Works with no keys set.",
       annotations: READ,
     },
     () => run(() => getStatus(env, ws)),
@@ -464,7 +484,7 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
     {
       title: "Flag a lead for review",
       description:
-        "Pauses a lead on a question instead of guessing: stage 'needs_review' with your question (e.g. required evidence you could not find on public pages, or sources that disagree). The owner sees why; scoring the lead later clears it. Use ask_operator instead when the owner can answer right away and you need the answer to continue.",
+        "Pauses a lead on a question instead of guessing: stage 'needs_review' with your question (e.g. required evidence you could not find on public pages, or sources that disagree). The owner sees why; scoring the lead later clears it.",
       inputSchema: flagInputSchema.extend({ run_id: runIdArg }),
       annotations: WRITE,
     },
@@ -670,7 +690,7 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
     },
     (args) =>
       run(async () => {
-        const d = await getRunDetail(db(), env, ws, args.session_id, undefined, { readOnly: true });
+        const d = await getRunDetail(db(), ws, args.session_id);
         return {
           run: d.run,
           lead: d.lead,
@@ -942,6 +962,8 @@ export function createMcpServer(env: Env, ctx: McpContext = { workspace: { id: O
         const sql = db();
         const found = await resolveRun(sql, ws, ctx.bearer, args.run_id);
         await logEvent(sql, ws, null, "operator_cycle", { did: args.did, why: args.why, session_id: found?.id ?? null });
+        // The log is the cycle's last call: the run is finished.
+        if (found?.purpose === "operate") await closeRun(sql, found.id, "finished");
         return { logged: true };
       }),
   );

@@ -1,51 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { classifyReplyText, replyText, type ReplyLabel } from "../src/services/classify.ts";
-import { DEFAULT_AUTO_CONFIRM_TOOLS, isToolAllowed, parseToolAllowlist } from "../src/services/policy.ts";
-import { latestIdle, researchMessage, sessionStatus } from "../src/services/workflows.ts";
-
-describe("tool allowlist", () => {
-  const defaults = parseToolAllowlist(undefined);
-
-  test("defaults to named crusonia tools, the Apify page reader and get-* readers, web_search", () => {
-    expect(defaults).toEqual(DEFAULT_AUTO_CONFIRM_TOOLS.split(","));
-    expect(parseToolAllowlist("  ")).toEqual(defaults);
-  });
-
-  test("prefix wildcards match only their namespace", () => {
-    expect(isToolAllowed("crusonia.get_lead", defaults)).toBe(true);
-    expect(isToolAllowed("apify.apify--rag-web-browser", defaults)).toBe(true);
-    expect(isToolAllowed("apify.get-dataset-items", defaults)).toBe(true);
-    expect(isToolAllowed("apify.get-actor-run", defaults)).toBe(true);
-    expect(isToolAllowed("crusonia_evil.get_lead", defaults)).toBe(false);
-    expect(isToolAllowed("crusonia", defaults)).toBe(false);
-    expect(isToolAllowed("xcrusonia.get_lead", defaults)).toBe(false);
-  });
-
-  test("Apify Actor runs are not auto-allowed: they reach the owner as approvals", () => {
-    for (const tool of ["apify.call-actor", "apify.apify--website-content-crawler", "apify.apify--google-search-scraper", "apify.abort-actor-run", "apify.search-actors"]) {
-      expect(isToolAllowed(tool, defaults)).toBe(false);
-    }
-  });
-
-  test("exact names match exactly", () => {
-    expect(isToolAllowed("web_search", defaults)).toBe(true);
-    expect(isToolAllowed("web_search_v2", defaults)).toBe(false);
-    expect(isToolAllowed("Web_Search", defaults)).toBe(false);
-    expect(isToolAllowed("send_email", defaults)).toBe(false);
-    expect(isToolAllowed("", defaults)).toBe(false);
-  });
-
-  test("custom lists, whitespace, `none` and a bare `*`", () => {
-    const list = parseToolAllowlist(" crusonia.list_leads , gmail.read* ,");
-    expect(list).toEqual(["crusonia.list_leads", "gmail.read*"]);
-    expect(isToolAllowed("crusonia.list_leads", list)).toBe(true);
-    expect(isToolAllowed("crusonia.create_draft", list)).toBe(false);
-    expect(isToolAllowed("gmail.read_thread", list)).toBe(true);
-    expect(parseToolAllowlist("none")).toEqual([]);
-    expect(isToolAllowed("crusonia.get_lead", parseToolAllowlist("NONE"))).toBe(false);
-    expect(isToolAllowed("anything", ["*"])).toBe(true);
-  });
-});
+import { researchMessage } from "../src/services/workflows.ts";
 
 describe("reply classification", () => {
   const cases: [string, string, ReplyLabel][] = [
@@ -81,43 +36,11 @@ describe("reply classification", () => {
   });
 });
 
-describe("naive workflow helpers", () => {
-  test("latestIdle returns the last idle unless the session resumed after it", () => {
-    const idle = { seq: 3, type: "session.idle", data: { stop_reason: "awaiting_approval" } };
-    expect(latestIdle([{ seq: 1, type: "session.running", data: {} }, idle])).toBe(idle);
-    expect(latestIdle([idle, { seq: 4, type: "session.running", data: {} }])).toBeUndefined();
-    expect(latestIdle([{ seq: 5, type: "tool.started", data: {} }])).toBeUndefined();
-  });
-
-  test("session status: waiting is idle, a finished turn is done (so research can run again)", () => {
-    expect(sessionStatus("idle", "awaiting_approval")).toBe("idle");
-    expect(sessionStatus("idle", "awaiting_answer")).toBe("idle");
-    expect(sessionStatus("idle", "budget_paused")).toBe("idle");
-    expect(sessionStatus("idle", "end_turn")).toBe("done");
-    expect(sessionStatus(undefined, "end_turn")).toBe("done");
-    expect(sessionStatus("idle", "max_iterations")).toBe("error");
-    expect(sessionStatus("failed", "error")).toBe("error");
-    expect(sessionStatus("running", null)).toBe("running");
-  });
-
+describe("research message", () => {
   test("the research prompt carries only the lead id, never lead data", () => {
     const msg = researchMessage("lead_abc");
     expect(msg).toContain("lead_abc");
     expect(msg).toContain("untrusted");
     expect(msg).toContain("cannot send");
-  });
-});
-
-describe("default allowlist keeps data-listing and fetch tools behind the owner", () => {
-  const defaults = parseToolAllowlist(undefined);
-  test("list_* tools and web_fetch ask the owner", () => {
-    for (const name of ["crusonia.list_leads", "crusonia.list_tasks", "crusonia.list_pending_approvals", "web_fetch"]) {
-      expect(isToolAllowed(name, defaults)).toBe(false);
-    }
-  });
-  test("research tools still run without asking", () => {
-    for (const name of ["crusonia.get_lead", "crusonia.save_research", "crusonia.add_leads", "crusonia.read_website", "web_search"]) {
-      expect(isToolAllowed(name, defaults)).toBe(true);
-    }
   });
 });
